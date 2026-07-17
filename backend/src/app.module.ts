@@ -1,0 +1,111 @@
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+import { PrismaModule } from './prisma/prisma.module';
+import { MailModule } from './mail/mail.module';
+import { RbacModule } from './rbac/rbac.module';
+import { AuthModule } from './auth/auth.module';
+import { BranchesModule } from './branches/branches.module';
+import { UsersModule } from './users/users.module';
+import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { AcademicYearsModule } from './configuration/academic-years/academic-years.module';
+import { AcademicClassesModule } from './configuration/academic-classes/academic-classes.module';
+import { AcademicSectionsModule } from './configuration/academic-sections/academic-sections.module';
+import { AcademicClassSectionsModule } from './configuration/academic-class-sections/academic-class-sections.module';
+import { AcademicClassSectionYearsModule } from './configuration/academic-class-section-years/academic-class-section-years.module';
+import { LessonStagesModule } from './configuration/lesson-stages/lesson-stages.module';
+import { LessonSubStagesModule } from './configuration/lesson-sub-stages/lesson-sub-stages.module';
+import { BranchSettingsModule } from './configuration/branch-settings/branch-settings.module';
+import { SurahsModule } from './configuration/surahs/surahs.module';
+import { SurahTargetSchedulesModule } from './configuration/surah-target-schedules/surah-target-schedules.module';
+import { CalendarDaysModule } from './configuration/calendar-days/calendar-days.module';
+import { DepartmentsModule } from './hr/departments/departments.module';
+import { DesignationsModule } from './hr/designations/designations.module';
+import { EmployeesModule } from './hr/employees/employees.module';
+import { TeachersModule } from './hr/teachers/teachers.module';
+import { LeavesModule } from './hr/leaves/leaves.module';
+import { AttendanceModule } from './hr/attendance/attendance.module';
+import { HolidaysModule } from './hr/holidays/holidays.module';
+import { AppreciationsModule } from './hr/appreciations/appreciations.module';
+import { AwardsModule } from './hr/awards/awards.module';
+import { TeacherApplicationsModule } from './hr/teacher-applications/teacher-applications.module';
+import { AdmissionsModule } from './student-management/admissions/admissions.module';
+import { StudentsModule } from './student-management/students/students.module';
+import { EnrollmentsModule } from './student-management/enrollments/enrollments.module';
+import { StudentLeavesModule } from './student-management/student-leaves/student-leaves.module';
+import { FeeTypesModule } from './fees/fee-types/fee-types.module';
+import { FeeStructuresModule } from './fees/fee-structures/fee-structures.module';
+import { FeeDemandsModule } from './fees/fee-demands/fee-demands.module';
+import { PaymentsModule } from './fees/payments/payments.module';
+import { DiscountsModule } from './fees/discounts/discounts.module';
+import { LessonsModule } from './academic/lessons/lessons.module';
+import { StudentLessonProgressModule } from './academic/student-lesson-progress/student-lesson-progress.module';
+import { HalqasModule } from './academic/halqas/halqas.module';
+import { HifdhModule } from './academic/hifdh/hifdh.module';
+import { CurrentClassesModule } from './academic/current-classes/current-classes.module';
+import { ExamTypesModule } from './academic/exam-types/exam-types.module';
+import { ExamsModule } from './academic/exams/exams.module';
+import { ExamResultsModule } from './academic/exam-results/exam-results.module';
+import { AcademicDashboardModule } from './academic/dashboard/dashboard.module';
+import { HrDashboardModule } from './hr/dashboard/dashboard.module';
+import { StudentManagementDashboardModule } from './student-management/dashboard/dashboard.module';
+import { FeesDashboardModule } from './fees/dashboard/dashboard.module';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    PrismaModule,
+    MailModule,
+    RbacModule,
+    AuthModule,
+    BranchesModule,
+    UsersModule,
+    AcademicYearsModule,
+    AcademicClassesModule,
+    AcademicSectionsModule,
+    AcademicClassSectionsModule,
+    AcademicClassSectionYearsModule,
+    LessonStagesModule,
+    LessonSubStagesModule,
+    BranchSettingsModule,
+    SurahsModule,
+    SurahTargetSchedulesModule,
+    CalendarDaysModule,
+    DepartmentsModule,
+    DesignationsModule,
+    EmployeesModule,
+    TeachersModule,
+    LeavesModule,
+    AttendanceModule,
+    HolidaysModule,
+    AppreciationsModule,
+    AwardsModule,
+    TeacherApplicationsModule,
+    AdmissionsModule,
+    StudentsModule,
+    EnrollmentsModule,
+    StudentLeavesModule,
+    FeeTypesModule,
+    FeeStructuresModule,
+    FeeDemandsModule,
+    PaymentsModule,
+    DiscountsModule,
+    LessonsModule,
+    StudentLessonProgressModule,
+    HalqasModule,
+    HifdhModule,
+    CurrentClassesModule,
+    ExamTypesModule,
+    ExamsModule,
+    ExamResultsModule,
+    AcademicDashboardModule,
+    HrDashboardModule,
+    StudentManagementDashboardModule,
+    FeesDashboardModule,
+  ],
+  controllers: [AppController],
+  providers: [AppService, { provide: APP_GUARD, useClass: JwtAuthGuard }],
+})
+export class AppModule {}

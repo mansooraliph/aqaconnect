@@ -1,0 +1,46 @@
+@import 'tailwindcss';
+
+/* ──────────────────────────────────────────────────────────────
+   Academic Management Portal design tokens — matched to the
+   ContractorPro/SmartBill design system (erp_saas_v2 reference).
+   Exposed via Tailwind v4 @theme so they're usable as utility
+   classes (e.g. bg-header, text-muted, rounded-card).
+   ────────────────────────────────────────────────────────────── */
+@theme {
+  --color-header: #1e293b;
+  --color-bg-page: #f8f9fa;
+  --color-bg-white: #ffffff;
+  --color-border: #e2e8f0;
+  --color-text-primary: #1e293b;
+  --color-text-muted: #64748b;
+  --color-text-faint: #9ca3af;
+  --color-blue: #2563eb;
+  --color-blue-light: #eff6ff;
+  --color-green: #16a34a;
+  --color-amber: #d97706;
+  --color-red: #dc2626;
+  --color-table-alt: #f8fafc;
+  --color-table-head: #f1f5f9;
+
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+
+  --radius-card: 6px;
+  --radius-pill: 20px;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background-color: var(--color-bg-page);
+  color: var(--color-text-primary);
+}
+
+* {
+  box-sizing: border-box;
+}

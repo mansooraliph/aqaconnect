@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: aqa_v2_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: aqa_dev
+      POSTGRES_PASSWORD: aqa_dev_password
+      POSTGRES_DB: aqa_v2
+    ports:
+      - "5433:5432"
+    volumes:
+      - aqa_v2_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aqa_dev -d aqa_v2"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  aqa_v2_pgdata:

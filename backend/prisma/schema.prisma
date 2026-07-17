@@ -1,0 +1,1226 @@
+// ─────────────────────────────────────────────────────────────────────────
+// schema.prisma — Phase 2.0 Foundation
+// Only the 8 cross-cutting models (Branch, BranchSettings, User, Role,
+// Permission, RolePermission, UserRole, RefreshToken) per MIGRATION_PLAN.md
+// §1. Functional-module models (Configuration/HR/Student/Fees/Academic) are
+// added in later phases.
+// ─────────────────────────────────────────────────────────────────────────
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ENUMS
+// ═══════════════════════════════════════════════════════════════════════
+
+enum RoleScope {
+  GLOBAL // branch-agnostic — Super Admin / Management style roles
+  BRANCH // scoped to the assigned user's branchId, enforced server-side
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// CROSS-CUTTING: BRANCHES, USERS, RBAC, AUTH
+// ═══════════════════════════════════════════════════════════════════════
+
+model Branch {
+  id        String   @id @default(cuid())
+  name      String
+  code      String   @unique
+  address   String?
+  phone     String?
+  email     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  settings  BranchSettings?
+  users     User[]
+  userRoles UserRole[]
+
+  academicYears    AcademicYear[]
+  academicClasses  AcademicClass[]
+  academicSections AcademicSection[]
+  calendarDays     CalendarDay[]
+
+  employees     Employee[]
+  departments   Department[]
+  designations  Designation[]
+  leaves        Leave[]
+  attendances   Attendance[]
+  holidays      Holiday[]
+  appreciations Appreciation[]
+  awards        Award[]
+  teachers      Teacher[]
+  teacherApplications TeacherApplication[]
+
+  admissions         Admission[]
+  students           Student[]
+  studentLeaves      StudentLeave[]
+
+  feeTypes       FeeType[]
+  feeStructures  FeeStructure[]
+  feeDemands     FeeDemand[]
+  payments       Payment[]
+
+  lessons   Lesson[]
+  halqas    Halqa[]
+  examTypes ExamType[]
+  exams     Exam[]
+
+  @@index([isActive])
+}
+
+// One row per user's home branch relationship; a GLOBAL-scope role user may
+// still have a home branchId (their "primary office") purely for record
+// purposes — it does not restrict their query scope.
+model BranchSettings {
+  id          String   @id @default(cuid())
+  branchId    String   @unique
+  branch      Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  displayName String?
+  currency    String   @default("INR") // old app hardcoded Rupee; now explicit
+  timezone    String   @default("Asia/Kolkata")
+  language    String   @default("en")
+  logoUrl     String?
+  // Added in Phase 2.1 now that AcademicYear exists (deferred from Phase 2.0).
+  academicYearId String?
+  academicYear   AcademicYear? @relation(fields: [academicYearId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([academicYearId])
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  firstName    String
+  lastName     String
+  phone        String?
+  isActive     Boolean   @default(true)
+  branchId     String? // nullable: pure-management users may have no home branch
+  branch       Branch?   @relation(fields: [branchId], references: [id])
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  userRoles     UserRole[]
+  refreshTokens RefreshToken[]
+  employee      Employee?
+  teacher       Teacher?
+  student       Student?
+
+  @@index([branchId])
+}
+
+model Role {
+  id          String    @id @default(cuid())
+  name        String    @unique // e.g. "Super Admin", "Branch Admin", "Teacher", "Accountant"
+  description String?
+  scope       RoleScope @default(BRANCH)
+  isSystem    Boolean   @default(false) // seeded roles, cannot be deleted from UI
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  rolePermissions RolePermission[]
+  userRoles       UserRole[]
+}
+
+model Permission {
+  id          String   @id @default(cuid())
+  key         String   @unique // dot-namespaced, e.g. "fees.demands.generate"
+  module      String // "configuration" | "hr" | "student_management" | "fees" | "academic" | "system"
+  description String?
+  createdAt   DateTime @default(now())
+
+  rolePermissions RolePermission[]
+
+  @@index([module])
+}
+
+model RolePermission {
+  id           String     @id @default(cuid())
+  roleId       String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([permissionId])
+}
+
+// If role.scope == BRANCH, the assignment is implicitly scoped to the user's
+// own branchId at query time. branchId is stored here too (denormalized) so
+// a GLOBAL-role user can theoretically be granted a BRANCH-scope role for a
+// *specific* branch without changing their home branch.
+model UserRole {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  roleId    String
+  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  branchId  String?
+  branch    Branch?  @relation(fields: [branchId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([userId, roleId, branchId])
+  @@index([userId])
+  @@index([branchId])
+  @@index([roleId])
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique
+  userAgent String?
+  ipAddress String?
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// CONFIGURATION (Phase 2.1)
+//
+// Trimmed from MIGRATION_PLAN.md's full model bodies: relations to models
+// from LATER phases (Lesson, StudentEnrollment, FeeStructure, FeeDemand,
+// Admission, Holiday, StudentSurahProgress, SurahHifdhStudentSchedule) are
+// deferred and added back when those phases build the other side of the
+// relation — same pattern as BranchSettings.academicYearId in Phase 2.0.
+// ═══════════════════════════════════════════════════════════════════════
+
+model LessonStage {
+  id          String       @id @default(cuid())
+  name        String
+  description String?
+  sortOrder   Int          @default(0)
+  status      ActiveStatus @default(ACTIVE)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  subStages LessonSubStage[]
+  lessons   Lesson[]
+
+  @@index([sortOrder])
+}
+
+model LessonSubStage {
+  id            String       @id @default(cuid())
+  lessonStageId String
+  lessonStage   LessonStage  @relation(fields: [lessonStageId], references: [id], onDelete: Cascade)
+  name          String
+  description   String?
+  sortOrder     Int          @default(0)
+  status        ActiveStatus @default(ACTIVE)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  lessons Lesson[]
+
+  @@index([lessonStageId, sortOrder])
+}
+
+// Reference data — the 114 Surahs. Not branch-scoped (shared reference table).
+model Surah {
+  id             String   @id @default(cuid())
+  number         Int      @unique // 1-114
+  nameArabic     String
+  nameEnglish    String
+  totalAyahs     Int
+  revelationType String? // Meccan / Medinan
+  createdAt      DateTime @default(now())
+
+  pageLines        SurahAyahPageLine[]
+  targetSchedules  SurahTargetSchedule[]
+  studentSchedules SurahHifdhStudentSchedule[]
+  studentProgress  StudentSurahProgress[]
+
+  @@index([number])
+}
+
+// Underlying raw page/line grid (old QuranPageLinesController data entry).
+model QuranPage {
+  id         String   @id @default(cuid())
+  pageNumber Int      @unique
+  lineCount  Int      @default(15)
+  createdAt  DateTime @default(now())
+
+  ayahPageLines SurahAyahPageLine[]
+}
+
+// Maps ayah <-> page/line — reference data curated via import/export.
+model SurahAyahPageLine {
+  id          String    @id @default(cuid())
+  surahId     String
+  surah       Surah     @relation(fields: [surahId], references: [id], onDelete: Cascade)
+  ayahNumber  Int
+  quranPageId String
+  quranPage   QuranPage @relation(fields: [quranPageId], references: [id])
+  lineNumber  Int
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([surahId, ayahNumber])
+  @@index([quranPageId])
+}
+
+// Template defining the target pacing (e.g. "N ayahs per week") later used
+// to generate per-student Hifdh schedules — this is a template, not a
+// per-student record (see SurahHifdhStudentSchedule, added in Phase 2.5).
+model SurahTargetSchedule {
+  id            String       @id @default(cuid())
+  surahId       String
+  surah         Surah        @relation(fields: [surahId], references: [id])
+  name          String
+  targetsPerDay Int          @default(1) // ayah/line unit count expected per day
+  status        ActiveStatus @default(ACTIVE)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  targets SurahTarget[]
+
+  @@index([surahId])
+}
+
+// Individual day/unit breakdown within a target schedule.
+model SurahTarget {
+  id                    String   @id @default(cuid())
+  surahTargetScheduleId String
+  surahTargetSchedule   SurahTargetSchedule @relation(fields: [surahTargetScheduleId], references: [id], onDelete: Cascade)
+  dayNumber             Int
+  fromAyah              Int
+  toAyah                Int
+  createdAt             DateTime @default(now())
+
+  @@unique([surahTargetScheduleId, dayNumber])
+}
+
+model AcademicYear {
+  id        String   @id @default(cuid())
+  branchId  String
+  branch    Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name      String // e.g. "2026-2027"
+  startDate DateTime
+  endDate   DateTime
+  isCurrent Boolean  @default(false) // "make current" toggle — only one true per branch, enforced in service layer
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  classSectionYears AcademicClassSectionYear[]
+  calendarDays      CalendarDay[]
+  branchSettings    BranchSettings[]
+  feeStructures     FeeStructure[]
+  feeDemands        FeeDemand[]
+
+  @@unique([branchId, name])
+  @@index([branchId, isCurrent])
+}
+
+model AcademicClass {
+  id        String       @id @default(cuid())
+  branchId  String
+  branch    Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name      String
+  sortOrder Int          @default(0)
+  status    ActiveStatus @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  classSections AcademicClassSection[]
+  admissions    Admission[]
+  feeStructures FeeStructure[]
+
+  @@unique([branchId, name])
+  @@index([branchId])
+}
+
+model AcademicSection {
+  id        String       @id @default(cuid())
+  branchId  String
+  branch    Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name      String
+  status    ActiveStatus @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  classSections AcademicClassSection[]
+
+  @@unique([branchId, name])
+  @@index([branchId])
+}
+
+model AcademicClassSection {
+  id                String          @id @default(cuid())
+  academicClassId   String
+  academicClass     AcademicClass   @relation(fields: [academicClassId], references: [id], onDelete: Cascade)
+  academicSectionId String
+  academicSection   AcademicSection @relation(fields: [academicSectionId], references: [id], onDelete: Cascade)
+  capacity          Int?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  classSectionYears AcademicClassSectionYear[]
+
+  @@unique([academicClassId, academicSectionId])
+  @@index([academicSectionId])
+}
+
+// One instance of a class-section for a given academic year — generated
+// (with a "preview generation" step in the old UI) at the start of each year.
+model AcademicClassSectionYear {
+  id                     String               @id @default(cuid())
+  academicClassSectionId String
+  academicClassSection   AcademicClassSection @relation(fields: [academicClassSectionId], references: [id], onDelete: Cascade)
+  academicYearId         String
+  academicYear           AcademicYear         @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  capacity               Int?
+  status                 ActiveStatus         @default(ACTIVE)
+  createdAt              DateTime             @default(now())
+  updatedAt              DateTime             @updatedAt
+
+  studentEnrollments StudentEnrollment[]
+
+  @@unique([academicClassSectionId, academicYearId])
+  @@index([academicYearId])
+}
+
+// NOTE: "Current Classes" (old Modules/Academic CurrentClassesController) is
+// intentionally NOT a table. It is a derived read model — a service-layer
+// query joining AcademicClassSectionYear (for the branch's current
+// AcademicYear) with StudentEnrollment (status = ACTIVE), aggregated for
+// counts/stats. Expose it as a read-only endpoint/view once StudentEnrollment
+// exists (Phase 2.3), not a Prisma model.
+
+model CalendarDay {
+  id             String       @id @default(cuid())
+  branchId       String
+  branch         Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  academicYearId String
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  date           DateTime     @db.Date
+  isWorkingDay   Boolean      @default(true)
+  isHoliday      Boolean      @default(false)
+  holidayId      String?
+  holiday        Holiday?     @relation(fields: [holidayId], references: [id])
+  note           String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([branchId, date])
+  @@index([academicYearId])
+  @@index([holidayId])
+}
+
+enum ActiveStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum LeaveStatus {
+  PENDING
+  PRE_APPROVED
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  HALF_DAY
+  ON_LEAVE
+  HOLIDAY
+}
+
+enum TeacherApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// HR (Phase 2.2)
+//
+// Same trimming rule as Configuration: relations to LATER-phase models
+// (Halqa, StudentLessonProgress, StudentSurahProgress,
+// SurahHifdhStudentSchedule — all Phase 2.5 Academic) are deferred.
+// ═══════════════════════════════════════════════════════════════════════
+
+// HR profile — 1:1 with User (login account). Kept separate from User so
+// non-staff auth concerns (password, roles) stay independent of HR fields.
+model Employee {
+  id            String       @id @default(cuid())
+  userId        String       @unique
+  user          User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branchId      String
+  branch        Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  employeeCode  String
+  departmentId  String?
+  department    Department?  @relation(fields: [departmentId], references: [id])
+  designationId String?
+  designation   Designation? @relation(fields: [designationId], references: [id])
+  dateOfJoining DateTime?
+  status        ActiveStatus @default(ACTIVE)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  leaves         Leave[]
+  attendances    Attendance[]
+  leaveQuotas    LeaveQuota[]
+  appreciations  Appreciation[] @relation("AppreciationRecipient")
+  awards         Award[]        @relation("AwardRecipient")
+  teacherProfile Teacher?
+
+  @@unique([branchId, employeeCode])
+  @@index([branchId])
+  @@index([departmentId])
+  @@index([designationId])
+}
+
+// Hierarchical (self-referencing tree), branch-scoped.
+model Department {
+  id        String       @id @default(cuid())
+  branchId  String
+  branch    Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name      String
+  parentId  String?
+  parent    Department?  @relation("DepartmentHierarchy", fields: [parentId], references: [id])
+  children  Department[] @relation("DepartmentHierarchy")
+  status    ActiveStatus @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  employees Employee[]
+
+  @@index([branchId])
+  @@index([parentId])
+}
+
+// Hierarchical (self-referencing tree), branch-scoped.
+model Designation {
+  id        String        @id @default(cuid())
+  branchId  String
+  branch    Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name      String
+  parentId  String?
+  parent    Designation?  @relation("DesignationHierarchy", fields: [parentId], references: [id])
+  children  Designation[] @relation("DesignationHierarchy")
+  status    ActiveStatus  @default(ACTIVE)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  employees Employee[]
+
+  @@index([branchId])
+  @@index([parentId])
+}
+
+// NOTE: `academicYearId` is nullable, so the `@@unique` below does NOT
+// guard against duplicate rows when it's null — Postgres treats every NULL
+// as distinct in a unique index. Same gotcha as the FeeDemand fix, lower
+// stakes here (quota rows are admin-managed, not auto-regenerated), so
+// documented as a caveat rather than restructured.
+model LeaveQuota {
+  id             String   @id @default(cuid())
+  employeeId     String
+  employee       Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType      String // e.g. "casual", "sick", "earned" — kept as a string/lookup rather than enum for admin extensibility
+  academicYearId String?
+  totalDays      Decimal  @db.Decimal(5, 2)
+  usedDays       Decimal  @db.Decimal(5, 2) @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([employeeId, leaveType, academicYearId])
+}
+
+model Leave {
+  id             String      @id @default(cuid())
+  branchId       String
+  branch         Branch      @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  employeeId     String
+  employee       Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  leaveType      String
+  startDate      DateTime    @db.Date
+  endDate        DateTime    @db.Date
+  isHalfDay      Boolean     @default(false)
+  reason         String?
+  status         LeaveStatus @default(PENDING)
+  relatedLeaveId String? // links half-day pairs / follow-up requests
+  relatedLeave   Leave?      @relation("RelatedLeave", fields: [relatedLeaveId], references: [id])
+  relatedLeaves  Leave[]     @relation("RelatedLeave")
+  approvedById   String?
+  approvalNote   String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@index([branchId, status])
+  @@index([employeeId])
+}
+
+model Attendance {
+  id         String           @id @default(cuid())
+  branchId   String
+  branch     Branch           @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date       DateTime         @db.Date
+  status     AttendanceStatus
+  clockInAt  DateTime?
+  clockOutAt DateTime?
+  clockInLat Decimal?         @db.Decimal(9, 6)
+  clockInLng Decimal?         @db.Decimal(9, 6)
+  remark     String?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  @@unique([employeeId, date])
+  @@index([branchId, date])
+}
+
+model Holiday {
+  id                String   @id @default(cuid())
+  branchId          String
+  branch            Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name              String
+  date              DateTime @db.Date
+  isRecurringYearly Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  calendarDays CalendarDay[]
+
+  @@unique([branchId, date])
+  @@index([branchId])
+}
+
+model Appreciation {
+  id         String   @id @default(cuid())
+  branchId   String
+  branch     Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee @relation("AppreciationRecipient", fields: [employeeId], references: [id], onDelete: Cascade)
+  title      String
+  note       String?
+  givenById  String?
+  givenAt    DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([branchId])
+  @@index([employeeId])
+}
+
+model Award {
+  id          String       @id @default(cuid())
+  branchId    String
+  branch      Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  employeeId  String
+  employee    Employee     @relation("AwardRecipient", fields: [employeeId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  status      ActiveStatus @default(ACTIVE)
+  awardedAt   DateTime     @default(now())
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([branchId])
+  @@index([employeeId])
+}
+
+// Academy-specific teacher profile — deliberately separate from Employee
+// (old system also kept these distinct: a Teacher is not just an Employee
+// with a role, it carries Halqa assignment and Hifdh-domain relations).
+model Teacher {
+  id           String       @id @default(cuid())
+  userId       String       @unique
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  branchId     String
+  branch       Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  employeeId   String?      @unique // optional link if the teacher is also a payroll Employee
+  employee     Employee?    @relation(fields: [employeeId], references: [id])
+  employeeCode String?
+  status       ActiveStatus @default(ACTIVE)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  halqas                 Halqa[]
+  lessonProgressVerified StudentLessonProgress[] @relation("VerifiedBy")
+  surahProgressVerified  StudentSurahProgress[]  @relation("SurahVerifiedBy")
+  hifdhSchedules         SurahHifdhStudentSchedule[]
+
+  @@index([branchId])
+}
+
+model TeacherApplication {
+  id               String                   @id @default(cuid())
+  branchId         String
+  branch           Branch                   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  fullName         String
+  email            String
+  phone            String?
+  resumeUrl        String?
+  coverNote        String?
+  status           TeacherApplicationStatus @default(PENDING)
+  reviewedById     String?
+  reviewNote       String?
+  reviewedAt       DateTime?
+  createdTeacherId String? // set once approval provisions a Teacher/User record
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+
+  @@index([branchId, status])
+}
+
+enum AdmissionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  TRANSFERRED
+  WITHDRAWN
+  COMPLETED
+}
+
+enum StudentLeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// STUDENT MANAGEMENT (Phase 2.3)
+//
+// Same trimming rule as Configuration/HR: relations to LATER-phase models
+// (HalqaStudent, StudentLessonProgress, SurahHifdhStudentSchedule,
+// StudentSurahProgress, StudentExamResult — all Phase 2.5 Academic;
+// FeeDemand, Payment — Phase 2.4 Fees) are deferred.
+// ═══════════════════════════════════════════════════════════════════════
+
+model Admission {
+  id               String          @id @default(cuid())
+  branchId         String
+  branch           Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  applicantName    String
+  guardianName     String?
+  email            String?
+  phone            String?
+  dateOfBirth      DateTime?       @db.Date
+  desiredClassId   String?
+  desiredClass     AcademicClass?  @relation(fields: [desiredClassId], references: [id])
+  status           AdmissionStatus @default(PENDING)
+  reviewedById     String?
+  reviewNote       String?
+  reviewedAt       DateTime?
+  createdStudentId String? // set once approval provisions a Student record
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  // Back-relation for Student.admission (1:1) — the FK actually lives on
+  // Student (admissionId), this is just the reverse pointer Prisma requires.
+  student Student?
+
+  @@index([branchId, status])
+  @@index([desiredClassId])
+}
+
+// Student profile — 1:1 with User only when the student has portal/mobile
+// login (self-service progress views, leave requests); userId is nullable
+// to support students without their own login (guardian-managed only).
+model Student {
+  id            String       @id @default(cuid())
+  userId        String?      @unique
+  user          User?        @relation(fields: [userId], references: [id])
+  branchId      String
+  branch        Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  studentCode   String
+  firstName     String
+  lastName      String
+  dateOfBirth   DateTime?    @db.Date
+  guardianName  String?
+  guardianPhone String?
+  admissionId   String?      @unique
+  admission     Admission?   @relation(fields: [admissionId], references: [id])
+  status        ActiveStatus @default(ACTIVE)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  enrollments      StudentEnrollment[]
+  studentLeaves    StudentLeave[]
+  halqaMemberships HalqaStudent[]
+  lessonProgress   StudentLessonProgress[]
+  surahSchedules   SurahHifdhStudentSchedule[]
+  surahProgress    StudentSurahProgress[]
+  examResults      StudentExamResult[]
+  feeDemands       FeeDemand[]
+  payments         Payment[]
+
+  @@unique([branchId, studentCode])
+  @@index([branchId, status])
+}
+
+model StudentEnrollment {
+  id                         String                   @id @default(cuid())
+  studentId                  String
+  student                    Student                  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  academicClassSectionYearId String
+  academicClassSectionYear   AcademicClassSectionYear @relation(fields: [academicClassSectionYearId], references: [id], onDelete: Cascade)
+  status                     EnrollmentStatus         @default(ACTIVE)
+  enrolledAt                 DateTime                 @default(now())
+  transferredFromId          String? // self-relation to the enrollment this one replaced, for transfer history
+  transferredFrom            StudentEnrollment?       @relation("Transfer", fields: [transferredFromId], references: [id])
+  transferredTo              StudentEnrollment[]      @relation("Transfer")
+  withdrawnAt                DateTime?
+  createdAt                  DateTime                 @default(now())
+  updatedAt                  DateTime                 @updatedAt
+
+  @@unique([studentId, academicClassSectionYearId])
+  @@index([academicClassSectionYearId, status])
+  @@index([studentId])
+}
+
+// Student-facing leave-request workflow (StudentLeaveApiController in the
+// old system). Named `StudentLeave` — deliberately distinct from `Leave`
+// above (the HR/Employee leave workflow); the two are unrelated domains
+// that happen to share the word "leave". One row per calendar day of leave
+// (old system creates one row per day in a date range), matching
+// `applyLeave`'s documented behavior.
+model StudentLeave {
+  id              String             @id @default(cuid())
+  branchId        String
+  branch          Branch             @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  studentId       String
+  student         Student            @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  leaveDate       DateTime           @db.Date
+  reason          String
+  leaveType       String? // "home" | "hostal" per old system's enum, kept as string for admin extensibility
+  status          StudentLeaveStatus @default(PENDING)
+  creationRemarks String?
+  approvalRemarks String?
+  createdById     String? // self-applied (student) or teacher/admin-created on the student's behalf
+  approvedById    String?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  @@index([branchId, status])
+  @@index([studentId, leaveDate])
+}
+
+enum FeeFrequency {
+  ONE_TIME
+  INSTALLMENTS
+}
+
+enum FeeDemandStatus {
+  PENDING
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+}
+
+enum PaymentMode {
+  CASH
+  BANK_TRANSFER
+  CHEQUE
+  ONLINE
+  CARD
+}
+
+enum PaymentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+// Unifies the old system's split behavior (payments got ledger rows via
+// FeeDemandAdjustment, discounts silently mutated the parent FeeDemand
+// instead — a real gap in the old design). All four types now produce a
+// PaymentAllocation row, so discounts/waivers/refunds are auditable too.
+enum PaymentAllocationType {
+  PAYMENT
+  DISCOUNT
+  WAIVER
+  REFUND
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// FEES (Phase 2.4)
+//
+// Shape reflects the Phase 1 audit's "Fee Demand Generation & Payment —
+// Deep Dive" recommendations: 3-tier structure/installment/demand, unified
+// PaymentAllocation with a type enum, persisted demand status, sequenced
+// installments, real FeeType FK, receipt as a record. Same trimming rule
+// as prior phases: no relations to later-phase models remain (none apply
+// here — Fees is the last domain with forward references to build out).
+// ═══════════════════════════════════════════════════════════════════════
+
+model FeeType {
+  id        String       @id @default(cuid())
+  branchId  String
+  branch    Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name      String
+  status    ActiveStatus @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  feeStructures FeeStructure[]
+
+  @@unique([branchId, name])
+}
+
+model FeeStructure {
+  id              String        @id @default(cuid())
+  branchId        String
+  branch          Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  academicClassId String
+  academicClass   AcademicClass @relation(fields: [academicClassId], references: [id])
+  academicYearId  String
+  academicYear    AcademicYear  @relation(fields: [academicYearId], references: [id])
+  feeTypeId       String // real FK — old schema stored a loose free-text label
+  feeType         FeeType       @relation(fields: [feeTypeId], references: [id])
+  name            String
+  // `amount`/`dueDate` are authoring-time convenience fields for the
+  // ONE_TIME case. The generation service copies them onto a single, real
+  // FeeInstallment row (sequenceNo 1) at structure-creation time — see
+  // FeeInstallment's comment for the idempotency reasoning. They're never
+  // read directly at demand-generation time; the installment row is always
+  // the source of truth.
+  amount    Decimal      @db.Decimal(10, 2)
+  frequency FeeFrequency @default(ONE_TIME)
+  dueDate   DateTime?    @db.Date
+  currency  String       @default("INR")
+  status    ActiveStatus @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  installments FeeInstallment[]
+  demands      FeeDemand[]
+
+  @@index([branchId, academicClassId, academicYearId])
+}
+
+// IDEMPOTENCY FIX (schema review Blocking #4): frequency = ONE_TIME
+// FeeStructures always get exactly one real FeeInstallment row (sequenceNo
+// 1, name e.g. "Full Payment", amount/dueDate copied from FeeStructure) —
+// created by the generation service at structure-creation time — instead
+// of leaving FeeDemand.installmentId null for one-time fees. Postgres
+// unique indexes treat every NULL as distinct, so a nullable installmentId
+// would silently allow duplicate one-time demands; this keeps FeeDemand's
+// `@@unique` below meaningful for both fee types.
+model FeeInstallment {
+  id             String       @id @default(cuid())
+  feeStructureId String
+  feeStructure   FeeStructure @relation(fields: [feeStructureId], references: [id], onDelete: Cascade)
+  sequenceNo     Int
+  name           String
+  amount         Decimal      @db.Decimal(10, 2)
+  dueDate        DateTime     @db.Date
+  status         ActiveStatus @default(ACTIVE)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  demands FeeDemand[]
+
+  @@unique([feeStructureId, sequenceNo])
+}
+
+// One row per student x installment. Generation must be idempotent/
+// transactional (unique constraint below) and must never blind-overwrite a
+// demand that already has allocations against it — enforced in the service
+// layer, not the schema (per the inventory's recommendation).
+model FeeDemand {
+  id             String   @id @default(cuid())
+  branchId       String
+  branch         Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  studentId      String
+  student        Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  feeStructureId String
+  feeStructure   FeeStructure @relation(fields: [feeStructureId], references: [id])
+  // Required, not nullable (schema review Blocking #4 fix): every
+  // FeeStructure — ONE_TIME included — always has a real FeeInstallment row
+  // to point to, so this is never null and the @@unique below is a genuine
+  // idempotency guard for one-time fees too.
+  installmentId  String
+  installment    FeeInstallment @relation(fields: [installmentId], references: [id])
+  academicYearId String
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+  demandAmount   Decimal  @db.Decimal(10, 2) @default(0)
+  discountAmount Decimal  @db.Decimal(10, 2) @default(0)
+  adjustedAmount Decimal  @db.Decimal(10, 2) @default(0) // running total of allocations applied
+  dueDate        DateTime? @db.Date
+  status         FeeDemandStatus @default(PENDING) // persisted, kept in sync by allocation writes
+  remark         String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  allocations PaymentAllocation[]
+
+  @@unique([studentId, feeStructureId, installmentId, academicYearId])
+  @@index([branchId, status])
+  @@index([studentId])
+  @@index([dueDate])
+  // Added in the Phase 2.6 index review — the demand-generation engine
+  // (FeeDemandsService.previewGeneration/generate) queries by
+  // [feeStructureId, studentId: {in: [...]}] on every call, and this was the
+  // one genuinely hot, unindexed lookup found in that pass.
+  @@index([feeStructureId])
+}
+
+// One row per payment event (receipt-level), can fan out into multiple
+// PaymentAllocation rows (FIFO across pending demands).
+model Payment {
+  id            String        @id @default(cuid())
+  branchId      String
+  branch        Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  studentId     String
+  student       Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  amount        Decimal       @db.Decimal(10, 2)
+  paymentDate   DateTime      @db.Date
+  mode          PaymentMode
+  reference     String?
+  proofFileUrl  String?
+  status        PaymentStatus @default(PENDING) // new system genuinely honors PENDING, unlike the old system's immediate COMPLETED
+  receiptNumber String?       @unique // generated via a DB sequence, not regex-parsed like the old system
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  allocations PaymentAllocation[]
+  receipt     Receipt?
+
+  @@index([branchId, studentId])
+  @@index([paymentDate])
+}
+
+// Unified ledger: every payment, discount, waiver, and refund produces a
+// row here (the old system's discounts bypassed this table entirely and
+// mutated FeeDemand directly — a real gap this design fixes).
+model PaymentAllocation {
+  id          String                @id @default(cuid())
+  feeDemandId String
+  feeDemand   FeeDemand             @relation(fields: [feeDemandId], references: [id], onDelete: Cascade)
+  paymentId   String? // null for pure discounts/waivers not tied to a Payment event
+  payment     Payment?              @relation(fields: [paymentId], references: [id])
+  type        PaymentAllocationType
+  amount      Decimal               @db.Decimal(10, 2)
+  reason      String? // required for DISCOUNT/WAIVER/REFUND
+  createdById String?
+  createdAt   DateTime              @default(now())
+
+  @@index([feeDemandId])
+  @@index([paymentId])
+}
+
+// Generated document tracked as a record rather than a bare path string.
+model Receipt {
+  id          String   @id @default(cuid())
+  paymentId   String   @unique
+  payment     Payment  @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  fileUrl     String
+  generatedAt DateTime @default(now())
+}
+
+enum LessonProgressStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  VERIFIED
+}
+
+enum HifdhProgressStatus {
+  IN_PROGRESS
+  COMPLETED
+  VERIFIED
+}
+
+enum ExamResultStatus {
+  DRAFT
+  PUBLISHED
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ACADEMIC (Phase 2.5) — the last functional domain. No forward references
+// remain deferred anywhere in this file after this section.
+// ═══════════════════════════════════════════════════════════════════════
+
+model Lesson {
+  id               String          @id @default(cuid())
+  branchId         String
+  branch           Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  lessonStageId    String
+  lessonStage      LessonStage     @relation(fields: [lessonStageId], references: [id])
+  lessonSubStageId String?
+  lessonSubStage   LessonSubStage? @relation(fields: [lessonSubStageId], references: [id])
+  title            String
+  description      String?
+  sortOrder        Int             @default(0)
+  status           ActiveStatus    @default(ACTIVE)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  progress StudentLessonProgress[]
+
+  @@index([branchId, lessonStageId, sortOrder])
+  @@index([lessonSubStageId])
+}
+
+model StudentLessonProgress {
+  id           String               @id @default(cuid())
+  studentId    String
+  student      Student              @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  lessonId     String
+  lesson       Lesson               @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  status       LessonProgressStatus @default(NOT_STARTED)
+  completedAt  DateTime?
+  verifiedAt   DateTime?
+  verifiedById String?
+  verifiedBy   Teacher?             @relation("VerifiedBy", fields: [verifiedById], references: [id])
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  @@unique([studentId, lessonId])
+  @@index([studentId, status])
+  @@index([lessonId])
+}
+
+// A "Halqa" = a Quran study circle/group led by a teacher.
+model Halqa {
+  id        String       @id @default(cuid())
+  branchId  String
+  branch    Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name      String
+  teacherId String?
+  teacher   Teacher?     @relation(fields: [teacherId], references: [id])
+  status    ActiveStatus @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  students HalqaStudent[]
+
+  @@index([branchId])
+  @@index([teacherId])
+}
+
+// Roster join table (student-to-Halqa assignment).
+model HalqaStudent {
+  id         String    @id @default(cuid())
+  halqaId    String
+  halqa      Halqa     @relation(fields: [halqaId], references: [id], onDelete: Cascade)
+  studentId  String
+  student    Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  assignedAt DateTime  @default(now())
+  removedAt  DateTime?
+
+  @@unique([halqaId, studentId])
+  @@index([studentId])
+}
+
+// Per-student Hifdh (memorization) schedule generated from a
+// SurahTargetSchedule template.
+model SurahHifdhStudentSchedule {
+  id                String                      @id @default(cuid())
+  studentId         String
+  student           Student                     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  surahId           String
+  surah             Surah                       @relation(fields: [surahId], references: [id])
+  teacherId         String?
+  teacher           Teacher?                    @relation(fields: [teacherId], references: [id])
+  fromAyah          Int
+  toAyah            Int
+  scheduledDate     DateTime                    @db.Date
+  rescheduledFromId String?
+  rescheduledFrom   SurahHifdhStudentSchedule?  @relation("Reschedule", fields: [rescheduledFromId], references: [id])
+  rescheduledTo     SurahHifdhStudentSchedule[] @relation("Reschedule")
+  status            HifdhProgressStatus         @default(IN_PROGRESS)
+  createdAt         DateTime                    @default(now())
+  updatedAt         DateTime                    @updatedAt
+
+  @@index([studentId, status])
+  @@index([surahId])
+  @@index([teacherId])
+}
+
+// Cumulative per-student, per-surah progress (separate from the schedule —
+// this is the aggregate/summary record used for leaderboards/comparisons).
+model StudentSurahProgress {
+  id             String              @id @default(cuid())
+  studentId      String
+  student        Student             @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  surahId        String
+  surah          Surah               @relation(fields: [surahId], references: [id])
+  ayahsCompleted Int                 @default(0)
+  status         HifdhProgressStatus @default(IN_PROGRESS)
+  completedAt    DateTime?
+  verifiedAt     DateTime?
+  verifiedById   String?
+  verifiedBy     Teacher?            @relation("SurahVerifiedBy", fields: [verifiedById], references: [id])
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@unique([studentId, surahId])
+  @@index([studentId, status])
+  @@index([surahId])
+}
+
+model ExamType {
+  id        String       @id @default(cuid())
+  branchId  String
+  branch    Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name      String
+  status    ActiveStatus @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  exams Exam[]
+
+  @@unique([branchId, name])
+}
+
+model Exam {
+  id         String       @id @default(cuid())
+  branchId   String
+  branch     Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  examTypeId String
+  examType   ExamType     @relation(fields: [examTypeId], references: [id])
+  name       String
+  examDate   DateTime     @db.Date
+  maxMarks   Decimal      @db.Decimal(6, 2) @default(100)
+  status     ActiveStatus @default(ACTIVE)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  results StudentExamResult[]
+
+  @@index([branchId, examTypeId])
+}
+
+model StudentExamResult {
+  id            String           @id @default(cuid())
+  examId        String
+  exam          Exam             @relation(fields: [examId], references: [id], onDelete: Cascade)
+  studentId     String
+  student       Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  marksObtained Decimal          @db.Decimal(6, 2)
+  remark        String?
+  status        ExamResultStatus @default(DRAFT)
+  enteredById   String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@unique([examId, studentId])
+  @@index([studentId])
+}
