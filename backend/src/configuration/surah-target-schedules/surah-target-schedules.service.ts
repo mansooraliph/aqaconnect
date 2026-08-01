@@ -2,28 +2,29 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateSurahTargetScheduleDto } from './dto/create-surah-target-schedule.dto';
 import { UpdateSurahTargetScheduleDto } from './dto/update-surah-target-schedule.dto';
-import { UpsertSurahTargetsDto } from './dto/upsert-surah-target.dto';
+import type { ImportRow } from './surah-target-schedules.import';
 
 @Injectable()
 export class SurahTargetSchedulesService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /** Flat list of every day-row in the single master schedule, in import/insertion order. */
   list() {
     return this.prisma.surahTargetSchedule.findMany({
       include: { surah: true },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { sortOrder: 'asc' },
     });
   }
 
   async findOne(id: string) {
-    const schedule = await this.prisma.surahTargetSchedule.findUnique({
+    const row = await this.prisma.surahTargetSchedule.findUnique({
       where: { id },
       include: { surah: true },
     });
-    if (!schedule) {
-      throw new NotFoundException('Surah target schedule not found');
+    if (!row) {
+      throw new NotFoundException('Surah target schedule row not found');
     }
-    return schedule;
+    return row;
   }
 
   private async assertSurahExists(surahId: string) {
@@ -34,83 +35,67 @@ export class SurahTargetSchedulesService {
   }
 
   async create(dto: CreateSurahTargetScheduleDto) {
-    await this.assertSurahExists(dto.surahId);
+    if (dto.surahId) {
+      await this.assertSurahExists(dto.surahId);
+    }
+    const last = await this.prisma.surahTargetSchedule.findFirst({ orderBy: { sortOrder: 'desc' } });
     return this.prisma.surahTargetSchedule.create({
-      data: {
-        surahId: dto.surahId,
-        name: dto.name,
-        ...(dto.targetsPerDay !== undefined && { targetsPerDay: dto.targetsPerDay }),
-        ...(dto.status !== undefined && { status: dto.status }),
-      },
+      data: { ...dto, sortOrder: (last?.sortOrder ?? -1) + 1 },
     });
   }
 
   async update(id: string, dto: UpdateSurahTargetScheduleDto) {
     await this.findOne(id);
-    if (dto.surahId !== undefined) {
+    if (dto.surahId) {
       await this.assertSurahExists(dto.surahId);
     }
-    return this.prisma.surahTargetSchedule.update({
-      where: { id },
-      data: {
-        ...(dto.surahId !== undefined && { surahId: dto.surahId }),
-        ...(dto.name !== undefined && { name: dto.name }),
-        ...(dto.targetsPerDay !== undefined && { targetsPerDay: dto.targetsPerDay }),
-        ...(dto.status !== undefined && { status: dto.status }),
-      },
-    });
+    return this.prisma.surahTargetSchedule.update({ where: { id }, data: dto });
   }
 
-  async listTargets(id: string) {
+  async remove(id: string) {
     await this.findOne(id);
-    return this.prisma.surahTarget.findMany({
-      where: { surahTargetScheduleId: id },
-      orderBy: { dayNumber: 'asc' },
-    });
+    await this.prisma.surahTargetSchedule.delete({ where: { id } });
   }
 
-  /** Replace-all semantics: the posted array becomes the new complete set of targets. */
-  async upsertTargets(id: string, dto: UpsertSurahTargetsDto) {
-    await this.findOne(id);
+  /**
+   * Bulk-imports parsed spreadsheet rows into the single master schedule.
+   * All existing rows are replaced wholesale (re-uploading the file is
+   * idempotent rather than appending duplicates).
+   */
+  async importRows(rows: ImportRow[]) {
+    const surahNumbers = [...new Set(rows.map((r) => r.surahNumber).filter((n): n is number => n !== null))];
+    const surahs = await this.prisma.surah.findMany({ where: { number: { in: surahNumbers } } });
+    const surahIdByNumber = new Map(surahs.map((s) => [s.number, s.id]));
 
-    const dayNumbers = dto.targets.map((t) => t.dayNumber);
-    if (new Set(dayNumbers).size !== dayNumbers.length) {
-      throw new BadRequestException('dayNumber must be unique within the posted targets');
+    const missing = surahNumbers.filter((n) => !surahIdByNumber.has(n));
+    if (missing.length > 0) {
+      throw new BadRequestException(
+        `Surah number(s) not found in the Surah table: ${missing.join(', ')}. Import the 114 Surahs first.`,
+      );
     }
 
     return this.prisma.$transaction(async (tx) => {
-      await tx.surahTarget.deleteMany({
-        where: {
-          surahTargetScheduleId: id,
-          ...(dayNumbers.length > 0 && { dayNumber: { notIn: dayNumbers } }),
-        },
-      });
-
-      for (const target of dto.targets) {
-        await tx.surahTarget.upsert({
-          where: {
-            surahTargetScheduleId_dayNumber: {
-              surahTargetScheduleId: id,
-              dayNumber: target.dayNumber,
-            },
-          },
-          create: {
-            surahTargetScheduleId: id,
-            dayNumber: target.dayNumber,
-            fromAyah: target.fromAyah,
-            toAyah: target.toAyah,
-          },
-          update: {
-            fromAyah: target.fromAyah,
-            toAyah: target.toAyah,
-          },
-        });
+      await tx.surahTargetSchedule.deleteMany({});
+      if (rows.length === 0) {
+        return { imported: 0 };
       }
-
-      return tx.surahTarget.findMany({
-        where: { surahTargetScheduleId: id },
-        orderBy: { dayNumber: 'asc' },
+      await tx.surahTargetSchedule.createMany({
+        data: rows.map((r, index) => ({
+          sortOrder: index,
+          dayNumber: r.dayNumber,
+          // This master schedule is exclusively the Hifdh curriculum (no
+          // Doura/Revision import path exists yet) — stamped here so
+          // HifdhService.generateInitialSchedulesForStudent's `stage:
+          // 'HIFDH'` filter actually matches these rows.
+          stage: 'HIFDH',
+          surahId: r.surahNumber !== null ? (surahIdByNumber.get(r.surahNumber) ?? null) : null,
+          fromAyah: r.fromAyah,
+          toAyah: r.toAyah,
+          scheduleType: r.scheduleType,
+          examName: r.examName,
+        })),
       });
+      return { imported: rows.length };
     });
   }
 }

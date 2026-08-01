@@ -43,8 +43,7 @@ interface Lesson {
 interface Student {
   id: string;
   studentCode: string;
-  firstName: string;
-  lastName: string;
+  name: string;
 }
 
 type ProgressStatus = 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETED' | 'VERIFIED';
@@ -54,7 +53,7 @@ interface StudentLessonProgress {
   studentId: string;
   lessonId: string;
   status: ProgressStatus;
-  student?: { firstName: string; lastName: string; studentCode: string };
+  student?: { name: string; studentCode: string };
   lesson?: { title: string };
 }
 
@@ -213,7 +212,7 @@ export function LessonsProgressPage() {
     enabled: Boolean(activeBranchId),
   });
   const studentOptions = (studentsQuery.data ?? []).map((s) => ({
-    label: `${s.firstName} ${s.lastName} (${s.studentCode})`,
+    label: `${s.name} (${s.studentCode})`,
     value: s.id,
   }));
 

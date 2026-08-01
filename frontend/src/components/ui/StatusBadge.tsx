@@ -21,6 +21,7 @@ const COLORS: Record<string, string> = {
   inactive: 'bg-[#F1F5F9] text-[#475569]',
   // progress-style
   in_progress: 'bg-[#FFEDD5] text-[#9A3412]',
+  needs_review: 'bg-[#FEF3C7] text-[#92400E]',
   completed: 'bg-[#DCFCE7] text-[#166534]',
   verified: 'bg-[#DCFCE7] text-[#166534]',
   // publication

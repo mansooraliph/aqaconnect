@@ -9,7 +9,7 @@ import { Field, Input } from '../components/ui/Input';
 export function LoginPage() {
   const navigate = useNavigate();
   const setSession = useAuthStore((s) => s.setSession);
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -19,12 +19,12 @@ export function LoginPage() {
     setError(null);
     setLoading(true);
     try {
-      const response = await api.post('/auth/login', { email, password });
+      const response = await api.post('/auth/login', { username, password });
       const { accessToken, refreshToken, user } = response.data;
       setSession(accessToken, refreshToken, user);
       navigate('/dashboard', { replace: true });
     } catch {
-      setError('Invalid email or password.');
+      setError('Invalid username or password.');
     } finally {
       setLoading(false);
     }
@@ -42,13 +42,13 @@ export function LoginPage() {
           </div>
         )}
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
-          <Field label="Email" required>
+          <Field label="Username" required>
             <Input
-              type="email"
+              type="text"
               autoComplete="username"
               required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
             />
           </Field>
           <Field label="Password" required>

@@ -1,4 +1,5 @@
-import { IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsString, Max, Min, MinLength } from 'class-validator';
+import { RevelationType } from '@prisma/client';
 
 export class CreateSurahDto {
   @IsInt()
@@ -19,6 +20,30 @@ export class CreateSurahDto {
   totalAyahs: number;
 
   @IsOptional()
-  @IsString()
-  revelationType?: string;
+  @IsInt()
+  juzFrom?: number;
+
+  @IsOptional()
+  @IsInt()
+  juzTo?: number;
+
+  @IsOptional()
+  @IsInt()
+  pageNumberFrom?: number;
+
+  @IsOptional()
+  @IsInt()
+  pageNumberTo?: number;
+
+  @IsOptional()
+  @IsInt()
+  lineNumberFrom?: number;
+
+  @IsOptional()
+  @IsInt()
+  lineNumberTo?: number;
+
+  @IsOptional()
+  @IsEnum(RevelationType)
+  revelationType?: RevelationType;
 }

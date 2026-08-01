@@ -1,8 +1,23 @@
-import { Body, Controller, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Patch,
+  Post,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { SurahTargetSchedulesService } from './surah-target-schedules.service';
 import { CreateSurahTargetScheduleDto } from './dto/create-surah-target-schedule.dto';
 import { UpdateSurahTargetScheduleDto } from './dto/update-surah-target-schedule.dto';
-import { UpsertSurahTargetsDto } from './dto/upsert-surah-target.dto';
+import { parseSurahTargetScheduleWorkbook } from './surah-target-schedules.import';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 
@@ -23,6 +38,17 @@ export class SurahTargetSchedulesController {
     return this.service.create(dto);
   }
 
+  @Post('import')
+  @RequirePermission('configuration.target_schedules.manage')
+  @UseInterceptors(FileInterceptor('file'))
+  async import(@UploadedFile() file: Express.Multer.File | undefined) {
+    if (!file) {
+      throw new BadRequestException('file is required (multipart field name "file")');
+    }
+    const rows = await parseSurahTargetScheduleWorkbook(file.buffer);
+    return this.service.importRows(rows);
+  }
+
   @Get(':id')
   @RequirePermission('configuration.target_schedules.view')
   findOne(@Param('id') id: string) {
@@ -35,15 +61,10 @@ export class SurahTargetSchedulesController {
     return this.service.update(id, dto);
   }
 
-  @Get(':id/targets')
-  @RequirePermission('configuration.target_schedules.view')
-  listTargets(@Param('id') id: string) {
-    return this.service.listTargets(id);
-  }
-
-  @Post(':id/targets')
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
   @RequirePermission('configuration.target_schedules.manage')
-  upsertTargets(@Param('id') id: string, @Body() dto: UpsertSurahTargetsDto) {
-    return this.service.upsertTargets(id, dto);
+  remove(@Param('id') id: string) {
+    return this.service.remove(id);
   }
 }

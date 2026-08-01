@@ -6,7 +6,7 @@ import { QueryEnrollmentDto } from './dto/query-enrollment.dto';
 import { toCsv } from '../../common/csv/csv.util';
 
 const ENROLLMENT_INCLUDE = {
-  student: { select: { id: true, firstName: true, lastName: true, studentCode: true } },
+  student: { select: { id: true, name: true, studentCode: true } },
   academicClassSectionYear: {
     include: {
       academicClassSection: { include: { academicClass: true, academicSection: true } },
@@ -50,7 +50,7 @@ export class EnrollmentsService {
     });
 
     const rows = records.map((record) => ({
-      studentName: `${record.student.firstName} ${record.student.lastName}`,
+      studentName: record.student.name,
       studentCode: record.student.studentCode,
       class: record.academicClassSectionYear.academicClassSection.academicClass.name,
       section: record.academicClassSectionYear.academicClassSection.academicSection.name,

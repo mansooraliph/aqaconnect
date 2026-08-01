@@ -15,19 +15,20 @@ export class UsersService {
     if (accessContext.isGlobal) {
       return this.prisma.user.findMany({
         select: this.publicSelect(),
-        orderBy: { email: 'asc' },
+        orderBy: { username: 'asc' },
       });
     }
     return this.prisma.user.findMany({
       where: { branchId: { in: Array.from(accessContext.allowedBranchIds) } },
       select: this.publicSelect(),
-      orderBy: { email: 'asc' },
+      orderBy: { username: 'asc' },
     });
   }
 
   private publicSelect() {
     return {
       id: true,
+      username: true,
       email: true,
       firstName: true,
       lastName: true,
@@ -43,6 +44,7 @@ export class UsersService {
     const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
     const user = await this.prisma.user.create({
       data: {
+        username: dto.username,
         email: dto.email,
         passwordHash,
         firstName: dto.firstName,

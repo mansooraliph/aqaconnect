@@ -7,11 +7,7 @@ export class CreateStudentDto {
 
   @IsString()
   @MinLength(1)
-  firstName: string;
-
-  @IsString()
-  @MinLength(1)
-  lastName: string;
+  name: string;
 
   @IsOptional()
   @IsDateString()
@@ -37,4 +33,21 @@ export class CreateStudentDto {
   @IsOptional()
   @IsEmail()
   email?: string;
+
+  // Required (validated in the service) when createLogin is true — login is
+  // now username-based, not email-based.
+  @IsOptional()
+  @IsString()
+  username?: string;
+
+  // When provided, auto-generates this student's initial Hifdh schedule from
+  // the HIFDH-stage SurahTargetSchedule rows, matching legacy's
+  // createInitialHifdhSchedules trigger (see HifdhService).
+  @IsOptional()
+  @IsString()
+  halqaId?: string;
+
+  @IsOptional()
+  @IsDateString()
+  hifdhStartDate?: string;
 }

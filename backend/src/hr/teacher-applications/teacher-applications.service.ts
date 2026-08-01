@@ -35,6 +35,20 @@ export class TeacherApplicationsService {
     return record;
   }
 
+  private slugifyUsername(value: string): string {
+    return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '') || 'user';
+  }
+
+  private async uniqueUsername(candidate: string): Promise<string> {
+    let username = this.slugifyUsername(candidate);
+    let suffix = 1;
+    while (await this.prisma.user.findUnique({ where: { username } })) {
+      suffix += 1;
+      username = `${this.slugifyUsername(candidate)}_${suffix}`;
+    }
+    return username;
+  }
+
   // No public application portal exists yet (Phase 2.6 territory) — this is
   // an authenticated admin-entry endpoint for now, not the applicant's own
   // public-facing submission form the old system had. Flagged as a known
@@ -70,10 +84,12 @@ export class TeacherApplicationsService {
     const passwordHash = await bcrypt.hash(temporaryPassword, SALT_ROUNDS);
     const [firstName, ...rest] = application.fullName.trim().split(/\s+/);
     const lastName = rest.join(' ') || firstName;
+    const username = await this.uniqueUsername(application.email.split('@')[0]);
 
     const { teacher } = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
+          username,
           email: application.email,
           passwordHash,
           firstName,

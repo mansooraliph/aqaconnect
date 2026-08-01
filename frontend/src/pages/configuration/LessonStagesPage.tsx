@@ -36,6 +36,7 @@ const FIELDS: FieldDef[] = [
     label: 'Status',
     type: 'select',
     required: true,
+    editOnly: true, // Create DTOs (stage + sub-stage) don't accept status — new rows default to ACTIVE server-side
     options: [
       { label: 'Active', value: 'ACTIVE' },
       { label: 'Inactive', value: 'INACTIVE' },

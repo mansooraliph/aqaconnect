@@ -13,6 +13,7 @@ export class TeachersService {
   private userSelect() {
     return {
       select: {
+        username: true,
         email: true,
         firstName: true,
         lastName: true,
@@ -67,6 +68,7 @@ export class TeachersService {
     return this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
+          username: dto.username,
           email: dto.email,
           passwordHash,
           firstName: dto.firstName,

@@ -31,8 +31,8 @@ export class AuthService {
     return match ? Number(match[1]) * 60 : 15 * 60;
   }
 
-  private async issueTokenPair(userId: string, email: string): Promise<TokenPair> {
-    const payload: Record<string, unknown> = { sub: userId, email };
+  private async issueTokenPair(userId: string, username: string): Promise<TokenPair> {
+    const payload: Record<string, unknown> = { sub: userId, username };
     const accessToken = this.jwtService.sign(payload, {
       secret: this.configService.getOrThrow<string>('JWT_ACCESS_SECRET'),
       expiresIn: this.configService.get<string>('JWT_ACCESS_TTL', '15m') as never,
@@ -57,8 +57,8 @@ export class AuthService {
     };
   }
 
-  async validateUser(email: string, password: string) {
-    const user = await this.prisma.user.findUnique({ where: { email } });
+  async validateUser(username: string, password: string) {
+    const user = await this.prisma.user.findUnique({ where: { username } });
     if (!user || !user.isActive) {
       return null;
     }
@@ -66,10 +66,10 @@ export class AuthService {
     return passwordMatches ? user : null;
   }
 
-  async login(email: string, password: string) {
-    const user = await this.validateUser(email, password);
+  async login(username: string, password: string) {
+    const user = await this.validateUser(username, password);
     if (!user) {
-      throw new UnauthorizedException('Invalid email or password');
+      throw new UnauthorizedException('Invalid username or password');
     }
 
     await this.prisma.user.update({
@@ -77,13 +77,14 @@ export class AuthService {
       data: { lastLoginAt: new Date() },
     });
 
-    const tokens = await this.issueTokenPair(user.id, user.email);
+    const tokens = await this.issueTokenPair(user.id, user.username);
     const accessContext = await this.accessControl.getUserAccessContext(user.id);
 
     return {
       ...tokens,
       user: {
         id: user.id,
+        username: user.username,
         email: user.email,
         firstName: user.firstName,
         lastName: user.lastName,
@@ -117,7 +118,7 @@ export class AuthService {
       data: { revokedAt: new Date() },
     });
 
-    return this.issueTokenPair(existing.user.id, existing.user.email);
+    return this.issueTokenPair(existing.user.id, existing.user.username);
   }
 
   async logout(rawRefreshToken: string): Promise<void> {
@@ -138,6 +139,7 @@ export class AuthService {
 
     return {
       id: user.id,
+      username: user.username,
       email: user.email,
       firstName: user.firstName,
       lastName: user.lastName,

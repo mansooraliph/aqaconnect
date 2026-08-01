@@ -5,8 +5,10 @@ import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { BulkActionDto } from '../../common/dto/bulk-action.dto';
 import { MailService } from '../../mail/mail.service';
+import type { EmployeeImportRow } from './employees.import';
 
 const SALT_ROUNDS = 10;
+const IMPORT_DEFAULT_PASSWORD = 'Welcome123!';
 
 @Injectable()
 export class EmployeesService {
@@ -20,6 +22,7 @@ export class EmployeesService {
   private userSelect() {
     return {
       select: {
+        username: true,
         email: true,
         firstName: true,
         lastName: true,
@@ -27,6 +30,19 @@ export class EmployeesService {
         isActive: true,
       },
     };
+  }
+
+  /** Next "EMP###" code for this branch, used when the caller doesn't supply one. */
+  private async nextEmployeeCode(branchId: string): Promise<string> {
+    const employees = await this.prisma.employee.findMany({
+      where: { branchId },
+      select: { employeeCode: true },
+    });
+    const maxNumber = employees.reduce((max, e) => {
+      const match = /^EMP(\d+)$/i.exec(e.employeeCode);
+      return match ? Math.max(max, Number(match[1])) : max;
+    }, 0);
+    return `EMP${String(maxNumber + 1).padStart(3, '0')}`;
   }
 
   private includeClause() {
@@ -87,10 +103,12 @@ export class EmployeesService {
     );
 
     const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
+    const employeeCode = dto.employeeCode ?? (await this.nextEmployeeCode(branchId));
 
     const employee = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
         data: {
+          username: dto.username,
           email: dto.email,
           passwordHash,
           firstName: dto.firstName,
@@ -104,7 +122,7 @@ export class EmployeesService {
         data: {
           userId: user.id,
           branchId,
-          employeeCode: dto.employeeCode,
+          employeeCode,
           departmentId: dto.departmentId,
           designationId: dto.designationId,
           dateOfJoining: dto.dateOfJoining ? new Date(dto.dateOfJoining) : undefined,
@@ -116,10 +134,13 @@ export class EmployeesService {
     // Fire-and-forget invite email: employees provisioned here don't get a
     // generated one-time password (unlike Teachers/Admissions createLogin
     // flows), so this is a plain welcome notice. Never let a mail failure
-    // break the employee-creation response.
-    this.mail
-      .sendEmployeeInvite(dto.email, dto.firstName)
-      .catch((err) => this.logger.error(`Failed to send employee invite email to ${dto.email}`, err));
+    // break the employee-creation response. Skipped entirely when no email
+    // was provided (email is optional now that login uses username).
+    if (dto.email) {
+      this.mail
+        .sendEmployeeInvite(dto.email, dto.firstName)
+        .catch((err) => this.logger.error(`Failed to send employee invite email to ${dto.email}`, err));
+    }
 
     return employee;
   }
@@ -143,6 +164,93 @@ export class EmployeesService {
       },
       include: this.includeClause(),
     });
+  }
+
+/** Slugifies a name into a username candidate: "Muhammed Ibrahim" -> "muhammed.ibrahim". */
+  private slugifyUsername(name: string): string {
+    return (
+      name
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '.')
+        .replace(/^\.+|\.+$/g, '') || 'user'
+    );
+  }
+
+  private async uniqueUsername(candidate: string): Promise<string> {
+    let username = candidate;
+    let suffix = 1;
+    while (await this.prisma.user.findUnique({ where: { username } })) {
+      suffix += 1;
+      username = `${candidate}_${suffix}`;
+    }
+    return username;
+  }
+
+  /**
+   * Bulk-imports parsed spreadsheet rows for this branch. Rows whose email
+   * or generated username collides with an existing account are skipped
+   * (reported back) rather than failing the whole import. Imported accounts
+   * get a shared default password ("Welcome123!") since the source data has
+   * no password column — same fallback approach as the legacy bulk importer.
+   */
+  async importRows(branchId: string, rows: EmployeeImportRow[]) {
+    const passwordHash = await bcrypt.hash(IMPORT_DEFAULT_PASSWORD, SALT_ROUNDS);
+    let imported = 0;
+    const skipped: string[] = [];
+
+    for (const row of rows) {
+      const [firstName, ...rest] = row.name.split(/\s+/);
+      const lastName = rest.length > 0 ? rest.join(' ') : undefined;
+
+      if (row.email) {
+        const existingByEmail = await this.prisma.user.findUnique({ where: { email: row.email } });
+        if (existingByEmail) {
+          skipped.push(`${row.name} (email already exists: ${row.email})`);
+          continue;
+        }
+      }
+
+      if (row.employeeCode) {
+        const existingByCode = await this.prisma.employee.findFirst({
+          where: { branchId, employeeCode: row.employeeCode },
+        });
+        if (existingByCode) {
+          skipped.push(`${row.name} (employee code already exists: ${row.employeeCode})`);
+          continue;
+        }
+      }
+
+      const usernameCandidate = row.email ? row.email.split('@')[0] : this.slugifyUsername(row.name);
+      const username = await this.uniqueUsername(this.slugifyUsername(usernameCandidate));
+      const employeeCode = row.employeeCode ?? (await this.nextEmployeeCode(branchId));
+
+      await this.prisma.$transaction(async (tx) => {
+        const user = await tx.user.create({
+          data: {
+            username,
+            email: row.email ?? undefined,
+            passwordHash,
+            firstName,
+            lastName,
+            isActive: row.isActive,
+            branchId,
+          },
+        });
+        await tx.employee.create({
+          data: {
+            userId: user.id,
+            branchId,
+            employeeCode,
+            dateOfJoining: row.joiningDate ? new Date(row.joiningDate) : undefined,
+            status: row.isActive ? 'ACTIVE' : 'INACTIVE',
+          },
+        });
+      });
+      imported++;
+    }
+
+    return { imported, skipped: skipped.length, skippedDetails: skipped };
   }
 
   /**

@@ -15,7 +15,7 @@ export class StudentLeavesService {
   private includeClause() {
     return {
       student: {
-        select: { id: true, firstName: true, lastName: true, studentCode: true },
+        select: { id: true, name: true, studentCode: true },
       },
     };
   }

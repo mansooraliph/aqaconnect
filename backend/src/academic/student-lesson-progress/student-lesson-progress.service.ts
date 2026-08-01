@@ -15,7 +15,7 @@ export class StudentLessonProgressService {
 
   private includeClause() {
     return {
-      student: { select: { firstName: true, lastName: true, studentCode: true } },
+      student: { select: { name: true, studentCode: true } },
       lesson: { select: { title: true } },
     };
   }

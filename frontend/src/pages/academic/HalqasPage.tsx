@@ -25,8 +25,7 @@ interface Teacher {
 interface HalqaStudent {
   student: {
     id: string;
-    firstName: string;
-    lastName: string;
+    name: string;
     studentCode: string;
   };
 }
@@ -49,8 +48,7 @@ interface Halqa {
 
 interface UnassignedStudent {
   id: string;
-  firstName: string;
-  lastName: string;
+  name: string;
   studentCode: string;
 }
 
@@ -160,7 +158,7 @@ export function HalqasPage() {
   const currentRoster = halqas.find((h) => h.id === rosterTarget?.id)?.students ?? [];
 
   const unassignedOptions = (unassignedQuery.data ?? []).map((s) => ({
-    label: `${s.firstName} ${s.lastName} (${s.studentCode})`,
+    label: `${s.name} (${s.studentCode})`,
     value: s.id,
   }));
 
@@ -309,7 +307,7 @@ export function HalqasPage() {
                   className="flex items-center justify-between px-3 py-2 text-sm text-text-primary"
                 >
                   <span>
-                    {item.student.firstName} {item.student.lastName} ({item.student.studentCode})
+                    {item.student.name} ({item.student.studentCode})
                   </span>
                   {canManage && (
                     <Button

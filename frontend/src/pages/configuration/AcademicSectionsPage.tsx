@@ -16,6 +16,7 @@ const FIELDS: FieldDef[] = [
     name: 'status',
     label: 'Status',
     type: 'select',
+    editOnly: true, // Create DTO doesn't accept status — new sections default to ACTIVE server-side
     options: [
       { label: 'Active', value: 'ACTIVE' },
       { label: 'Inactive', value: 'INACTIVE' },

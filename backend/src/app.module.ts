@@ -52,6 +52,13 @@ import { AcademicDashboardModule } from './academic/dashboard/dashboard.module';
 import { HrDashboardModule } from './hr/dashboard/dashboard.module';
 import { StudentManagementDashboardModule } from './student-management/dashboard/dashboard.module';
 import { FeesDashboardModule } from './fees/dashboard/dashboard.module';
+import { AcademicClassesModule as MobileAcademicClassesModule } from './mobile-app-api/academic-classes/academic-classes.module';
+import { TeachersModule as MobileTeachersModule } from './mobile-app-api/teachers/teachers.module';
+import { SurahSchedulesModule as MobileSurahSchedulesModule } from './mobile-app-api/surah-schedules/surah-schedules.module';
+import { HalqasModule as MobileHalqasModule } from './mobile-app-api/halqas/halqas.module';
+import { StudentLeavesModule as MobileStudentLeavesModule } from './mobile-app-api/student-leaves/student-leaves.module';
+import { StudentsModule as MobileStudentsModule } from './mobile-app-api/students/students.module';
+import { StudentSurahProgressModule as MobileStudentSurahProgressModule } from './mobile-app-api/student-surah-progress/student-surah-progress.module';
 
 @Module({
   imports: [
@@ -104,6 +111,13 @@ import { FeesDashboardModule } from './fees/dashboard/dashboard.module';
     HrDashboardModule,
     StudentManagementDashboardModule,
     FeesDashboardModule,
+    MobileAcademicClassesModule,
+    MobileTeachersModule,
+    MobileSurahSchedulesModule,
+    MobileHalqasModule,
+    MobileStudentLeavesModule,
+    MobileStudentsModule,
+    MobileStudentSurahProgressModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: JwtAuthGuard }],

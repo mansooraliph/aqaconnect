@@ -17,7 +17,7 @@ export class ExamResultsService {
   }
 
   private studentSelect() {
-    return { select: { firstName: true, lastName: true, studentCode: true } };
+    return { select: { name: true, studentCode: true } };
   }
 
   async list(branchId: string, examId: string) {
@@ -137,8 +137,8 @@ export class ExamResultsService {
         status: 'ACTIVE',
         ...(markedIds.length && { id: { notIn: markedIds } }),
       },
-      select: { id: true, firstName: true, lastName: true, studentCode: true },
-      orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+      select: { id: true, name: true, studentCode: true },
+      orderBy: { name: 'asc' },
     });
   }
 }

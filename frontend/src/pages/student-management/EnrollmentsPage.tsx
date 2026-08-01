@@ -19,8 +19,7 @@ import { toast } from '../../components/ui/toast';
 interface Student {
   id: string;
   studentCode: string;
-  firstName: string;
-  lastName: string;
+  name: string;
 }
 
 interface AcademicClassSectionYear {
@@ -43,8 +42,7 @@ interface Enrollment {
   transferredFromId: string | null;
   student: {
     id: string;
-    firstName: string;
-    lastName: string;
+    name: string;
     studentCode: string;
   };
   academicClassSectionYear: {
@@ -88,7 +86,7 @@ export function EnrollmentsPage() {
   });
 
   const studentOptions = (studentsQuery.data ?? []).map((s) => ({
-    label: `${s.firstName} ${s.lastName} (${s.studentCode})`,
+    label: `${s.name} (${s.studentCode})`,
     value: s.id,
   }));
 
@@ -185,7 +183,7 @@ export function EnrollmentsPage() {
       id: 'student',
       header: 'Student',
       cell: ({ row }) =>
-        `${row.original.student.firstName} ${row.original.student.lastName} (${row.original.student.studentCode})`,
+        `${row.original.student.name} (${row.original.student.studentCode})`,
     },
     {
       id: 'class',

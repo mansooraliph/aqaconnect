@@ -6,9 +6,6 @@ export class GenerateSchedulesDto {
   @IsString({ each: true })
   studentIds: string[];
 
-  @IsString()
-  surahTargetScheduleId: string;
-
   @IsDateString()
   startDate: string;
 }

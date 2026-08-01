@@ -11,6 +11,7 @@ import { Button } from '../../components/ui/Button';
 import { DataTable } from '../../components/ui/DataTable';
 import { Modal } from '../../components/ui/Modal';
 import { Field, Input, Textarea } from '../../components/ui/Input';
+import { Select } from '../../components/ui/Select';
 import { Checkbox } from '../../components/ui/Checkbox';
 import { StatusBadge } from '../../components/ui/StatusBadge';
 import { toast } from '../../components/ui/toast';
@@ -72,8 +73,18 @@ export function AdmissionsPage() {
   const [actionLoading, setActionLoading] = useState(false);
   const [studentCode, setStudentCode] = useState('');
   const [createLogin, setCreateLogin] = useState(false);
+  const [username, setUsername] = useState('');
+  const [halqaId, setHalqaId] = useState('');
+  const [hifdhStartDate, setHifdhStartDate] = useState('');
   const [reviewNote, setReviewNote] = useState('');
   const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
+
+  const halqasQuery = useQuery({
+    queryKey: ['halqas', activeBranchId],
+    queryFn: async () => (await api.get<{ id: string; name: string }[]>(`/branches/${activeBranchId}/halqas`)).data,
+    enabled: Boolean(activeBranchId),
+  });
+  const halqaOptions = (halqasQuery.data ?? []).map((h) => ({ label: h.name, value: h.id }));
 
   const [credentials, setCredentials] = useState<{
     studentId: string;
@@ -100,6 +111,9 @@ export function AdmissionsPage() {
     setActionType(type);
     setStudentCode('');
     setCreateLogin(false);
+    setUsername('');
+    setHalqaId('');
+    setHifdhStartDate('');
     setReviewNote('');
     setActionErrors({});
   };
@@ -109,6 +123,9 @@ export function AdmissionsPage() {
     setActionType(null);
     setStudentCode('');
     setCreateLogin(false);
+    setUsername('');
+    setHalqaId('');
+    setHifdhStartDate('');
     setReviewNote('');
     setActionErrors({});
   };
@@ -122,6 +139,9 @@ export function AdmissionsPage() {
     }
     if (actionType === 'reject' && !reviewNote.trim()) {
       errors.reviewNote = 'Review note is required';
+    }
+    if (actionType === 'approve' && createLogin && !username.trim()) {
+      errors.username = 'A username is required to create a login';
     }
     setActionErrors(errors);
     if (Object.keys(errors).length > 0) return;
@@ -138,6 +158,9 @@ export function AdmissionsPage() {
           studentCode,
           reviewNote: reviewNote || undefined,
           createLogin,
+          username: createLogin ? username : undefined,
+          halqaId: halqaId || undefined,
+          hifdhStartDate: hifdhStartDate || undefined,
         });
         toast.success('Admission approved');
         if (data.loginCreated) {
@@ -265,6 +288,25 @@ export function AdmissionsPage() {
                 <Checkbox checked={createLogin} onChange={setCreateLogin} />
                 <span className="text-sm text-text-primary">Create login account</span>
               </label>
+              {createLogin && (
+                <Field label="Username" required error={actionErrors.username}>
+                  <Input value={username} onChange={(e) => setUsername(e.target.value)} />
+                </Field>
+              )}
+              <Field label="Assign to Halqa (optional)" hint="Auto-generates the student's initial Hifdh schedule">
+                <Select
+                  value={halqaId}
+                  onChange={(e) => setHalqaId(e.target.value)}
+                  placeholder="No Halqa"
+                  options={halqaOptions}
+                  disabled={halqasQuery.isLoading}
+                />
+              </Field>
+              {halqaId && (
+                <Field label="Hifdh start date" hint="Defaults to today if left blank">
+                  <Input type="date" value={hifdhStartDate} onChange={(e) => setHifdhStartDate(e.target.value)} />
+                </Field>
+              )}
             </>
           )}
           <Field

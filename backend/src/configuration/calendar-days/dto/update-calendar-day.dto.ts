@@ -11,5 +11,9 @@ export class UpdateCalendarDayDto {
 
   @IsOptional()
   @IsString()
+  holidayName?: string;
+
+  @IsOptional()
+  @IsString()
   note?: string;
 }

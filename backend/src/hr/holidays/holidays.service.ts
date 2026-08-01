@@ -77,12 +77,12 @@ export class HolidaysService {
         date: holiday.date,
         isWorkingDay: false,
         isHoliday: true,
-        holidayId: holiday.id,
+        holidayName: holiday.name,
       },
       update: {
         isWorkingDay: false,
         isHoliday: true,
-        holidayId: holiday.id,
+        holidayName: holiday.name,
       },
     });
   }

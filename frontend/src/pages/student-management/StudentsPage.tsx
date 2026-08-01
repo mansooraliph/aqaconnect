@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Copy, Pencil, Plus } from 'lucide-react';
 import { useAuthStore } from '../../store/auth';
@@ -11,6 +11,7 @@ import { DataTable } from '../../components/ui/DataTable';
 import { Modal } from '../../components/ui/Modal';
 import { Field, Input } from '../../components/ui/Input';
 import { Select } from '../../components/ui/Select';
+import { FilterSelect } from '../../components/ui/FilterSelect';
 import { Checkbox } from '../../components/ui/Checkbox';
 import { Badge } from '../../components/ui/Badge';
 import { StatusBadge } from '../../components/ui/StatusBadge';
@@ -25,8 +26,7 @@ interface StudentUser {
 interface Student {
   id: string;
   studentCode: string;
-  firstName: string;
-  lastName: string;
+  name: string;
   dateOfBirth: string | null;
   guardianName: string | null;
   guardianPhone: string | null;
@@ -34,28 +34,40 @@ interface Student {
   user: StudentUser | null;
 }
 
+interface Halqa {
+  id: string;
+  name: string;
+  students: { student: { id: string } }[];
+}
+
 interface FormState {
   studentCode: string;
-  firstName: string;
-  lastName: string;
+  name: string;
   dateOfBirth: string;
   guardianName: string;
   guardianPhone: string;
   status: 'ACTIVE' | 'INACTIVE';
   createLogin: boolean;
+  username: string;
   email: string;
+  // Assigning a Halqa at creation auto-generates the student's initial Hifdh
+  // schedule from the HIFDH-stage Target Schedule rows (see HifdhService).
+  halqaId: string;
+  hifdhStartDate: string;
 }
 
 const EMPTY_FORM: FormState = {
   studentCode: '',
-  firstName: '',
-  lastName: '',
+  name: '',
   dateOfBirth: '',
   guardianName: '',
   guardianPhone: '',
   status: 'ACTIVE',
   createLogin: false,
+  username: '',
   email: '',
+  halqaId: '',
+  hifdhStartDate: '',
 };
 
 export function StudentsPage() {
@@ -67,6 +79,28 @@ export function StudentsPage() {
   const { list, create, update, basePath, queryKey } = useBranchResource<Student>(
     activeBranchId,
     'students',
+  );
+
+  const halqasQuery = useQuery({
+    queryKey: ['halqas', activeBranchId],
+    queryFn: async () => (await api.get<Halqa[]>(`/branches/${activeBranchId}/halqas`)).data,
+    enabled: Boolean(activeBranchId),
+  });
+  const halqaOptions = (halqasQuery.data ?? []).map((h) => ({ label: h.name, value: h.id }));
+
+  const findStudentHalqaId = (studentId: string) =>
+    (halqasQuery.data ?? []).find((h) => h.students.some((s) => s.student.id === studentId))?.id ?? '';
+
+  const studentHalqaMap = new Map<string, { id: string; name: string }>();
+  for (const h of halqasQuery.data ?? []) {
+    for (const s of h.students) {
+      studentHalqaMap.set(s.student.id, { id: h.id, name: h.name });
+    }
+  }
+
+  const [filterHalqaId, setFilterHalqaId] = useState('');
+  const filteredStudents = (list.data ?? []).filter(
+    (s) => !filterHalqaId || studentHalqaMap.get(s.id)?.id === filterHalqaId,
   );
 
   const bulkAction = useMutation({
@@ -85,6 +119,7 @@ export function StudentsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
+  const [originalHalqaId, setOriginalHalqaId] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
@@ -106,17 +141,21 @@ export function StudentsPage() {
 
   const openEdit = (record: Student) => {
     setEditing(record);
+    const currentHalqaId = findStudentHalqaId(record.id);
     setForm({
       studentCode: record.studentCode,
-      firstName: record.firstName,
-      lastName: record.lastName,
+      name: record.name,
       dateOfBirth: record.dateOfBirth ?? '',
       guardianName: record.guardianName ?? '',
       guardianPhone: record.guardianPhone ?? '',
       status: record.status,
       createLogin: false,
+      username: '',
       email: '',
+      halqaId: currentHalqaId,
+      hifdhStartDate: '',
     });
+    setOriginalHalqaId(currentHalqaId);
     setErrors({});
     setModalOpen(true);
   };
@@ -130,11 +169,9 @@ export function StudentsPage() {
   const handleSubmit = async () => {
     const nextErrors: Record<string, string> = {};
     if (!editing && !form.studentCode.trim()) nextErrors.studentCode = 'Student code is required';
-    if (!form.firstName.trim()) nextErrors.firstName = 'First name is required';
-    if (!form.lastName.trim()) nextErrors.lastName = 'Last name is required';
-    if (!editing && form.createLogin) {
-      const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim());
-      if (!emailValid) nextErrors.email = 'A valid email is required';
+    if (!form.name.trim()) nextErrors.name = 'Student name is required';
+    if (!editing && form.createLogin && !form.username.trim()) {
+      nextErrors.username = 'A username is required to create a login';
     }
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
@@ -145,30 +182,45 @@ export function StudentsPage() {
         await update.mutateAsync({
           id: editing.id,
           payload: {
-            firstName: form.firstName,
-            lastName: form.lastName,
+            name: form.name,
             dateOfBirth: form.dateOfBirth || null,
             guardianName: form.guardianName || null,
             guardianPhone: form.guardianPhone || null,
             status: form.status,
           },
         });
+        if (form.halqaId !== originalHalqaId) {
+          if (originalHalqaId) {
+            await api.post(`/branches/${activeBranchId}/halqas/${originalHalqaId}/remove-student`, {
+              studentId: editing.id,
+            });
+          }
+          if (form.halqaId) {
+            await api.post(`/branches/${activeBranchId}/halqas/${form.halqaId}/assign-student`, {
+              studentId: editing.id,
+            });
+          }
+          queryClient.invalidateQueries({ queryKey: ['halqas', activeBranchId] });
+        }
         toast.success('Updated');
         setModalOpen(false);
         setForm(EMPTY_FORM);
       } else {
-        // Create payload includes account-provisioning fields (createLogin/email)
-        // that aren't part of the Student read-model, so this doesn't fit
-        // useBranchResource's Partial<Student> typing.
+        // Create payload includes account-provisioning fields (createLogin/
+        // username/email/halqaId) that aren't part of the Student
+        // read-model, so this doesn't fit useBranchResource's
+        // Partial<Student> typing.
         const data = await create.mutateAsync({
           studentCode: form.studentCode,
-          firstName: form.firstName,
-          lastName: form.lastName,
+          name: form.name,
           dateOfBirth: form.dateOfBirth || undefined,
           guardianName: form.guardianName || undefined,
           guardianPhone: form.guardianPhone || undefined,
           createLogin: form.createLogin || undefined,
-          email: form.createLogin ? form.email : undefined,
+          username: form.createLogin ? form.username : undefined,
+          email: form.createLogin && form.email ? form.email : undefined,
+          halqaId: form.halqaId || undefined,
+          hifdhStartDate: form.hifdhStartDate || undefined,
         } as unknown as Partial<Student>);
         toast.success('Created');
         setModalOpen(false);
@@ -215,7 +267,7 @@ export function StudentsPage() {
     setSelectedIds((ids) => (ids.includes(id) ? ids.filter((i) => i !== id) : [...ids, id]));
   };
 
-  const allSelected = (list.data ?? []).length > 0 && selectedIds.length === (list.data ?? []).length;
+  const allSelected = filteredStudents.length > 0 && selectedIds.length === filteredStudents.length;
 
   const columns: ColumnDef<Student, unknown>[] = [
     ...(canManage
@@ -227,7 +279,7 @@ export function StudentsPage() {
                 checked={allSelected}
                 indeterminate={selectedIds.length > 0 && !allSelected}
                 onChange={(checked) =>
-                  setSelectedIds(checked ? (list.data ?? []).map((s) => s.id) : [])
+                  setSelectedIds(checked ? filteredStudents.map((s) => s.id) : [])
                 }
                 aria-label="Select all"
               />
@@ -242,12 +294,13 @@ export function StudentsPage() {
           },
         ] as ColumnDef<Student, unknown>[])
       : []),
-    {
-      id: 'name',
-      header: 'Name',
-      cell: ({ row }) => `${row.original.firstName} ${row.original.lastName}`,
-    },
+    { header: 'Student Name', accessorKey: 'name' },
     { header: 'Student code', accessorKey: 'studentCode' },
+    {
+      id: 'halqa',
+      header: 'Halqa',
+      cell: ({ row }) => studentHalqaMap.get(row.original.id)?.name ?? '-',
+    },
     { header: 'Guardian name', accessorKey: 'guardianName', cell: ({ row }) => row.original.guardianName ?? '-' },
     { header: 'Guardian phone', accessorKey: 'guardianPhone', cell: ({ row }) => row.original.guardianPhone ?? '-' },
     {
@@ -319,12 +372,22 @@ export function StudentsPage() {
           </>
         }
       />
-      <DataTable<Student> columns={allColumns} data={list.data ?? []} isLoading={list.isLoading} />
+      <FilterSelect
+        width="w-64"
+        label="Filter by Halqa"
+        placeholder="All Halqas"
+        value={filterHalqaId}
+        onChange={setFilterHalqaId}
+        options={halqaOptions}
+      />
+      <DataTable<Student> columns={allColumns} data={filteredStudents} isLoading={list.isLoading} />
 
       <Modal
         open={modalOpen}
         title={editing ? 'Edit Student' : 'Add Student'}
         onClose={handleCancel}
+        position="right"
+        width="max-w-md"
         footer={
           <>
             <Button variant="outline" onClick={handleCancel} disabled={submitting}>
@@ -337,7 +400,11 @@ export function StudentsPage() {
         }
       >
         <div className="flex flex-col gap-4">
-          {!editing && (
+          {editing ? (
+            <Field label="Student code">
+              <Input value={form.studentCode} readOnly disabled />
+            </Field>
+          ) : (
             <Field label="Student code" required error={errors.studentCode}>
               <Input
                 value={form.studentCode}
@@ -345,11 +412,8 @@ export function StudentsPage() {
               />
             </Field>
           )}
-          <Field label="First name" required error={errors.firstName}>
-            <Input value={form.firstName} onChange={(e) => setField('firstName', e.target.value)} />
-          </Field>
-          <Field label="Last name" required error={errors.lastName}>
-            <Input value={form.lastName} onChange={(e) => setField('lastName', e.target.value)} />
+          <Field label="Student Name" required error={errors.name}>
+            <Input value={form.name} onChange={(e) => setField('name', e.target.value)} />
           </Field>
           <Field label="Date of birth">
             <Input
@@ -380,11 +444,37 @@ export function StudentsPage() {
                 <span className="text-sm text-text-primary">Create login account</span>
               </label>
               {form.createLogin && (
-                <Field label="Email" required error={errors.email}>
-                  <Input value={form.email} onChange={(e) => setField('email', e.target.value)} />
-                </Field>
+                <>
+                  <Field label="Username" required error={errors.username}>
+                    <Input value={form.username} onChange={(e) => setField('username', e.target.value)} />
+                  </Field>
+                  <Field label="Email (optional)">
+                    <Input value={form.email} onChange={(e) => setField('email', e.target.value)} />
+                  </Field>
+                </>
               )}
             </>
+          )}
+          <Field
+            label="Assign to Halqa (optional)"
+            hint={editing ? undefined : "Auto-generates the student's initial Hifdh schedule"}
+          >
+            <Select
+              value={form.halqaId}
+              onChange={(e) => setField('halqaId', e.target.value)}
+              placeholder="No Halqa"
+              options={halqaOptions}
+              disabled={halqasQuery.isLoading}
+            />
+          </Field>
+          {!editing && form.halqaId && (
+            <Field label="Hifdh start date" hint="Defaults to today if left blank">
+              <Input
+                type="date"
+                value={form.hifdhStartDate}
+                onChange={(e) => setField('hifdhStartDate', e.target.value)}
+              />
+            </Field>
           )}
           {editing && (
             <Field label="Status">

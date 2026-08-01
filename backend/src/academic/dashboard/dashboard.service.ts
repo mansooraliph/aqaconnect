@@ -57,7 +57,7 @@ export class AcademicDashboardService {
     const students = leaderboardStudentIds.length
       ? await this.prisma.student.findMany({
           where: { id: { in: leaderboardStudentIds } },
-          select: { id: true, firstName: true, lastName: true },
+          select: { id: true, name: true },
         })
       : [];
     const studentById = new Map(students.map((s) => [s.id, s]));
@@ -66,7 +66,7 @@ export class AcademicDashboardService {
       const student = studentById.get(row.studentId);
       return {
         studentId: row.studentId,
-        studentName: student ? `${student.firstName} ${student.lastName}` : 'Unknown',
+        studentName: student ? student.name : 'Unknown',
         completedCount: row._count._all,
       };
     });

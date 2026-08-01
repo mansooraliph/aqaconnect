@@ -47,6 +47,11 @@ const MODULES: ModuleDef[] = [
       { key: '/configuration/class-section-years', label: 'Class Section Years', permission: 'configuration.class_section_years.view' },
       { key: '/configuration/lesson-stages', label: 'Lesson Stages', permission: 'configuration.lesson_stages.view' },
       { key: '/configuration/surahs', label: 'Surahs', permission: 'configuration.surahs.view' },
+      {
+        key: '/configuration/surah-ayah-page-lines',
+        label: 'Surah Ayah Page Lines',
+        permission: 'configuration.surahs.view',
+      },
       { key: '/configuration/target-schedules', label: 'Target Schedules', permission: 'configuration.target_schedules.view' },
       { key: '/configuration/calendar', label: 'Calendar', permission: 'configuration.calendar.view' },
       { key: '/configuration/settings', label: 'Branch Settings', permission: 'configuration.branch_settings.view' },

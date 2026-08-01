@@ -13,6 +13,11 @@ export interface FieldDef {
   type: FieldType;
   required?: boolean;
   options?: { label: string; value: string | number }[];
+  /** Only shown/submitted when editing an existing record (e.g. a `status`
+   * field whose Create DTO doesn't accept it — new records default server-side). */
+  editOnly?: boolean;
+  /** Only shown/submitted when creating a new record. */
+  createOnly?: boolean;
 }
 
 interface CrudFormModalProps {
@@ -44,15 +49,22 @@ export function CrudFormModal({
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  const isEditing = initialValues !== undefined;
+  // editOnly fields (e.g. `status`, whose Create DTO doesn't accept it —
+  // new records default server-side) only show up once a record exists;
+  // createOnly fields are the mirror image.
+  const visibleFields = fields.filter((f) => (isEditing ? !f.createOnly : !f.editOnly));
+
   useEffect(() => {
     if (open) {
       const next: Record<string, unknown> = {};
-      for (const field of fields) {
+      for (const field of visibleFields) {
         next[field.name] = initialValues?.[field.name] ?? emptyValueFor(field);
       }
       setValues(next);
       setErrors({});
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialValues, fields]);
 
   const setField = (name: string, value: unknown) => {
@@ -61,7 +73,7 @@ export function CrudFormModal({
 
   const handleSubmit = () => {
     const nextErrors: Record<string, string> = {};
-    for (const field of fields) {
+    for (const field of visibleFields) {
       if (field.required) {
         const v = values[field.name];
         if (v === undefined || v === null || v === '') {
@@ -72,11 +84,14 @@ export function CrudFormModal({
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
 
-    const converted: Record<string, unknown> = { ...values };
-    for (const field of fields) {
-      if (field.type === 'number' && converted[field.name] !== '') {
-        converted[field.name] = Number(converted[field.name]);
-      }
+    const converted: Record<string, unknown> = {};
+    for (const field of visibleFields) {
+      const raw = values[field.name];
+      // Omit blank optional fields entirely rather than sending '' — an
+      // empty string satisfies neither @IsOptional() (which only skips
+      // null/undefined) nor the field's real type validator.
+      if (raw === '' && !field.required) continue;
+      converted[field.name] = field.type === 'number' && raw !== '' ? Number(raw) : raw;
     }
     onSubmit(converted);
   };
@@ -98,7 +113,7 @@ export function CrudFormModal({
       }
     >
       <div className="flex flex-col gap-4">
-        {fields.map((field) =>
+        {visibleFields.map((field) =>
           field.type === 'checkbox' ? (
             <label key={field.name} className="flex items-center gap-2">
               <Checkbox

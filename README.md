@@ -27,7 +27,7 @@ npm run dev                 # http://localhost:5173 (or next free port)
 ```
 
 ## Seeded dev credentials
-- Email: `admin@example.com`
+- Username: `admin`
 - Password: `ChangeMe123!`
 
 **Change or remove this account before any non-local deployment.**

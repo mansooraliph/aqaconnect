@@ -43,6 +43,8 @@ interface DataTableProps<T> {
   onRowClick?: (row: T) => void;
   emptyMessage?: string;
   searchable?: boolean;
+  /** Extra classes applied to a row's <tr>, e.g. a background tint for flagged rows. */
+  rowClassName?: (row: T) => string | undefined;
 }
 
 /** Build a page-number list with ellipsis, e.g. [1,'…',4,5,6,'…',12]. */
@@ -73,6 +75,7 @@ export function DataTable<T>({
   onRowClick,
   emptyMessage = 'No results found',
   searchable,
+  rowClassName,
 }: DataTableProps<T>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
@@ -214,6 +217,7 @@ export function DataTable<T>({
                   className={cn(
                     'border-t border-border transition-colors',
                     onRowClick && 'cursor-pointer hover:bg-table-alt',
+                    rowClassName?.(row.original),
                   )}
                 >
                   {row.getVisibleCells().map((cell) => (

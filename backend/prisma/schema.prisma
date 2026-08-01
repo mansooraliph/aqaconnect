@@ -48,30 +48,33 @@ model Branch {
   academicSections AcademicSection[]
   calendarDays     CalendarDay[]
 
-  employees     Employee[]
-  departments   Department[]
-  designations  Designation[]
-  leaves        Leave[]
-  attendances   Attendance[]
-  holidays      Holiday[]
-  appreciations Appreciation[]
-  awards        Award[]
-  teachers      Teacher[]
+  employees           Employee[]
+  departments         Department[]
+  designations        Designation[]
+  leaves              Leave[]
+  attendances         Attendance[]
+  holidays            Holiday[]
+  appreciations       Appreciation[]
+  awards              Award[]
+  teachers            Teacher[]
   teacherApplications TeacherApplication[]
 
-  admissions         Admission[]
-  students           Student[]
-  studentLeaves      StudentLeave[]
+  admissions    Admission[]
+  students      Student[]
+  studentLeaves StudentLeave[]
 
-  feeTypes       FeeType[]
-  feeStructures  FeeStructure[]
-  feeDemands     FeeDemand[]
-  payments       Payment[]
+  feeTypes      FeeType[]
+  feeStructures FeeStructure[]
+  feeDemands    FeeDemand[]
+  payments      Payment[]
 
   lessons   Lesson[]
   halqas    Halqa[]
   examTypes ExamType[]
   exams     Exam[]
+
+  studentExams StudentExam[]
+  progressEntries StudentSurahProgressEntry[]
 
   @@index([isActive])
 }
@@ -80,29 +83,33 @@ model Branch {
 // still have a home branchId (their "primary office") purely for record
 // purposes — it does not restrict their query scope.
 model BranchSettings {
-  id          String   @id @default(cuid())
-  branchId    String   @unique
-  branch      Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  displayName String?
-  currency    String   @default("INR") // old app hardcoded Rupee; now explicit
-  timezone    String   @default("Asia/Kolkata")
-  language    String   @default("en")
-  logoUrl     String?
+  id             String        @id @default(cuid())
+  branchId       String        @unique
+  branch         Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  displayName    String?
+  currency       String        @default("INR") // old app hardcoded Rupee; now explicit
+  timezone       String        @default("Asia/Kolkata")
+  language       String        @default("en")
+  logoUrl        String?
   // Added in Phase 2.1 now that AcademicYear exists (deferred from Phase 2.0).
   academicYearId String?
   academicYear   AcademicYear? @relation(fields: [academicYearId], references: [id])
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
   @@index([academicYearId])
 }
 
 model User {
   id           String    @id @default(cuid())
-  email        String    @unique
+  // Login identifier — admin-settable, any alphanumeric string (may itself
+  // look like an email, but isn't validated as one). Replaces email as the
+  // login credential; email is now just an optional contact field.
+  username     String    @unique
+  email        String?   @unique
   passwordHash String
   firstName    String
-  lastName     String
+  lastName     String?
   phone        String?
   isActive     Boolean   @default(true)
   branchId     String? // nullable: pure-management users may have no home branch
@@ -116,6 +123,15 @@ model User {
   employee      Employee?
   teacher       Teacher?
   student       Student?
+
+  academicClassesAdded       AcademicClass[] @relation("AcademicClassAddedBy")
+  academicClassesLastUpdated AcademicClass[] @relation("AcademicClassLastUpdatedBy")
+  halqasAdded                Halqa[]         @relation("HalqaAddedBy")
+  halqasLastUpdated          Halqa[]         @relation("HalqaLastUpdatedBy")
+
+  progressEntriesAdded       StudentSurahProgressEntry[] @relation("ProgressEntryAddedBy")
+  progressEntriesLastUpdated StudentSurahProgressEntry[] @relation("ProgressEntryLastUpdatedBy")
+  progressEntriesVerified    StudentSurahProgressEntry[] @relation("ProgressEntryVerifiedBy")
 
   @@index([branchId])
 }
@@ -233,21 +249,37 @@ model LessonSubStage {
 }
 
 // Reference data — the 114 Surahs. Not branch-scoped (shared reference table).
+// Field set matches the legacy `surahs` table (juz/page/line range columns
+// carried over 1:1); company_id/added_by/last_updated_by/deleted_at were
+// deliberately dropped — this table stays global, and no other model in
+// this schema uses an audit-by or soft-delete pattern.
 model Surah {
-  id             String   @id @default(cuid())
-  number         Int      @unique // 1-114
-  nameArabic     String
-  nameEnglish    String
+  id             String          @id @default(cuid())
+  number         Int             @unique // 1-114 (legacy: surah_number)
+  nameArabic     String // legacy: name_ar
+  nameEnglish    String // legacy: name_en
   totalAyahs     Int
-  revelationType String? // Meccan / Medinan
-  createdAt      DateTime @default(now())
+  juzFrom        Int? // legacy: juzuh_from
+  juzTo          Int? // legacy: juzuh_to
+  pageNumberFrom Int?
+  pageNumberTo   Int?
+  lineNumberFrom Int?
+  lineNumberTo   Int?
+  revelationType RevelationType? // legacy: makki_or_madani
+  createdAt      DateTime        @default(now())
 
   pageLines        SurahAyahPageLine[]
   targetSchedules  SurahTargetSchedule[]
   studentSchedules SurahHifdhStudentSchedule[]
   studentProgress  StudentSurahProgress[]
+  progressEntries  StudentSurahProgressEntry[]
 
   @@index([number])
+}
+
+enum RevelationType {
+  MAKKI
+  MADANI
 }
 
 // Underlying raw page/line grid (old QuranPageLinesController data entry).
@@ -261,14 +293,21 @@ model QuranPage {
 }
 
 // Maps ayah <-> page/line — reference data curated via import/export.
+// Field set matches the legacy `surah_ayah_page_lines` table (juz number
+// and a line-range per ayah carried over); company_id/added_by/
+// last_updated_by/deleted_at were dropped — same rationale as Surah:
+// this stays global, and denormalized surah_name_ar/en/surah_number are
+// dropped too since they're already reachable via the surahId relation.
 model SurahAyahPageLine {
   id          String    @id @default(cuid())
   surahId     String
   surah       Surah     @relation(fields: [surahId], references: [id], onDelete: Cascade)
   ayahNumber  Int
+  juzNumber   Int? // legacy: juz_number
   quranPageId String
   quranPage   QuranPage @relation(fields: [quranPageId], references: [id])
-  lineNumber  Int
+  lineFrom    Int // legacy: line_from
+  lineTo      Int // legacy: line_to
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -276,35 +315,67 @@ model SurahAyahPageLine {
   @@index([quranPageId])
 }
 
-// Template defining the target pacing (e.g. "N ayahs per week") later used
-// to generate per-student Hifdh schedules — this is a template, not a
-// per-student record (see SurahHifdhStudentSchedule, added in Phase 2.5).
+// Day-by-day memorization pacing plan, one row per day, later used to
+// generate per-student Hifdh schedules (see SurahHifdhStudentSchedule).
+// This is a single global master plan (no scheduleNo grouping — there is
+// only ever one target schedule, not several selectable ones). Flattened to
+// match the legacy `surah_target_schedules` table; company_id/added_by/
+// last_updated_by were dropped — same rationale as Surah/SurahAyahPageLine
+// (this stays global; no other model uses an audit-by pattern).
+//
+// A day can carry several rows (a sabaq + multiple sabqi/manzil revision
+// portions on the same day is normal for a real memorization plan — real
+// import data has up to 13 rows for a single day), so dayNumber is NOT
+// unique. surahId/fromAyah/toAyah/stage are nullable because milestone rows
+// ("Preparation day", "Exam Juz 30") carry no surah portion at all — for
+// those, the descriptive text goes into examName instead.
 model SurahTargetSchedule {
-  id            String       @id @default(cuid())
-  surahId       String
-  surah         Surah        @relation(fields: [surahId], references: [id])
-  name          String
-  targetsPerDay Int          @default(1) // ayah/line unit count expected per day
-  status        ActiveStatus @default(ACTIVE)
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  id                       String            @id @default(cuid())
+  sortOrder                Int // display order — preserves import/insertion order rather than resorting by day
+  dayNumber                Int // legacy: day
+  stage                    ScheduleStage? // legacy: stage enum('Hifdh','Doura','Revision')
+  surahId                  String?
+  surah                    Surah?            @relation(fields: [surahId], references: [id])
+  pageNumberFrom           Int?
+  pageNumberTo             Int?
+  lineFrom                 Int?
+  lineTo                   Int?
+  portionDescription       String?
+  fromAyah                 Int? // legacy: verse_from
+  toAyah                   Int? // legacy: verse_to
+  estimatedDurationMinutes Int? // legacy: estimated_duration (time) stored as minutes
+  difficultyLevel          DifficultyLevel?
+  priority                 SchedulePriority?
+  scheduleType             String? // legacy: schedule_type — plain text, e.g. "Normal" / "Exam"
+  examName                 String? // e.g. "Exam Juz 30", "Preparation day" when there's no surah portion
+  createdAt                DateTime          @default(now())
+  updatedAt                DateTime          @updatedAt
 
-  targets SurahTarget[]
+  hifdhSchedules SurahHifdhStudentSchedule[]
 
   @@index([surahId])
+  @@index([sortOrder])
 }
 
-// Individual day/unit breakdown within a target schedule.
-model SurahTarget {
-  id                    String   @id @default(cuid())
-  surahTargetScheduleId String
-  surahTargetSchedule   SurahTargetSchedule @relation(fields: [surahTargetScheduleId], references: [id], onDelete: Cascade)
-  dayNumber             Int
-  fromAyah              Int
-  toAyah                Int
-  createdAt             DateTime @default(now())
+enum ScheduleStage {
+  HIFDH
+  DOURA
+  REVISION
+}
 
-  @@unique([surahTargetScheduleId, dayNumber])
+enum DifficultyLevel {
+  VERY_EASY
+  EASY
+  MEDIUM
+  HARD
+  VERY_HARD
+}
+
+enum SchedulePriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
 }
 
 model AcademicYear {
@@ -329,20 +400,27 @@ model AcademicYear {
 }
 
 model AcademicClass {
-  id        String       @id @default(cuid())
-  branchId  String
-  branch    Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  name      String
-  sortOrder Int          @default(0)
-  status    ActiveStatus @default(ACTIVE)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  id              String       @id @default(cuid())
+  branchId        String
+  branch          Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name            String
+  code            String? // legacy Mobile App API: unique per branch (nulls excluded from uniqueness)
+  sortOrder       Int          @default(0)
+  status          ActiveStatus @default(ACTIVE)
+  addedById       String? // legacy Mobile App API: audit trail (not used by the modern configuration UI)
+  addedBy         User?        @relation("AcademicClassAddedBy", fields: [addedById], references: [id])
+  lastUpdatedById String?
+  lastUpdatedBy   User?        @relation("AcademicClassLastUpdatedBy", fields: [lastUpdatedById], references: [id])
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
 
   classSections AcademicClassSection[]
   admissions    Admission[]
   feeStructures FeeStructure[]
+  halqas        Halqa[]
 
   @@unique([branchId, name])
+  @@unique([branchId, code])
   @@index([branchId])
 }
 
@@ -403,29 +481,43 @@ model AcademicClassSectionYear {
 // counts/stats. Expose it as a read-only endpoint/view once StudentEnrollment
 // exists (Phase 2.3), not a Prisma model.
 
+// Field set matches the legacy `calendar_days` table (day_name/week_number/
+// year/holiday_name carried over as plain stored columns — no FK to Holiday,
+// per explicit instruction). company_id maps to the existing branchId;
+// added_by/last_updated_by dropped — same rationale as Surah (no other
+// model here uses an audit-by pattern).
+// academicYearId is optional — matching legacy, "Initiate Days" generates a
+// full Jan-Dec calendar year independent of any academic year (only the
+// pre-existing per-academic-year generate() flow sets it).
 model CalendarDay {
-  id             String       @id @default(cuid())
+  id             String        @id @default(cuid())
   branchId       String
-  branch         Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  academicYearId String
-  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
-  date           DateTime     @db.Date
-  isWorkingDay   Boolean      @default(true)
-  isHoliday      Boolean      @default(false)
-  holidayId      String?
-  holiday        Holiday?     @relation(fields: [holidayId], references: [id])
+  branch         Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  academicYearId String?
+  academicYear   AcademicYear? @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  date           DateTime      @db.Date
+  dayName        String? // legacy: day_name
+  weekNumber     Int? // legacy: week_number
+  year           Int?
+  isWorkingDay   Boolean       @default(true)
+  isHoliday      Boolean       @default(false)
+  holidayName    String? // legacy: holiday_name (plain text, no FK)
   note           String?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
 
   @@unique([branchId, date])
   @@index([academicYearId])
-  @@index([holidayId])
 }
 
 enum ActiveStatus {
   ACTIVE
   INACTIVE
+}
+
+enum Gender {
+  MALE
+  FEMALE
 }
 
 enum LeaveStatus {
@@ -472,6 +564,7 @@ model Employee {
   designationId String?
   designation   Designation? @relation(fields: [designationId], references: [id])
   dateOfJoining DateTime?
+  gender        Gender?
   status        ActiveStatus @default(ACTIVE)
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
@@ -539,7 +632,7 @@ model LeaveQuota {
   leaveType      String // e.g. "casual", "sick", "earned" — kept as a string/lookup rather than enum for admin extensibility
   academicYearId String?
   totalDays      Decimal  @db.Decimal(5, 2)
-  usedDays       Decimal  @db.Decimal(5, 2) @default(0)
+  usedDays       Decimal  @default(0) @db.Decimal(5, 2)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -570,12 +663,19 @@ model Leave {
   @@index([employeeId])
 }
 
+// employeeId/studentId are both optional but mutually exclusive in
+// practice: every existing (HR) attendance row has an employeeId, and
+// student attendance rows (Mobile App API's activity report, no write path
+// yet) have a studentId instead. Not enforced at the DB level (Prisma has
+// no CHECK-constraint support here); application code only ever sets one.
 model Attendance {
   id         String           @id @default(cuid())
   branchId   String
   branch     Branch           @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  employeeId String
-  employee   Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employeeId String?
+  employee   Employee?        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  studentId  String?
+  student    Student?         @relation(fields: [studentId], references: [id], onDelete: Cascade)
   date       DateTime         @db.Date
   status     AttendanceStatus
   clockInAt  DateTime?
@@ -587,7 +687,9 @@ model Attendance {
   updatedAt  DateTime         @updatedAt
 
   @@unique([employeeId, date])
+  @@unique([studentId, date])
   @@index([branchId, date])
+  @@index([studentId])
 }
 
 model Holiday {
@@ -599,8 +701,6 @@ model Holiday {
   isRecurringYearly Boolean  @default(false)
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
-
-  calendarDays CalendarDay[]
 
   @@unique([branchId, date])
   @@index([branchId])
@@ -657,8 +757,8 @@ model Teacher {
   updatedAt    DateTime     @updatedAt
 
   halqas                 Halqa[]
-  lessonProgressVerified StudentLessonProgress[] @relation("VerifiedBy")
-  surahProgressVerified  StudentSurahProgress[]  @relation("SurahVerifiedBy")
+  lessonProgressVerified StudentLessonProgress[]     @relation("VerifiedBy")
+  surahProgressVerified  StudentSurahProgress[]      @relation("SurahVerifiedBy")
   hifdhSchedules         SurahHifdhStudentSchedule[]
 
   @@index([branchId])
@@ -749,11 +849,13 @@ model Student {
   branchId      String
   branch        Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
   studentCode   String
-  firstName     String
-  lastName      String
+  name          String
   dateOfBirth   DateTime?    @db.Date
   guardianName  String?
   guardianPhone String?
+  gender        Gender? // legacy Mobile App API: read off `users.gender` (student *is* a User there)
+  joiningDate   DateTime?    @db.Date // legacy Mobile App API: student_details.joining_date
+  hifdhStartDate DateTime?   @db.Date // legacy Mobile App API: student_details.hifdh_start_date (persisted there, only used transiently for schedule generation in the modern flow)
   admissionId   String?      @unique
   admission     Admission?   @relation(fields: [admissionId], references: [id])
   status        ActiveStatus @default(ACTIVE)
@@ -769,9 +871,120 @@ model Student {
   examResults      StudentExamResult[]
   feeDemands       FeeDemand[]
   payments         Payment[]
+  attendances      Attendance[]
+  studentExams     StudentExam[]
+  progressEntries  StudentSurahProgressEntry[]
 
   @@unique([branchId, studentCode])
   @@index([branchId, status])
+}
+
+// Mirrors legacy's flat per-student exam record (Mobile App API's
+// addStudentExam/updateStudentExam) — deliberately separate from the
+// modern class-wide Exam/StudentExamResult pair, which this legacy
+// endpoint predates and doesn't reference. examId/scheduleId are loose,
+// unenforced references (legacy validates them as plain integers with no
+// `exists:` rule), so kept as plain optional strings here too.
+model StudentExam {
+  id         String              @id @default(cuid())
+  branchId   String
+  branch     Branch              @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  studentId  String
+  student    Student             @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  examDate   DateTime            @db.Date
+  examId     String?
+  result     StudentExamOutcome?
+  marks      Decimal?            @db.Decimal(5, 2)
+  remarks    String?
+  scheduleId String?
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+
+  @@index([branchId])
+  @@index([studentId])
+}
+
+enum StudentExamOutcome {
+  PASS
+  FAIL
+  PREPARATION
+}
+
+// Mirrors legacy's per-ayah-range progress ledger (Mobile App API's
+// StudentSurahProgressApiController) — deliberately separate from the
+// existing cumulative StudentSurahProgress model (one row per
+// student+surah), which the admin Hifdh module already depends on and
+// updates. Legacy has MANY rows per student+surah (one per lesson
+// attempt/range), each independently gradeable/verifiable — that shape
+// doesn't fit the cumulative model without breaking it, so it's a new,
+// parallel entity instead.
+model StudentSurahProgressEntry {
+  id         String   @id @default(cuid())
+  branchId   String
+  branch     Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  studentId  String
+  student    Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  surahId    String?
+  surah      Surah?   @relation(fields: [surahId], references: [id])
+  fromAyah   Int?
+  toAyah     Int?
+  type       ProgressEntryType?
+  status     ProgressEntryStatus @default(NOT_STARTED) // legacy: completion_status
+  grade      ProgressEntryGrade?
+  completedAt DateTime?
+  verifiedAt  DateTime?
+  remarks     String?
+  // Filename only — no upload/storage subsystem in this schema (same gap
+  // as elsewhere); accepted for request-shape compatibility, never
+  // actually written to disk/S3.
+  remarkFile  String?
+
+  // "Old Lesson" / "Juzh Lesson" range fields — legacy's newer columns for
+  // ranges that span multiple surahs/juz/pages rather than a single
+  // surah's ayah range.
+  surahFrom     Int?
+  surahFromAyah Int?
+  surahTo       Int?
+  surahToAyah   Int?
+  juzuhFrom     Int?
+  juzuhTo       Int?
+  pageFrom      Int?
+  pageTo        Int?
+
+  addedById       String?
+  addedBy         User?    @relation("ProgressEntryAddedBy", fields: [addedById], references: [id])
+  lastUpdatedById String?
+  lastUpdatedBy   User?    @relation("ProgressEntryLastUpdatedBy", fields: [lastUpdatedById], references: [id])
+  verifiedById    String?
+  verifiedBy      User?    @relation("ProgressEntryVerifiedBy", fields: [verifiedById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([branchId])
+  @@index([studentId, surahId])
+  @@index([studentId, type])
+  @@index([studentId, status])
+}
+
+enum ProgressEntryType {
+  NEW_LESSON
+  JUZH_LESSON
+  OLD_LESSON
+}
+
+enum ProgressEntryStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+  VERIFIED
+}
+
+enum ProgressEntryGrade {
+  VERY_GOOD
+  GOOD
+  AVERAGE
+  BAD
 }
 
 model StudentEnrollment {
@@ -900,13 +1113,13 @@ model FeeStructure {
   // FeeInstallment's comment for the idempotency reasoning. They're never
   // read directly at demand-generation time; the installment row is always
   // the source of truth.
-  amount    Decimal      @db.Decimal(10, 2)
-  frequency FeeFrequency @default(ONE_TIME)
-  dueDate   DateTime?    @db.Date
-  currency  String       @default("INR")
-  status    ActiveStatus @default(ACTIVE)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  amount          Decimal       @db.Decimal(10, 2)
+  frequency       FeeFrequency  @default(ONE_TIME)
+  dueDate         DateTime?     @db.Date
+  currency        String        @default("INR")
+  status          ActiveStatus  @default(ACTIVE)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
 
   installments FeeInstallment[]
   demands      FeeDemand[]
@@ -944,29 +1157,29 @@ model FeeInstallment {
 // demand that already has allocations against it — enforced in the service
 // layer, not the schema (per the inventory's recommendation).
 model FeeDemand {
-  id             String   @id @default(cuid())
+  id             String          @id @default(cuid())
   branchId       String
-  branch         Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  branch         Branch          @relation(fields: [branchId], references: [id], onDelete: Cascade)
   studentId      String
-  student        Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  student        Student         @relation(fields: [studentId], references: [id], onDelete: Cascade)
   feeStructureId String
-  feeStructure   FeeStructure @relation(fields: [feeStructureId], references: [id])
+  feeStructure   FeeStructure    @relation(fields: [feeStructureId], references: [id])
   // Required, not nullable (schema review Blocking #4 fix): every
   // FeeStructure — ONE_TIME included — always has a real FeeInstallment row
   // to point to, so this is never null and the @@unique below is a genuine
   // idempotency guard for one-time fees too.
   installmentId  String
-  installment    FeeInstallment @relation(fields: [installmentId], references: [id])
+  installment    FeeInstallment  @relation(fields: [installmentId], references: [id])
   academicYearId String
-  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
-  demandAmount   Decimal  @db.Decimal(10, 2) @default(0)
-  discountAmount Decimal  @db.Decimal(10, 2) @default(0)
-  adjustedAmount Decimal  @db.Decimal(10, 2) @default(0) // running total of allocations applied
-  dueDate        DateTime? @db.Date
+  academicYear   AcademicYear    @relation(fields: [academicYearId], references: [id])
+  demandAmount   Decimal         @default(0) @db.Decimal(10, 2)
+  discountAmount Decimal         @default(0) @db.Decimal(10, 2)
+  adjustedAmount Decimal         @default(0) @db.Decimal(10, 2) // running total of allocations applied
+  dueDate        DateTime?       @db.Date
   status         FeeDemandStatus @default(PENDING) // persisted, kept in sync by allocation writes
   remark         String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
 
   allocations PaymentAllocation[]
 
@@ -1047,6 +1260,27 @@ enum HifdhProgressStatus {
   VERIFIED
 }
 
+// SurahHifdhStudentSchedule's own status vocabulary, matching legacy's
+// completion_status exactly. Deliberately a separate enum from
+// HifdhProgressStatus (used by StudentSurahProgress, the cumulative
+// aggregate) so the two concerns don't get entangled — NEEDS_REVIEW is the
+// old "COMPLETED" (student done, awaiting teacher check) and this
+// COMPLETED is the old "VERIFIED" (teacher-confirmed, terminal).
+enum HifdhScheduleStatus {
+  PENDING
+  IN_PROGRESS
+  NEEDS_REVIEW
+  COMPLETED
+}
+
+enum MemorizationQuality {
+  EXCELLENT
+  GOOD
+  AVERAGE
+  NEEDS_IMPROVEMENT
+  NOT_ASSESSED
+}
+
 enum ExamResultStatus {
   DRAFT
   PUBLISHED
@@ -1099,20 +1333,29 @@ model StudentLessonProgress {
 
 // A "Halqa" = a Quran study circle/group led by a teacher.
 model Halqa {
-  id        String       @id @default(cuid())
-  branchId  String
-  branch    Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  name      String
-  teacherId String?
-  teacher   Teacher?     @relation(fields: [teacherId], references: [id])
-  status    ActiveStatus @default(ACTIVE)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  id              String        @id @default(cuid())
+  branchId        String
+  branch          Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name            String
+  teacherId       String?
+  teacher         Teacher?      @relation(fields: [teacherId], references: [id])
+  startDate       DateTime?     @db.Date // legacy Mobile App API: start_date
+  currentClassId  String? // legacy Mobile App API: current_class
+  currentClass    AcademicClass? @relation(fields: [currentClassId], references: [id])
+  status          ActiveStatus  @default(ACTIVE)
+  addedById       String? // legacy Mobile App API: audit trail (not used by the modern configuration UI)
+  addedBy         User?         @relation("HalqaAddedBy", fields: [addedById], references: [id])
+  lastUpdatedById String?
+  lastUpdatedBy   User?         @relation("HalqaLastUpdatedBy", fields: [lastUpdatedById], references: [id])
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
 
-  students HalqaStudent[]
+  students       HalqaStudent[]
+  hifdhSchedules SurahHifdhStudentSchedule[]
 
   @@index([branchId])
   @@index([teacherId])
+  @@index([currentClassId])
 }
 
 // Roster join table (student-to-Halqa assignment).
@@ -1130,28 +1373,71 @@ model HalqaStudent {
 }
 
 // Per-student Hifdh (memorization) schedule generated from a
-// SurahTargetSchedule template.
+// SurahTargetSchedule row. Field set matches the legacy
+// `surah_hifd_student_schedules` table; company_id/added_by/
+// last_updated_by/deleted_at dropped (same rationale as elsewhere — global
+// audit-by/soft-delete pattern isn't used in this schema), and
+// surah_number/surah_name/surah_name_en dropped in favor of the existing
+// surahId relation. `schedule_no`/`day` are gone too — SurahTargetSchedule
+// no longer groups by scheduleNo, so `scheduledDate` alone identifies the
+// day, and `surahTargetId` links back to the exact source row instead.
 model SurahHifdhStudentSchedule {
-  id                String                      @id @default(cuid())
-  studentId         String
-  student           Student                     @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  surahId           String
-  surah             Surah                       @relation(fields: [surahId], references: [id])
-  teacherId         String?
-  teacher           Teacher?                    @relation(fields: [teacherId], references: [id])
-  fromAyah          Int
-  toAyah            Int
-  scheduledDate     DateTime                    @db.Date
-  rescheduledFromId String?
-  rescheduledFrom   SurahHifdhStudentSchedule?  @relation("Reschedule", fields: [rescheduledFromId], references: [id])
-  rescheduledTo     SurahHifdhStudentSchedule[] @relation("Reschedule")
-  status            HifdhProgressStatus         @default(IN_PROGRESS)
-  createdAt         DateTime                    @default(now())
-  updatedAt         DateTime                    @updatedAt
+  id                       String                      @id @default(cuid())
+  studentId                String
+  student                  Student                     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  halqaId                  String? // legacy: halqa_id
+  halqa                    Halqa?                      @relation(fields: [halqaId], references: [id])
+  surahTargetId            String? // legacy: surah_target_id — the source SurahTargetSchedule row
+  surahTarget              SurahTargetSchedule?        @relation(fields: [surahTargetId], references: [id])
+  surahId                  String
+  surah                    Surah                       @relation(fields: [surahId], references: [id])
+  teacherId                String?
+  teacher                  Teacher?                    @relation(fields: [teacherId], references: [id])
+  pageNumberFrom           Int?
+  pageNumberTo             Int?
+  lineFrom                 Int?
+  lineTo                   Int?
+  portionDescription       String?
+  fromAyah                 Int // legacy: verse_from
+  toAyah                   Int // legacy: verse_to
+  scheduledDate            DateTime                    @db.Date
+  // Increments per student each time their Hifdh schedule is regenerated
+  // (legacy: schedule_no) — lets a student have multiple schedule
+  // "versions" over time, e.g. after a curriculum restart.
+  scheduleNo               Int                         @default(1)
+  // Sequence day-number within a schedule generation (legacy: day) —
+  // copied from the source SurahTargetSchedule.dayNumber, used for display
+  // ordering only (scheduledDate already encodes the actual calendar date).
+  day                      Int?
+  rescheduledFromId        String?
+  rescheduledFrom          SurahHifdhStudentSchedule?  @relation("Reschedule", fields: [rescheduledFromId], references: [id])
+  rescheduledTo            SurahHifdhStudentSchedule[] @relation("Reschedule")
+  status                   HifdhScheduleStatus         @default(PENDING) // legacy: completion_status
+  completionDate           DateTime?                   @db.Date
+  completionPercentage     Float?
+  memorizationQuality      MemorizationQuality?
+  teacherNotes             String?
+  studentNotes             String?
+  revisionCount            Int                         @default(0)
+  lastRevisionDate         DateTime?                   @db.Date
+  nextRevisionDue          DateTime?                   @db.Date
+  estimatedDurationMinutes Int? // legacy: estimated_duration (time)
+  actualDurationMinutes    Int? // legacy: actual_duration (time)
+  startedAt                DateTime?
+  completedAt              DateTime?
+  difficultyLevel          DifficultyLevel?
+  priority                 SchedulePriority?
+  scheduleType             String? // legacy: schedule_type — plain text, e.g. "Normal" / "Exam"
+  examName                 String?
+  createdAt                DateTime                    @default(now())
+  updatedAt                DateTime                    @updatedAt
 
   @@index([studentId, status])
+  @@index([studentId, scheduleNo])
   @@index([surahId])
   @@index([teacherId])
+  @@index([halqaId])
+  @@index([surahTargetId])
 }
 
 // Cumulative per-student, per-surah progress (separate from the schedule —
@@ -1198,7 +1484,7 @@ model Exam {
   examType   ExamType     @relation(fields: [examTypeId], references: [id])
   name       String
   examDate   DateTime     @db.Date
-  maxMarks   Decimal      @db.Decimal(6, 2) @default(100)
+  maxMarks   Decimal      @default(100) @db.Decimal(6, 2)
   status     ActiveStatus @default(ACTIVE)
   createdAt  DateTime     @default(now())
   updatedAt  DateTime     @updatedAt

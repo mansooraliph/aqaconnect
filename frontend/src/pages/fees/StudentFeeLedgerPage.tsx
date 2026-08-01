@@ -17,8 +17,7 @@ import { toast } from '../../components/ui/toast';
 interface Student {
   id: string;
   studentCode: string;
-  firstName: string;
-  lastName: string;
+  name: string;
 }
 
 type DemandStatus = 'PENDING' | 'PARTIALLY_PAID' | 'PAID' | 'OVERDUE';
@@ -139,7 +138,7 @@ export function StudentFeeLedgerPage() {
   });
 
   const studentOptions = (studentsQuery.data ?? []).map((s) => ({
-    label: `${s.firstName} ${s.lastName}`,
+    label: s.name,
     sublabel: s.studentCode,
     value: s.id,
   }));

@@ -39,16 +39,14 @@ interface StudentExamResult {
   remark: string | null;
   status: ResultStatus;
   student: {
-    firstName: string;
-    lastName: string;
+    name: string;
     studentCode: string;
   };
 }
 
 interface UnmarkedStudent {
   id: string;
-  firstName: string;
-  lastName: string;
+  name: string;
   studentCode: string;
 }
 
@@ -73,14 +71,14 @@ function ExamTypesTab() {
     },
   ];
 
-  const createFields: FieldDef[] = [{ name: 'name', label: 'Name', type: 'text', required: true }];
-  const editFields: FieldDef[] = [
+  const fields: FieldDef[] = [
     { name: 'name', label: 'Name', type: 'text', required: true },
     {
       name: 'status',
       label: 'Status',
       type: 'select',
       required: true,
+      editOnly: true, // Create DTO doesn't accept status — new exam types default to ACTIVE server-side
       options: [
         { label: 'Active', value: 'ACTIVE' },
         { label: 'Inactive', value: 'INACTIVE' },
@@ -95,7 +93,7 @@ function ExamTypesTab() {
       data={list.data}
       loading={list.isLoading}
       columns={columns}
-      fields={createFields.concat(editFields.filter((f) => f.name === 'status'))}
+      fields={fields}
       onCreate={(values) => create.mutateAsync(values)}
       onUpdate={(id, values) => update.mutateAsync({ id, payload: values })}
       canManage={canManage}
@@ -211,7 +209,7 @@ function ExamResultsPanel({ exam }: { exam: Exam }) {
     {
       header: 'Student',
       cell: ({ row }) =>
-        `${row.original.student.firstName} ${row.original.student.lastName} (${row.original.student.studentCode})`,
+        `${row.original.student.name} (${row.original.student.studentCode})`,
     },
     { header: 'Marks', accessorKey: 'marksObtained' },
     { header: 'Remark', accessorKey: 'remark' },
@@ -245,7 +243,7 @@ function ExamResultsPanel({ exam }: { exam: Exam }) {
   const unmarkedColumns: ColumnDef<UnmarkedStudent, unknown>[] = [
     {
       header: 'Student',
-      cell: ({ row }) => `${row.original.firstName} ${row.original.lastName} (${row.original.studentCode})`,
+      cell: ({ row }) => `${row.original.name} (${row.original.studentCode})`,
     },
     {
       header: exam.maxMarks != null ? `Marks (max ${exam.maxMarks})` : 'Marks',

@@ -10,6 +10,7 @@ import { ClassSectionsPage } from './pages/configuration/ClassSectionsPage';
 import { ClassSectionYearsPage } from './pages/configuration/ClassSectionYearsPage';
 import { LessonStagesPage } from './pages/configuration/LessonStagesPage';
 import { SurahsPage } from './pages/configuration/SurahsPage';
+import { SurahAyahPageLinesPage } from './pages/configuration/SurahAyahPageLinesPage';
 import { TargetSchedulesPage } from './pages/configuration/TargetSchedulesPage';
 import { CalendarPage } from './pages/configuration/CalendarPage';
 import { BranchSettingsPage } from './pages/configuration/BranchSettingsPage';
@@ -56,6 +57,7 @@ function App() {
           <Route path="/configuration/class-section-years" element={<ClassSectionYearsPage />} />
           <Route path="/configuration/lesson-stages" element={<LessonStagesPage />} />
           <Route path="/configuration/surahs" element={<SurahsPage />} />
+          <Route path="/configuration/surah-ayah-page-lines" element={<SurahAyahPageLinesPage />} />
           <Route path="/configuration/target-schedules" element={<TargetSchedulesPage />} />
           <Route path="/configuration/calendar" element={<CalendarPage />} />
           <Route path="/configuration/settings" element={<BranchSettingsPage />} />

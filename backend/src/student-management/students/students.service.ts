@@ -5,16 +5,21 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateStudentDto } from './dto/create-student.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
 import { BulkActionDto } from '../../common/dto/bulk-action.dto';
+import { HifdhService } from '../../academic/hifdh/hifdh.service';
 
 const SALT_ROUNDS = 10;
 
 @Injectable()
 export class StudentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly hifdh: HifdhService,
+  ) {}
 
   private userSelect() {
     return {
       select: {
+        username: true,
         email: true,
         isActive: true,
       },
@@ -61,14 +66,14 @@ export class StudentsService {
       throw new ConflictException(`A student with code ${dto.studentCode} already exists in this branch`);
     }
 
-    if (dto.createLogin && !dto.email) {
-      throw new BadRequestException('email is required when createLogin is true');
+    if (dto.createLogin && !dto.username) {
+      throw new BadRequestException('username is required when createLogin is true');
     }
 
     if (dto.createLogin) {
-      const existingUser = await this.prisma.user.findUnique({ where: { email: dto.email! } });
+      const existingUser = await this.prisma.user.findUnique({ where: { username: dto.username! } });
       if (existingUser) {
-        throw new ConflictException(`A user with email ${dto.email} already exists`);
+        throw new ConflictException(`A user with username ${dto.username} already exists`);
       }
     }
 
@@ -77,26 +82,35 @@ export class StudentsService {
         data: {
           branchId,
           studentCode: dto.studentCode,
-          firstName: dto.firstName,
-          lastName: dto.lastName,
+          name: dto.name,
           dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : undefined,
           guardianName: dto.guardianName,
           guardianPhone: dto.guardianPhone,
         },
         include: this.includeClause(),
       });
+      if (dto.halqaId) {
+        await this.hifdh.generateInitialSchedulesForStudent(student.id, dto.halqaId, dto.hifdhStartDate);
+      }
       return { student, loginCreated: false };
     }
+
+    // User.firstName/lastName is a separate model from Student's single
+    // `name` field — split for the login account only, mirroring
+    // AdmissionsService's approve() convention.
+    const [userFirstName, ...userLastNameParts] = dto.name.trim().split(/\s+/);
+    const userLastName = userLastNameParts.join(' ') || userFirstName;
 
     const { student, temporaryPassword } = await this.prisma.$transaction(async (tx) => {
       const temporaryPassword = crypto.randomBytes(9).toString('base64url');
       const passwordHash = await bcrypt.hash(temporaryPassword, SALT_ROUNDS);
       const user = await tx.user.create({
         data: {
-          email: dto.email!,
+          username: dto.username!,
+          email: dto.email,
           passwordHash,
-          firstName: dto.firstName,
-          lastName: dto.lastName,
+          firstName: userFirstName,
+          lastName: userLastName,
           phone: dto.guardianPhone,
           branchId,
         },
@@ -106,8 +120,7 @@ export class StudentsService {
         data: {
           branchId,
           studentCode: dto.studentCode,
-          firstName: dto.firstName,
-          lastName: dto.lastName,
+          name: dto.name,
           dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : undefined,
           guardianName: dto.guardianName,
           guardianPhone: dto.guardianPhone,
@@ -118,6 +131,12 @@ export class StudentsService {
 
       return { student, temporaryPassword };
     });
+
+    // Outside the transaction, matching legacy: a schedule-generation failure
+    // must never roll back or block student creation.
+    if (dto.halqaId) {
+      await this.hifdh.generateInitialSchedulesForStudent(student.id, dto.halqaId, dto.hifdhStartDate);
+    }
 
     return {
       student,
@@ -132,8 +151,7 @@ export class StudentsService {
     return this.prisma.student.update({
       where: { id },
       data: {
-        ...(dto.firstName !== undefined && { firstName: dto.firstName }),
-        ...(dto.lastName !== undefined && { lastName: dto.lastName }),
+        ...(dto.name !== undefined && { name: dto.name }),
         ...(dto.dateOfBirth !== undefined && { dateOfBirth: new Date(dto.dateOfBirth) }),
         ...(dto.guardianName !== undefined && { guardianName: dto.guardianName }),
         ...(dto.guardianPhone !== undefined && { guardianPhone: dto.guardianPhone }),

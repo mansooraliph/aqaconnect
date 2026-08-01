@@ -23,6 +23,12 @@ export class HifdhSchedulesController {
     return this.service.listSchedules(studentId, surahId, status);
   }
 
+  @Get('progress-summary')
+  @RequirePermission('academic.hifdh_progress.view')
+  progressSummary(@Param('branchId') branchId: string, @Query('halqaId') halqaId?: string) {
+    return this.service.getProgressSummary(branchId, halqaId);
+  }
+
   @Post('generate')
   @RequirePermission('academic.hifdh_schedules.manage')
   async generate(

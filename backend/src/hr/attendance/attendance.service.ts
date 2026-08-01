@@ -78,6 +78,7 @@ export class AttendanceService {
     const records = await this.prisma.attendance.findMany({
       where: {
         branchId,
+        employeeId: { not: null },
         ...(employeeId && { employeeId }),
         ...(dateFilter && { date: dateFilter }),
         ...((departmentId || designationId) && {
@@ -100,10 +101,11 @@ export class AttendanceService {
     });
 
     const rows = records.map((record) => ({
-      employeeName: `${record.employee.user.firstName} ${record.employee.user.lastName}`,
-      email: record.employee.user.email,
-      department: record.employee.department?.name ?? '',
-      designation: record.employee.designation?.name ?? '',
+      // `employeeId: { not: null }` in the query above guarantees this join is present.
+      employeeName: `${record.employee!.user.firstName} ${record.employee!.user.lastName}`,
+      email: record.employee!.user.email,
+      department: record.employee!.department?.name ?? '',
+      designation: record.employee!.designation?.name ?? '',
       date: record.date.toISOString().slice(0, 10),
       status: record.status,
       clockInAt: record.clockInAt ? record.clockInAt.toISOString() : '',

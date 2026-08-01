@@ -9,7 +9,7 @@ const HALQA_INCLUDE = {
   teacher: { include: { user: { select: { firstName: true, lastName: true } } } },
   students: {
     where: { removedAt: null },
-    include: { student: { select: { id: true, firstName: true, lastName: true, studentCode: true } } },
+    include: { student: { select: { id: true, name: true, studentCode: true } } },
   },
 } as const;
 
@@ -128,8 +128,8 @@ export class HalqasService {
           none: { removedAt: null },
         },
       },
-      select: { id: true, firstName: true, lastName: true, studentCode: true },
-      orderBy: { firstName: 'asc' },
+      select: { id: true, name: true, studentCode: true },
+      orderBy: { name: 'asc' },
     });
   }
 }

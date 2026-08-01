@@ -11,6 +11,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateAdmissionDto } from './dto/create-admission.dto';
 import { ApproveAdmissionDto, RejectAdmissionDto } from './dto/approve-admission.dto';
 import { MailService } from '../../mail/mail.service';
+import { HifdhService } from '../../academic/hifdh/hifdh.service';
 
 const SALT_ROUNDS = 10;
 
@@ -21,6 +22,7 @@ export class AdmissionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mail: MailService,
+    private readonly hifdh: HifdhService,
   ) {}
 
   list(branchId: string, status?: string) {
@@ -79,12 +81,12 @@ export class AdmissionsService {
     }
 
     if (dto.createLogin) {
-      if (!admission.email) {
-        throw new BadRequestException('Cannot create a login: this admission has no email on file');
+      if (!dto.username) {
+        throw new BadRequestException('username is required when createLogin is true');
       }
-      const existingUser = await this.prisma.user.findUnique({ where: { email: admission.email } });
+      const existingUser = await this.prisma.user.findUnique({ where: { username: dto.username } });
       if (existingUser) {
-        throw new ConflictException(`A user with email ${admission.email} already exists`);
+        throw new ConflictException(`A user with username ${dto.username} already exists`);
       }
     }
 
@@ -100,7 +102,8 @@ export class AdmissionsService {
         const passwordHash = await bcrypt.hash(temporaryPassword, SALT_ROUNDS);
         const user = await tx.user.create({
           data: {
-            email: admission.email!,
+            username: dto.username!,
+            email: admission.email ?? undefined,
             passwordHash,
             firstName,
             lastName,
@@ -115,8 +118,7 @@ export class AdmissionsService {
         data: {
           branchId,
           studentCode: dto.studentCode,
-          firstName,
-          lastName,
+          name: admission.applicantName.trim(),
           dateOfBirth: admission.dateOfBirth,
           guardianName: admission.guardianName,
           guardianPhone: admission.phone,
@@ -138,6 +140,12 @@ export class AdmissionsService {
 
       return { student, temporaryPassword };
     });
+
+    // Outside the transaction, matching legacy: a schedule-generation failure
+    // must never roll back or block admission approval.
+    if (dto.halqaId) {
+      await this.hifdh.generateInitialSchedulesForStudent(student.id, dto.halqaId, dto.hifdhStartDate);
+    }
 
     // Fire-and-forget status email: skip silently if there's no email on
     // file (admission.email is nullable). Never let a mail failure break
