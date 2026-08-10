@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
-import { Plus, ShieldPlus } from 'lucide-react';
+import { KeyRound, Plus, ShieldPlus } from 'lucide-react';
 import { useAuthStore } from '../store/auth';
 import { useBranches } from '../hooks/useBranches';
 import { api } from '../lib/api';
@@ -13,11 +13,21 @@ import { Badge } from '../components/ui/Badge';
 import { Modal } from '../components/ui/Modal';
 import { Field, Input } from '../components/ui/Input';
 import { Select } from '../components/ui/Select';
+import { FilterSelect } from '../components/ui/FilterSelect';
 import { toast } from '../components/ui/toast';
+
+const USER_TYPES = ['Employee', 'Teacher', 'Student', 'Staff'] as const;
+type UserType = (typeof USER_TYPES)[number];
+
+function getErrorMessage(err: unknown, fallback: string): string {
+  const serverMessage = (err as { response?: { data?: { message?: string } } }).response?.data
+    ?.message;
+  return serverMessage ?? fallback;
+}
 
 interface UserRow {
   id: string;
-  email: string;
+  username: string;
   firstName: string;
   lastName: string;
   phone: string | null;
@@ -25,6 +35,7 @@ interface UserRow {
   branchId: string | null;
   lastLoginAt: string | null;
   createdAt: string;
+  type: UserType;
 }
 
 interface RoleGrant {
@@ -45,11 +56,11 @@ interface Role {
 }
 
 const emptyCreateForm = {
-  email: '',
+  name: '',
+  username: '',
   password: '',
-  firstName: '',
-  lastName: '',
   phone: '',
+  email: '',
   branchId: '',
 };
 
@@ -87,6 +98,17 @@ export function UsersPage() {
     },
   });
 
+  const resetPassword = useMutation({
+    mutationFn: async ({ userId, password }: { userId: string; password: string }) =>
+      (await api.post(`/users/${userId}/reset-password`, { password })).data,
+  });
+
+  const [filterType, setFilterType] = useState('');
+  const filteredUsers = useMemo(() => {
+    const users = usersQuery.data ?? [];
+    return filterType ? users.filter((u) => u.type === filterType) : users;
+  }, [usersQuery.data, filterType]);
+
   const [addOpen, setAddOpen] = useState(false);
   const [addForm, setAddForm] = useState(emptyCreateForm);
   const [addErrors, setAddErrors] = useState<Record<string, string>>({});
@@ -96,6 +118,11 @@ export function UsersPage() {
   const [assignRoleId, setAssignRoleId] = useState('');
   const [assignBranchId, setAssignBranchId] = useState('');
   const [assignSubmitting, setAssignSubmitting] = useState(false);
+
+  const [resetPasswordUserId, setResetPasswordUserId] = useState<string | null>(null);
+  const [resetPasswordValue, setResetPasswordValue] = useState('');
+  const [resetPasswordError, setResetPasswordError] = useState('');
+  const [resetPasswordSubmitting, setResetPasswordSubmitting] = useState(false);
 
   const userDetailQuery = useQuery({
     queryKey: ['user-detail', rolesModalUserId],
@@ -114,27 +141,27 @@ export function UsersPage() {
 
   const submitAdd = async () => {
     const errors: Record<string, string> = {};
-    if (!addForm.email) errors.email = 'Email is required';
-    if (!addForm.password || addForm.password.length < 8) errors.password = 'Password must be at least 8 characters';
-    if (!addForm.firstName) errors.firstName = 'First name is required';
-    if (!addForm.lastName) errors.lastName = 'Last name is required';
+    if (!addForm.name) errors.name = 'Name is required';
+    if (!addForm.username) errors.username = 'Username is required';
+    if (!addForm.password) errors.password = 'Password is required';
+    if (addForm.email && !/^\S+@\S+\.\S+$/.test(addForm.email)) errors.email = 'Must be a valid email';
     setAddErrors(errors);
     if (Object.keys(errors).length > 0) return;
 
     setAddSubmitting(true);
     try {
       await createUser.mutateAsync({
-        email: addForm.email,
+        name: addForm.name,
+        username: addForm.username,
         password: addForm.password,
-        firstName: addForm.firstName,
-        lastName: addForm.lastName,
         phone: addForm.phone || undefined,
+        email: addForm.email || undefined,
         branchId: addForm.branchId || undefined,
       });
       toast.success('User created');
       setAddOpen(false);
-    } catch {
-      toast.error('Something went wrong');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Something went wrong'));
     } finally {
       setAddSubmitting(false);
     }
@@ -161,6 +188,30 @@ export function UsersPage() {
     }
   };
 
+  const openResetPassword = (userId: string) => {
+    setResetPasswordUserId(userId);
+    setResetPasswordValue('');
+    setResetPasswordError('');
+  };
+
+  const submitResetPassword = async () => {
+    if (!resetPasswordUserId) return;
+    if (resetPasswordValue.length < 6) {
+      setResetPasswordError('Password must be at least 6 characters');
+      return;
+    }
+    setResetPasswordSubmitting(true);
+    try {
+      await resetPassword.mutateAsync({ userId: resetPasswordUserId, password: resetPasswordValue });
+      toast.success('Password reset');
+      setResetPasswordUserId(null);
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Failed to reset password'));
+    } finally {
+      setResetPasswordSubmitting(false);
+    }
+  };
+
   const columns: ColumnDef<UserRow, unknown>[] = [
     {
       header: 'Name',
@@ -171,7 +222,8 @@ export function UsersPage() {
         </span>
       ),
     },
-    { header: 'Email', accessorKey: 'email' },
+    { header: 'Username', accessorKey: 'username' },
+    { header: 'Type', accessorKey: 'type' },
     { header: 'Phone', accessorKey: 'phone', cell: ({ row }) => row.original.phone ?? '—' },
     { header: 'Branch', id: 'branch', cell: ({ row }) => branchName(row.original.branchId) },
     {
@@ -191,10 +243,16 @@ export function UsersPage() {
             id: 'actions',
             header: '',
             cell: ({ row }: { row: { original: UserRow } }) => (
-              <Button size="sm" variant="ghost" onClick={() => openRolesModal(row.original.id)}>
-                <ShieldPlus className="h-4 w-4" />
-                Roles
-              </Button>
+              <div className="flex gap-1">
+                <Button size="sm" variant="ghost" onClick={() => openRolesModal(row.original.id)}>
+                  <ShieldPlus className="h-4 w-4" />
+                  Roles
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => openResetPassword(row.original.id)}>
+                  <KeyRound className="h-4 w-4" />
+                  Reset Password
+                </Button>
+              </div>
             ),
           } satisfies ColumnDef<UserRow, unknown>,
         ]
@@ -219,7 +277,15 @@ export function UsersPage() {
           )
         }
       />
-      <DataTable<UserRow> columns={columns} data={usersQuery.data ?? []} isLoading={usersQuery.isLoading} />
+      <FilterSelect
+        width="w-64"
+        label="Filter by Type"
+        placeholder="All Types"
+        value={filterType}
+        onChange={setFilterType}
+        options={USER_TYPES.map((t) => ({ label: t, value: t }))}
+      />
+      <DataTable<UserRow> columns={columns} data={filteredUsers} isLoading={usersQuery.isLoading} />
 
       <Modal
         open={addOpen}
@@ -237,34 +303,34 @@ export function UsersPage() {
         }
       >
         <div className="flex flex-col gap-4">
-          <Field label="Email" required error={addErrors.email}>
+          <Field label="Name" required error={addErrors.name}>
             <Input
-              type="email"
-              value={addForm.email}
-              onChange={(e) => setAddForm((f) => ({ ...f, email: e.target.value }))}
+              value={addForm.name}
+              onChange={(e) => setAddForm((f) => ({ ...f, name: e.target.value }))}
             />
           </Field>
-          <Field label="Password" required error={addErrors.password} hint="At least 8 characters">
+          <Field label="Username" required error={addErrors.username} hint="Used to log in — doesn't need to be an email.">
+            <Input
+              value={addForm.username}
+              onChange={(e) => setAddForm((f) => ({ ...f, username: e.target.value }))}
+            />
+          </Field>
+          <Field label="Password" required error={addErrors.password}>
             <Input
               type="password"
               value={addForm.password}
               onChange={(e) => setAddForm((f) => ({ ...f, password: e.target.value }))}
             />
           </Field>
-          <Field label="First name" required error={addErrors.firstName}>
-            <Input
-              value={addForm.firstName}
-              onChange={(e) => setAddForm((f) => ({ ...f, firstName: e.target.value }))}
-            />
-          </Field>
-          <Field label="Last name" required error={addErrors.lastName}>
-            <Input
-              value={addForm.lastName}
-              onChange={(e) => setAddForm((f) => ({ ...f, lastName: e.target.value }))}
-            />
-          </Field>
-          <Field label="Phone">
+          <Field label="Mobile">
             <Input value={addForm.phone} onChange={(e) => setAddForm((f) => ({ ...f, phone: e.target.value }))} />
+          </Field>
+          <Field label="Email" error={addErrors.email}>
+            <Input
+              type="email"
+              value={addForm.email}
+              onChange={(e) => setAddForm((f) => ({ ...f, email: e.target.value }))}
+            />
           </Field>
           <Field label="Branch" hint="Leave unset for a global (non-branch) user">
             <Select
@@ -336,6 +402,34 @@ export function UsersPage() {
             </p>
           )}
         </div>
+      </Modal>
+
+      <Modal
+        open={Boolean(resetPasswordUserId)}
+        title="Reset Password"
+        onClose={() => setResetPasswordUserId(null)}
+        footer={
+          <>
+            <Button
+              variant="outline"
+              onClick={() => setResetPasswordUserId(null)}
+              disabled={resetPasswordSubmitting}
+            >
+              Cancel
+            </Button>
+            <Button onClick={submitResetPassword} loading={resetPasswordSubmitting}>
+              Reset Password
+            </Button>
+          </>
+        }
+      >
+        <Field label="New Password" required error={resetPasswordError}>
+          <Input
+            type="password"
+            value={resetPasswordValue}
+            onChange={(e) => setResetPasswordValue(e.target.value)}
+          />
+        </Field>
       </Modal>
     </div>
   );

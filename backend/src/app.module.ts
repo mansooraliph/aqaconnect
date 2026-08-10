@@ -59,6 +59,13 @@ import { HalqasModule as MobileHalqasModule } from './mobile-app-api/halqas/halq
 import { StudentLeavesModule as MobileStudentLeavesModule } from './mobile-app-api/student-leaves/student-leaves.module';
 import { StudentsModule as MobileStudentsModule } from './mobile-app-api/students/students.module';
 import { StudentSurahProgressModule as MobileStudentSurahProgressModule } from './mobile-app-api/student-surah-progress/student-surah-progress.module';
+import { LessonContentModule } from './mobile-app-api/lesson-content/lesson-content.module';
+import { HrLookupsModule } from './mobile-app-api/hr-lookups/hr-lookups.module';
+import { ProfileModule } from './mobile-app-api/profile/profile.module';
+import { MobileDashboardModule } from './mobile-app-api/dashboard/dashboard.module';
+import { LeavesModule as MobileLeavesModule } from './mobile-app-api/leaves/leaves.module';
+import { MobileAttendanceModule } from './mobile-app-api/attendance/attendance.module';
+import { MobileApiUsageModule } from './mobile-api-usage/mobile-api-usage.module';
 
 @Module({
   imports: [
@@ -118,6 +125,13 @@ import { StudentSurahProgressModule as MobileStudentSurahProgressModule } from '
     MobileStudentLeavesModule,
     MobileStudentsModule,
     MobileStudentSurahProgressModule,
+    LessonContentModule,
+    HrLookupsModule,
+    ProfileModule,
+    MobileDashboardModule,
+    MobileLeavesModule,
+    MobileAttendanceModule,
+    MobileApiUsageModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: JwtAuthGuard }],

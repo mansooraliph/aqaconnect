@@ -1,28 +1,52 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { AssignRoleDto } from './dto/assign-role.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { UserAccessContext } from '../rbac/access-control.service';
 
 const SALT_ROUNDS = 10;
+
+export type UserType = 'Employee' | 'Teacher' | 'Student' | 'Staff';
+
+function splitName(name: string): { firstName: string; lastName?: string } {
+  const [firstName, ...rest] = name.trim().split(/\s+/);
+  return { firstName, lastName: rest.length > 0 ? rest.join(' ') : undefined };
+}
+
+function deriveType(user: { employee: unknown; teacher: unknown; student: unknown }): UserType {
+  // Teacher wins over Employee: a Teacher-type employee has both an Employee and
+  // a linked Teacher record, and "Teacher" is the more specific classification.
+  if (user.teacher) return 'Teacher';
+  if (user.employee) return 'Employee';
+  if (user.student) return 'Student';
+  return 'Staff';
+}
+
+function withType<T extends { employee: unknown; teacher: unknown; student: unknown }>(
+  user: T,
+): Omit<T, 'employee' | 'teacher' | 'student'> & { type: UserType } {
+  const { employee, teacher, student, ...rest } = user;
+  return { ...rest, type: deriveType({ employee, teacher, student }) };
+}
 
 @Injectable()
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async listForUser(accessContext: UserAccessContext) {
-    if (accessContext.isGlobal) {
-      return this.prisma.user.findMany({
-        select: this.publicSelect(),
-        orderBy: { username: 'asc' },
-      });
-    }
-    return this.prisma.user.findMany({
-      where: { branchId: { in: Array.from(accessContext.allowedBranchIds) } },
-      select: this.publicSelect(),
-      orderBy: { username: 'asc' },
-    });
+    const users = accessContext.isGlobal
+      ? await this.prisma.user.findMany({
+          select: this.publicSelect(),
+          orderBy: { username: 'asc' },
+        })
+      : await this.prisma.user.findMany({
+          where: { branchId: { in: Array.from(accessContext.allowedBranchIds) } },
+          select: this.publicSelect(),
+          orderBy: { username: 'asc' },
+        });
+    return users.map(withType);
   }
 
   private publicSelect() {
@@ -37,18 +61,26 @@ export class UsersService {
       branchId: true,
       lastLoginAt: true,
       createdAt: true,
+      employee: { select: { id: true } },
+      teacher: { select: { id: true } },
+      student: { select: { id: true } },
     };
   }
 
   async create(dto: CreateUserDto) {
+    const existing = await this.prisma.user.findUnique({ where: { username: dto.username } });
+    if (existing) {
+      throw new ConflictException('That username is already taken.');
+    }
     const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
+    const { firstName, lastName } = splitName(dto.name);
     const user = await this.prisma.user.create({
       data: {
         username: dto.username,
         email: dto.email,
         passwordHash,
-        firstName: dto.firstName,
-        lastName: dto.lastName,
+        firstName,
+        lastName,
         phone: dto.phone,
         branchId: dto.branchId,
       },
@@ -65,7 +97,20 @@ export class UsersService {
     if (!user) {
       throw new NotFoundException('User not found');
     }
-    return user;
+    return withType(user);
+  }
+
+  async resetPassword(id: string, dto: ResetPasswordDto) {
+    await this.findOne(id);
+    const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
+    await this.prisma.$transaction([
+      this.prisma.user.update({ where: { id }, data: { passwordHash } }),
+      // Force re-login everywhere: a reset password shouldn't leave old sessions valid.
+      this.prisma.refreshToken.updateMany({
+        where: { userId: id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
   }
 
   async assignRole(userId: string, dto: AssignRoleDto) {

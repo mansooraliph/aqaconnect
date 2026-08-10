@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post, UseGuards } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { AssignRoleDto } from './dto/assign-role.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { RequirePermission } from '../common/decorators/require-permission.decorator';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -39,5 +40,13 @@ export class UsersController {
   @RequirePermission('system.users.manage')
   assignRole(@Param('id') id: string, @Body() dto: AssignRoleDto) {
     return this.usersService.assignRole(id, dto);
+  }
+
+  @Post(':id/reset-password')
+  @HttpCode(200)
+  @RequirePermission('system.users.manage')
+  async resetPassword(@Param('id') id: string, @Body() dto: ResetPasswordDto) {
+    await this.usersService.resetPassword(id, dto);
+    return { success: true };
   }
 }

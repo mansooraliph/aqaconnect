@@ -52,12 +52,14 @@ model Branch {
   departments         Department[]
   designations        Designation[]
   leaves              Leave[]
+  leaveTypes          LeaveType[]
   attendances         Attendance[]
   holidays            Holiday[]
   appreciations       Appreciation[]
   awards              Award[]
   teachers            Teacher[]
   teacherApplications TeacherApplication[]
+  announcements       Announcement[]
 
   admissions    Admission[]
   students      Student[]
@@ -73,7 +75,7 @@ model Branch {
   examTypes ExamType[]
   exams     Exam[]
 
-  studentExams StudentExam[]
+  studentExams    StudentExam[]
   progressEntries StudentSurahProgressEntry[]
 
   @@index([isActive])
@@ -111,6 +113,7 @@ model User {
   firstName    String
   lastName     String?
   phone        String?
+  whatsapp     String?
   isActive     Boolean   @default(true)
   branchId     String? // nullable: pure-management users may have no home branch
   branch       Branch?   @relation(fields: [branchId], references: [id])
@@ -132,6 +135,9 @@ model User {
   progressEntriesAdded       StudentSurahProgressEntry[] @relation("ProgressEntryAddedBy")
   progressEntriesLastUpdated StudentSurahProgressEntry[] @relation("ProgressEntryLastUpdatedBy")
   progressEntriesVerified    StudentSurahProgressEntry[] @relation("ProgressEntryVerifiedBy")
+
+  attendancesReviewed  Attendance[]   @relation("AttendanceReviewedBy")
+  announcementsCreated Announcement[] @relation("AnnouncementCreatedBy")
 
   @@index([branchId])
 }
@@ -346,7 +352,7 @@ model SurahTargetSchedule {
   estimatedDurationMinutes Int? // legacy: estimated_duration (time) stored as minutes
   difficultyLevel          DifficultyLevel?
   priority                 SchedulePriority?
-  scheduleType             String? // legacy: schedule_type — plain text, e.g. "Normal" / "Exam"
+  scheduleType             String? // legacy: schedule_type — plain text: "Hifd" / "Preparation" / "Exam"
   examName                 String? // e.g. "Exam Juz 30", "Preparation day" when there's no surah portion
   createdAt                DateTime          @default(now())
   updatedAt                DateTime          @updatedAt
@@ -534,6 +540,12 @@ enum AttendanceStatus {
   HALF_DAY
   ON_LEAVE
   HOLIDAY
+  // Mobile clock-in awaiting admin review, and a reviewed-but-declined
+  // clock-in — the legacy `AttendanceRequest.approved` (y/n/r) review
+  // workflow, folded into the existing per-day Attendance row rather than a
+  // parallel table (see mobile-app-api/attendance).
+  PENDING_APPROVAL
+  REJECTED
 }
 
 enum TeacherApplicationStatus {
@@ -552,6 +564,12 @@ enum TeacherApplicationStatus {
 
 // HR profile — 1:1 with User (login account). Kept separate from User so
 // non-staff auth concerns (password, roles) stay independent of HR fields.
+enum EmployeeType {
+  TEACHER
+  ADMIN
+  OFFICE_STAFF
+}
+
 model Employee {
   id            String       @id @default(cuid())
   userId        String       @unique
@@ -559,6 +577,7 @@ model Employee {
   branchId      String
   branch        Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
   employeeCode  String
+  employeeType  EmployeeType @default(OFFICE_STAFF)
   departmentId  String?
   department    Department?  @relation(fields: [departmentId], references: [id])
   designationId String?
@@ -625,16 +644,39 @@ model Designation {
 // as distinct in a unique index. Same gotcha as the FeeDemand fix, lower
 // stakes here (quota rows are admin-managed, not auto-regenerated), so
 // documented as a caveat rather than restructured.
+// Lookup table for named leave types (Casual, Sick, Earned, ...), added
+// alongside — not instead of — the free-text `leaveType` string still on
+// Leave/LeaveQuota below: existing rows/UI keep working unchanged, while
+// new mobile-app-api endpoints (#17 leaves/types, #21 my-leaves breakdown)
+// get real ids/names to key off.
+model LeaveType {
+  id        String       @id @default(cuid())
+  branchId  String
+  branch    Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name      String
+  status    ActiveStatus @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  leaves      Leave[]
+  leaveQuotas LeaveQuota[]
+
+  @@unique([branchId, name])
+  @@index([branchId])
+}
+
 model LeaveQuota {
-  id             String   @id @default(cuid())
+  id             String     @id @default(cuid())
   employeeId     String
-  employee       Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  employee       Employee   @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   leaveType      String // e.g. "casual", "sick", "earned" — kept as a string/lookup rather than enum for admin extensibility
+  leaveTypeId    String?
+  leaveTypeRef   LeaveType? @relation(fields: [leaveTypeId], references: [id])
   academicYearId String?
-  totalDays      Decimal  @db.Decimal(5, 2)
-  usedDays       Decimal  @default(0) @db.Decimal(5, 2)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  totalDays      Decimal    @db.Decimal(5, 2)
+  usedDays       Decimal    @default(0) @db.Decimal(5, 2)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
 
   @@unique([employeeId, leaveType, academicYearId])
 }
@@ -646,6 +688,8 @@ model Leave {
   employeeId     String
   employee       Employee    @relation(fields: [employeeId], references: [id], onDelete: Cascade)
   leaveType      String
+  leaveTypeId    String?
+  leaveTypeRef   LeaveType?  @relation(fields: [leaveTypeId], references: [id])
   startDate      DateTime    @db.Date
   endDate        DateTime    @db.Date
   isHalfDay      Boolean     @default(false)
@@ -669,22 +713,28 @@ model Leave {
 // yet) have a studentId instead. Not enforced at the DB level (Prisma has
 // no CHECK-constraint support here); application code only ever sets one.
 model Attendance {
-  id         String           @id @default(cuid())
-  branchId   String
-  branch     Branch           @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  employeeId String?
-  employee   Employee?        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
-  studentId  String?
-  student    Student?         @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  date       DateTime         @db.Date
-  status     AttendanceStatus
-  clockInAt  DateTime?
-  clockOutAt DateTime?
-  clockInLat Decimal?         @db.Decimal(9, 6)
-  clockInLng Decimal?         @db.Decimal(9, 6)
-  remark     String?
-  createdAt  DateTime         @default(now())
-  updatedAt  DateTime         @updatedAt
+  id              String           @id @default(cuid())
+  branchId        String
+  branch          Branch           @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  employeeId      String?
+  employee        Employee?        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  studentId       String?
+  student         Student?         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  date            DateTime         @db.Date
+  status          AttendanceStatus
+  clockInAt       DateTime?
+  clockOutAt      DateTime?
+  clockInLat      Decimal?         @db.Decimal(9, 6)
+  clockInLng      Decimal?         @db.Decimal(9, 6)
+  remark          String?
+  // Admin review of a PENDING_APPROVAL/REJECTED mobile clock-in — unset for
+  // rows that were never through the review queue (e.g. bulkMark, self clock-in).
+  reviewedById    String?
+  reviewedBy      User?            @relation("AttendanceReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt      DateTime?
+  rejectionReason String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
 
   @@unique([employeeId, date])
   @@unique([studentId, date])
@@ -704,6 +754,24 @@ model Holiday {
 
   @@unique([branchId, date])
   @@index([branchId])
+}
+
+// Read-only feed surfaced on the mobile teacher-dashboard. No admin CRUD UI
+// yet — rows are seeded/managed directly until that's actually needed.
+model Announcement {
+  id          String   @id @default(cuid())
+  branchId    String
+  branch      Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  icon        String?
+  publishedAt DateTime @default(now())
+  createdById String?
+  createdBy   User?    @relation("AnnouncementCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([branchId, publishedAt])
 }
 
 model Appreciation {
@@ -843,24 +911,24 @@ model Admission {
 // login (self-service progress views, leave requests); userId is nullable
 // to support students without their own login (guardian-managed only).
 model Student {
-  id            String       @id @default(cuid())
-  userId        String?      @unique
-  user          User?        @relation(fields: [userId], references: [id])
-  branchId      String
-  branch        Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  studentCode   String
-  name          String
-  dateOfBirth   DateTime?    @db.Date
-  guardianName  String?
-  guardianPhone String?
-  gender        Gender? // legacy Mobile App API: read off `users.gender` (student *is* a User there)
-  joiningDate   DateTime?    @db.Date // legacy Mobile App API: student_details.joining_date
-  hifdhStartDate DateTime?   @db.Date // legacy Mobile App API: student_details.hifdh_start_date (persisted there, only used transiently for schedule generation in the modern flow)
-  admissionId   String?      @unique
-  admission     Admission?   @relation(fields: [admissionId], references: [id])
-  status        ActiveStatus @default(ACTIVE)
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  id             String       @id @default(cuid())
+  userId         String?      @unique
+  user           User?        @relation(fields: [userId], references: [id])
+  branchId       String
+  branch         Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  studentCode    String
+  name           String
+  dateOfBirth    DateTime?    @db.Date
+  guardianName   String?
+  guardianPhone  String?
+  gender         Gender? // legacy Mobile App API: read off `users.gender` (student *is* a User there)
+  joiningDate    DateTime?    @db.Date // legacy Mobile App API: student_details.joining_date
+  hifdhStartDate DateTime?    @db.Date // legacy Mobile App API: student_details.hifdh_start_date (persisted there, only used transiently for schedule generation in the modern flow)
+  admissionId    String?      @unique
+  admission      Admission?   @relation(fields: [admissionId], references: [id])
+  status         ActiveStatus @default(ACTIVE)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
 
   enrollments      StudentEnrollment[]
   studentLeaves    StudentLeave[]
@@ -919,18 +987,25 @@ enum StudentExamOutcome {
 // doesn't fit the cumulative model without breaking it, so it's a new,
 // parallel entity instead.
 model StudentSurahProgressEntry {
-  id         String   @id @default(cuid())
-  branchId   String
-  branch     Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  studentId  String
-  student    Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  surahId    String?
-  surah      Surah?   @relation(fields: [surahId], references: [id])
-  fromAyah   Int?
-  toAyah     Int?
-  type       ProgressEntryType?
-  status     ProgressEntryStatus @default(NOT_STARTED) // legacy: completion_status
-  grade      ProgressEntryGrade?
+  id          String              @id @default(cuid())
+  branchId    String
+  branch      Branch              @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  studentId   String
+  student     Student             @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  surahId     String?
+  surah       Surah?              @relation(fields: [surahId], references: [id])
+  fromAyah    Int?
+  toAyah      Int?
+  // Day-number within the master target schedule this ayah was seeded from
+  // (mirrors SurahHifdhStudentSchedule.day) — lets listings order by actual
+  // schedule/pacing-plan sequence instead of falling back to fromAyah alone,
+  // which doesn't reflect the plan's true order once revision passes revisit
+  // earlier ayahs out of numeric sequence. Null for entries not seeded from
+  // the schedule (e.g. mobile's Old Lesson/store-old-lesson-progress).
+  day         Int?
+  type        ProgressEntryType?
+  status      ProgressEntryStatus @default(NOT_STARTED) // legacy: completion_status
+  grade       ProgressEntryGrade?
   completedAt DateTime?
   verifiedAt  DateTime?
   remarks     String?
@@ -952,11 +1027,11 @@ model StudentSurahProgressEntry {
   pageTo        Int?
 
   addedById       String?
-  addedBy         User?    @relation("ProgressEntryAddedBy", fields: [addedById], references: [id])
+  addedBy         User?   @relation("ProgressEntryAddedBy", fields: [addedById], references: [id])
   lastUpdatedById String?
-  lastUpdatedBy   User?    @relation("ProgressEntryLastUpdatedBy", fields: [lastUpdatedById], references: [id])
+  lastUpdatedBy   User?   @relation("ProgressEntryLastUpdatedBy", fields: [lastUpdatedById], references: [id])
   verifiedById    String?
-  verifiedBy      User?    @relation("ProgressEntryVerifiedBy", fields: [verifiedById], references: [id])
+  verifiedBy      User?   @relation("ProgressEntryVerifiedBy", fields: [verifiedById], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1333,22 +1408,22 @@ model StudentLessonProgress {
 
 // A "Halqa" = a Quran study circle/group led by a teacher.
 model Halqa {
-  id              String        @id @default(cuid())
+  id              String         @id @default(cuid())
   branchId        String
-  branch          Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  branch          Branch         @relation(fields: [branchId], references: [id], onDelete: Cascade)
   name            String
   teacherId       String?
-  teacher         Teacher?      @relation(fields: [teacherId], references: [id])
-  startDate       DateTime?     @db.Date // legacy Mobile App API: start_date
+  teacher         Teacher?       @relation(fields: [teacherId], references: [id])
+  startDate       DateTime?      @db.Date // legacy Mobile App API: start_date
   currentClassId  String? // legacy Mobile App API: current_class
   currentClass    AcademicClass? @relation(fields: [currentClassId], references: [id])
-  status          ActiveStatus  @default(ACTIVE)
+  status          ActiveStatus   @default(ACTIVE)
   addedById       String? // legacy Mobile App API: audit trail (not used by the modern configuration UI)
-  addedBy         User?         @relation("HalqaAddedBy", fields: [addedById], references: [id])
+  addedBy         User?          @relation("HalqaAddedBy", fields: [addedById], references: [id])
   lastUpdatedById String?
-  lastUpdatedBy   User?         @relation("HalqaLastUpdatedBy", fields: [lastUpdatedById], references: [id])
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  lastUpdatedBy   User?          @relation("HalqaLastUpdatedBy", fields: [lastUpdatedById], references: [id])
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
 
   students       HalqaStudent[]
   hifdhSchedules SurahHifdhStudentSchedule[]
@@ -1389,8 +1464,12 @@ model SurahHifdhStudentSchedule {
   halqa                    Halqa?                      @relation(fields: [halqaId], references: [id])
   surahTargetId            String? // legacy: surah_target_id — the source SurahTargetSchedule row
   surahTarget              SurahTargetSchedule?        @relation(fields: [surahTargetId], references: [id])
-  surahId                  String
-  surah                    Surah                       @relation(fields: [surahId], references: [id])
+  // surahId/fromAyah/toAyah are nullable because milestone rows ("Exam",
+  // "Exam preparation") generated from a SurahTargetSchedule row with no
+  // surah portion carry no memorization portion either — examName carries
+  // the descriptive text for those instead.
+  surahId                  String?
+  surah                    Surah?                      @relation(fields: [surahId], references: [id])
   teacherId                String?
   teacher                  Teacher?                    @relation(fields: [teacherId], references: [id])
   pageNumberFrom           Int?
@@ -1398,8 +1477,8 @@ model SurahHifdhStudentSchedule {
   lineFrom                 Int?
   lineTo                   Int?
   portionDescription       String?
-  fromAyah                 Int // legacy: verse_from
-  toAyah                   Int // legacy: verse_to
+  fromAyah                 Int? // legacy: verse_from
+  toAyah                   Int? // legacy: verse_to
   scheduledDate            DateTime                    @db.Date
   // Increments per student each time their Hifdh schedule is regenerated
   // (legacy: schedule_no) — lets a student have multiple schedule
@@ -1427,7 +1506,7 @@ model SurahHifdhStudentSchedule {
   completedAt              DateTime?
   difficultyLevel          DifficultyLevel?
   priority                 SchedulePriority?
-  scheduleType             String? // legacy: schedule_type — plain text, e.g. "Normal" / "Exam"
+  scheduleType             String? // legacy: schedule_type — plain text: "Hifd" / "Preparation" / "Exam"
   examName                 String?
   createdAt                DateTime                    @default(now())
   updatedAt                DateTime                    @updatedAt
@@ -1509,4 +1588,23 @@ model StudentExamResult {
 
   @@unique([examId, studentId])
   @@index([studentId])
+}
+
+// One row per call into any `/api/app/*` (Mobile App API) route — powers
+// the admin-facing usage-history page. Deliberately denormalized (no FK to
+// User) so logs survive account deletion and stay cheap to write on every
+// request; userId/username are a point-in-time snapshot, not a live join.
+model MobileApiRequestLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  username   String?
+  method     String
+  path       String
+  statusCode Int
+  durationMs Int
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([userId])
+  @@index([path])
 }

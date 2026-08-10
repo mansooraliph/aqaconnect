@@ -12,6 +12,23 @@ const PERMISSIONS: { key: string; module: string; description: string }[] = [
   { key: 'system.branches.manage', module: 'system', description: 'Create/update branches' },
   { key: 'system.users.view', module: 'system', description: 'View users' },
   { key: 'system.users.manage', module: 'system', description: 'Create users, assign roles' },
+  { key: 'system.mobile_api.view', module: 'system', description: 'View Mobile App API documentation and usage logs' },
+  { key: 'system.mobile_api.manage', module: 'system', description: 'Grant/revoke which mobile-app-api modules each role may access' },
+
+  // Mobile App API — per-module access for the real /app/* endpoints the mobile client calls.
+  { key: 'mobile_api.academic_classes.access', module: 'mobile_api', description: 'Mobile app: create/update academic classes' },
+  { key: 'mobile_api.teachers.access', module: 'mobile_api', description: 'Mobile app: teacher account CRUD' },
+  { key: 'mobile_api.halqas.access', module: 'mobile_api', description: 'Mobile app: Halqa CRUD, roster, student assignment' },
+  { key: 'mobile_api.students.access', module: 'mobile_api', description: 'Mobile app: student profile CRUD, activity reports, exam records' },
+  { key: 'mobile_api.student_leaves.access', module: 'mobile_api', description: 'Mobile app: student leave requests' },
+  { key: 'mobile_api.student_surah_progress.access', module: 'mobile_api', description: 'Mobile app: per-ayah Surah progress ledger' },
+  { key: 'mobile_api.surah_schedules.access', module: 'mobile_api', description: "Mobile app: a student's Hifdh schedule/progress summary" },
+  { key: 'mobile_api.dashboard.access', module: 'mobile_api', description: "Mobile app: teacher dashboard summary" },
+  { key: 'mobile_api.profile.access', module: 'mobile_api', description: 'Mobile app: own profile' },
+  { key: 'mobile_api.lesson_content.access', module: 'mobile_api', description: 'Mobile app: lesson stages/sub-stages/lessons (read-only content)' },
+  { key: 'mobile_api.hr_lookups.access', module: 'mobile_api', description: 'Mobile app: departments/designations lookups' },
+  { key: 'mobile_api.attendance.access', module: 'mobile_api', description: 'Mobile app: attendance summaries/reports and clock-in approval review' },
+  { key: 'mobile_api.leaves.access', module: 'mobile_api', description: 'Mobile app: leave types, apply/cancel/my-leaves, and approvals' },
 
   // Configuration (Phase 2.1)
   { key: 'configuration.academic_years.view', module: 'configuration', description: 'View academic years' },
@@ -129,6 +146,7 @@ const ROLES: {
     permissionKeys: [
       'system.branches.view',
       'system.users.view',
+      'system.mobile_api.view',
       ...PERMISSIONS.filter(
         (p) =>
           ['configuration', 'hr', 'student_management', 'fees', 'academic'].includes(p.module) &&
@@ -144,8 +162,10 @@ const ROLES: {
       'system.branches.view',
       'system.users.view',
       'system.users.manage',
+      'system.mobile_api.view',
+      'system.mobile_api.manage',
       ...PERMISSIONS.filter((p) =>
-        ['configuration', 'hr', 'student_management', 'fees', 'academic'].includes(p.module),
+        ['configuration', 'hr', 'student_management', 'fees', 'academic', 'mobile_api'].includes(p.module),
       ).map((p) => p.key),
     ],
   },
@@ -190,6 +210,30 @@ const ROLES: {
       'academic.exam_results.view',
       'academic.exam_results.enter',
       'academic.dashboard.view',
+      'mobile_api.halqas.access',
+      'mobile_api.students.access',
+      'mobile_api.student_leaves.access',
+      'mobile_api.student_surah_progress.access',
+      'mobile_api.surah_schedules.access',
+      'mobile_api.dashboard.access',
+      'mobile_api.profile.access',
+      'mobile_api.lesson_content.access',
+      'mobile_api.attendance.access',
+      'mobile_api.leaves.access',
+    ],
+  },
+  {
+    name: 'Student',
+    scope: RoleScope.BRANCH,
+    description:
+      'Self-service mobile app access only — auto-assigned when a student login is provisioned. ' +
+      'Row-level scoping (a student only ever sees their own data) is enforced by ' +
+      'MobileContextService.resolveOwnStudentId, not by this permission set.',
+    permissionKeys: [
+      'mobile_api.students.access',
+      'mobile_api.student_leaves.access',
+      'mobile_api.student_surah_progress.access',
+      'mobile_api.surah_schedules.access',
     ],
   },
 ];
@@ -229,6 +273,25 @@ async function main() {
     }
   }
 
+  // Backfill: existing student logins predate the "Student" role (it didn't
+  // exist yet when they were created) — give them the same auto-assign every
+  // new student login gets, so mobile-app-api guard rollout doesn't lock
+  // anyone out.
+  console.log('Backfilling Student role onto existing student logins...');
+  const studentRole = await prisma.role.findUniqueOrThrow({ where: { name: 'Student' } });
+  const studentsWithLogin = await prisma.student.findMany({
+    where: { userId: { not: null } },
+    select: { userId: true },
+  });
+  for (const { userId } of studentsWithLogin) {
+    const existingRole = await prisma.userRole.findFirst({
+      where: { userId: userId!, roleId: studentRole.id },
+    });
+    if (!existingRole) {
+      await prisma.userRole.create({ data: { userId: userId!, roleId: studentRole.id } });
+    }
+  }
+
   console.log('Seeding sample branch...');
   const branch = await prisma.branch.upsert({
     where: { code: 'MAIN' },
@@ -239,6 +302,15 @@ async function main() {
     },
     update: {},
   });
+
+  console.log('Seeding leave types...');
+  for (const name of ['Casual Leave', 'Sick Leave', 'Earned Leave']) {
+    await prisma.leaveType.upsert({
+      where: { branchId_name: { branchId: branch.id, name } },
+      create: { branchId: branch.id, name },
+      update: {},
+    });
+  }
 
   console.log('Seeding Super Admin user...');
   const devEmail = 'admin@example.com';

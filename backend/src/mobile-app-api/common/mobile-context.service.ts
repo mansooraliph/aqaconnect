@@ -74,4 +74,18 @@ export class MobileContextService {
     const context = await this.accessControl.getUserAccessContext(userId);
     return context.roles.map((role) => role.name.toLowerCase());
   }
+
+  /**
+   * The caller's own Employee record within a branch — used by every
+   * self-service HR-flavored mobile endpoint (profile, attendance, leaves).
+   * Promoted from a private method of the same name in
+   * hr/attendance/attendance.service.ts, which now delegates here.
+   */
+  async resolveOwnEmployeeId(branchId: string, userId: string): Promise<string> {
+    const employee = await this.prisma.employee.findFirst({ where: { branchId, userId } });
+    if (!employee) {
+      throw new ForbiddenException('No employee record linked to your account in this branch');
+    }
+    return employee.id;
+  }
 }

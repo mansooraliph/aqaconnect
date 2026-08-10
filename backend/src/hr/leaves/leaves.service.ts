@@ -59,6 +59,7 @@ export class LeavesService {
         branchId,
         employeeId: dto.employeeId,
         leaveType: dto.leaveType,
+        leaveTypeId: dto.leaveTypeId,
         startDate: new Date(dto.startDate),
         endDate: new Date(dto.endDate),
         isHalfDay: dto.isHalfDay ?? false,

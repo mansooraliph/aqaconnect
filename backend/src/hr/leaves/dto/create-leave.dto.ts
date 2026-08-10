@@ -9,6 +9,10 @@ export class CreateLeaveDto {
   @MinLength(1)
   leaveType: string;
 
+  @IsOptional()
+  @IsString()
+  leaveTypeId?: string;
+
   @IsDateString()
   startDate: string;
 
