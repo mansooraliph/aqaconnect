@@ -11,11 +11,26 @@ export class LessonContentService {
 
   // LessonStage/LessonSubStage are shared curriculum config, not branch-scoped
   // (see academic/lessons/lessons.service.ts's assertLessonStageAndSubStage).
-  listStages() {
-    return this.prisma.lessonStage.findMany({
+  //
+  // Legacy's Eloquent `withCount(['subStages', 'lessons'])` adds flat
+  // `sub_stages_count`/`lessons_count` integer fields directly on each stage
+  // — the mobile client's Dart model requires those as non-nullable ints, so
+  // they're added here alongside (not instead of) Prisma's own nested
+  // `_count` shape and the full `subStages` array.
+  private withCounts<T extends { subStages: unknown[]; _count: { lessons: number } }>(stage: T) {
+    return {
+      ...stage,
+      sub_stages_count: stage.subStages.length,
+      lessons_count: stage._count.lessons,
+    };
+  }
+
+  async listStages() {
+    const stages = await this.prisma.lessonStage.findMany({
       include: { subStages: { orderBy: { sortOrder: 'asc' } }, _count: { select: { lessons: true } } },
       orderBy: { sortOrder: 'asc' },
     });
+    return stages.map((s) => this.withCounts(s));
   }
 
   async findStage(id: string) {
@@ -26,7 +41,7 @@ export class LessonContentService {
     if (!stage) {
       throw new NotFoundException('Lesson stage not found');
     }
-    return stage;
+    return this.withCounts(stage);
   }
 
   listLessons(branchId: string, lessonStageId?: string, lessonSubStageId?: string) {
