@@ -176,6 +176,32 @@ export class StudentSurahProgressService {
     return student;
   }
 
+  /**
+   * The "actual scheduled order" for a student's Surahs — comes from their
+   * generated SurahHifdhStudentSchedule (day/scheduledDate), the real pacing
+   * plan, not from progress-entry creation order or entry.day (the latter
+   * mirrors the schedule but is only populated when entries are seeded
+   * through the schedule-generation pipeline; entries created any other way
+   * leave it null, silently falling back to arbitrary createdAt order).
+   * Surahs with progress but no schedule row (rare — e.g. manually recorded
+   * Old Lesson entries) are appended after, in their own createdAt order.
+   */
+  private async getScheduleOrderedSurahIds(studentId: string, fallbackSurahIds: string[]): Promise<string[]> {
+    const scheduleRows = await this.prisma.surahHifdhStudentSchedule.findMany({
+      where: { studentId, surahId: { not: null } },
+      orderBy: [{ day: 'asc' }, { scheduledDate: 'asc' }],
+      select: { surahId: true },
+    });
+    const orderedIds: string[] = [];
+    for (const row of scheduleRows) {
+      if (row.surahId && !orderedIds.includes(row.surahId)) orderedIds.push(row.surahId);
+    }
+    for (const id of fallbackSurahIds) {
+      if (!orderedIds.includes(id)) orderedIds.push(id);
+    }
+    return orderedIds;
+  }
+
   private async studentHalqa(studentId: string) {
     const membership = await this.prisma.halqaStudent.findFirst({
       where: { studentId, removedAt: null },
@@ -242,7 +268,10 @@ export class StudentSurahProgressService {
     const entries = await this.prisma.studentSurahProgressEntry.findMany({
       where: { studentId, surahId, ...this.typeWhere(type) },
       include: ENTRY_INCLUDE,
-      orderBy: { fromAyah: 'asc' },
+      // day (the master target schedule's day-number, null for entries not
+      // seeded from it) reflects actual pacing-plan order; fromAyah is the
+      // tiebreak for same-day entries.
+      orderBy: [{ day: 'asc' }, { fromAyah: 'asc' }],
     });
     const serialized = entries.map(serializeEntry);
 
@@ -285,10 +314,11 @@ export class StudentSurahProgressService {
       orderBy: { createdAt: 'asc' },
       select: { surahId: true },
     });
-    const orderedSurahIds: string[] = [];
+    const fallbackSurahIds: string[] = [];
     for (const r of allRecords) {
-      if (r.surahId && !orderedSurahIds.includes(r.surahId)) orderedSurahIds.push(r.surahId);
+      if (r.surahId && !fallbackSurahIds.includes(r.surahId)) fallbackSurahIds.push(r.surahId);
     }
+    const orderedSurahIds = await this.getScheduleOrderedSurahIds(studentId, fallbackSurahIds);
 
     const surahs = await this.prisma.surah.findMany({ where: { id: { in: orderedSurahIds } }, select: SURAH_SELECT });
     const surahById = new Map(surahs.map((s) => [s.id, s]));
@@ -386,11 +416,11 @@ export class StudentSurahProgressService {
       orderBy: { createdAt: 'asc' },
       select: { surahId: true },
     });
-    const ids: string[] = [];
+    const fallbackIds: string[] = [];
     for (const r of rows) {
-      if (r.surahId && !ids.includes(r.surahId)) ids.push(r.surahId);
+      if (r.surahId && !fallbackIds.includes(r.surahId)) fallbackIds.push(r.surahId);
     }
-    return ids;
+    return this.getScheduleOrderedSurahIds(studentId, fallbackIds);
   }
 
   private async determineTargetSurah(studentId: string, requestedSurahId?: string): Promise<string | null> {
@@ -473,9 +503,10 @@ export class StudentSurahProgressService {
     const entries = await this.prisma.studentSurahProgressEntry.findMany({
       where: { studentId, surahId: targetSurahId, ...this.typeWhere(query.type) },
       include: ENTRY_INCLUDE,
-      // Legacy orders by a join to surah_target_schedules(surah_number, day) then from_ayah;
-      // that schedule shape doesn't exist in this schema, so this orders by from_ayah alone.
-      orderBy: { fromAyah: 'asc' },
+      // Legacy orders by a join to surah_target_schedules(surah_number, day)
+      // then from_ayah; mirrored here via the entry's own `day` column
+      // (copied from that schedule at seed time) with from_ayah as tiebreak.
+      orderBy: [{ day: 'asc' }, { fromAyah: 'asc' }],
     });
 
     return {
@@ -560,7 +591,19 @@ export class StudentSurahProgressService {
       orderBy: { createdAt: 'asc' },
     });
 
-    const surahs = entries
+    // Re-sort by pacing-plan order (see getScheduleOrderedSurahIds) rather
+    // than the createdAt order the query above returned.
+    const fallbackSurahIds: string[] = [];
+    for (const e of entries) {
+      if (e.surahId && !fallbackSurahIds.includes(e.surahId)) fallbackSurahIds.push(e.surahId);
+    }
+    const orderedSurahIds = await this.getScheduleOrderedSurahIds(studentId, fallbackSurahIds);
+    const rank = new Map(orderedSurahIds.map((id, i) => [id, i]));
+    const sortedEntries = [...entries].sort(
+      (a, b) => (rank.get(a.surahId ?? '') ?? Infinity) - (rank.get(b.surahId ?? '') ?? Infinity),
+    );
+
+    const surahs = sortedEntries
       .filter((e) => e.surah)
       .map((e) => ({
         surah: serializeSurah(e.surah!),
