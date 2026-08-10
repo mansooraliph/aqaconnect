@@ -21,25 +21,17 @@ export class DashboardService {
     });
     const halqaIds = halqas.map((h) => h.id);
 
-    // Legacy shortcut for a teacher with no Halqas at all: a materially
-    // different response shape (no `user` key, `announcements` as an empty
-    // array rather than the single-object placeholder below) — the real
-    // mobile client's Dart model expects exactly this split, so it's
-    // replicated verbatim rather than "fixed" into one consistent shape.
-    if (halqaIds.length === 0) {
-      return {
-        total_students: 0,
-        recited_students: 0,
-        students_completed_today: 0,
-        percentage_completed_today: 0,
-        announcements: [] as unknown[],
-      };
-    }
-
-    const memberships = await this.prisma.halqaStudent.findMany({
-      where: { halqaId: { in: halqaIds }, removedAt: null },
-      select: { studentId: true },
-    });
+    // Legacy has a second response shape for "no Halqas at all" (omits
+    // `user`, `announcements` as an empty array) but that path is untested
+    // in production — every real teacher account has ≥1 Halqa — and the
+    // mobile client's Dart model crashes on it (List where it expects a Map).
+    // Always return the one shape the client actually handles instead.
+    const memberships = halqaIds.length
+      ? await this.prisma.halqaStudent.findMany({
+          where: { halqaId: { in: halqaIds }, removedAt: null },
+          select: { studentId: true },
+        })
+      : [];
     const studentIds = [...new Set(memberships.map((m) => m.studentId))];
     const totalStudents = studentIds.length;
 
