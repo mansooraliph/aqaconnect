@@ -11,7 +11,8 @@ export class AcademicDashboardService {
       activeStudents,
       hifdhScheduleCounts,
       halqas,
-      surahLeaderboard,
+      entryTotalGroups,
+      entryVerifiedGroups,
     ] = await Promise.all([
       this.prisma.student.count({ where: { branchId } }),
       this.prisma.student.count({ where: { branchId, status: 'ACTIVE' } }),
@@ -29,12 +30,19 @@ export class AcademicDashboardService {
         },
         orderBy: { name: 'asc' },
       }),
-      this.prisma.studentSurahProgress.groupBy({
-        by: ['studentId'],
-        where: { status: 'VERIFIED', student: { branchId } },
+      // A surah is "verified" for a student once every one of its ayah
+      // entries (StudentSurahProgressEntry, type NEW_LESSON) is VERIFIED —
+      // compared per (studentId, surahId) below rather than via a single
+      // cumulative row (see HifdhService.listProgress for the same pattern).
+      this.prisma.studentSurahProgressEntry.groupBy({
+        by: ['studentId', 'surahId'],
+        where: { type: 'NEW_LESSON', student: { branchId } },
         _count: { _all: true },
-        orderBy: { _count: { studentId: 'desc' } },
-        take: 10,
+      }),
+      this.prisma.studentSurahProgressEntry.groupBy({
+        by: ['studentId', 'surahId'],
+        where: { type: 'NEW_LESSON', status: 'VERIFIED', student: { branchId } },
+        _count: { _all: true },
       }),
     ]);
 
@@ -53,6 +61,22 @@ export class AcademicDashboardService {
       studentCount: h.students.length,
     }));
 
+    const verifiedCountByKey = new Map(
+      entryVerifiedGroups.map((g) => [`${g.studentId}:${g.surahId}`, g._count._all]),
+    );
+    const verifiedSurahsByStudent = new Map<string, number>();
+    for (const g of entryTotalGroups) {
+      if (!g.surahId) continue;
+      const verifiedCount = verifiedCountByKey.get(`${g.studentId}:${g.surahId}`) ?? 0;
+      if (verifiedCount === g._count._all) {
+        verifiedSurahsByStudent.set(g.studentId, (verifiedSurahsByStudent.get(g.studentId) ?? 0) + 1);
+      }
+    }
+    const surahLeaderboard = [...verifiedSurahsByStudent.entries()]
+      .map(([studentId, completedCount]) => ({ studentId, completedCount }))
+      .sort((a, b) => b.completedCount - a.completedCount)
+      .slice(0, 10);
+
     const leaderboardStudentIds = surahLeaderboard.map((r) => r.studentId);
     const students = leaderboardStudentIds.length
       ? await this.prisma.student.findMany({
@@ -62,14 +86,11 @@ export class AcademicDashboardService {
       : [];
     const studentById = new Map(students.map((s) => [s.id, s]));
 
-    const surahLeaderboardResult = surahLeaderboard.map((row) => {
-      const student = studentById.get(row.studentId);
-      return {
-        studentId: row.studentId,
-        studentName: student ? student.name : 'Unknown',
-        completedCount: row._count._all,
-      };
-    });
+    const surahLeaderboardResult = surahLeaderboard.map((row) => ({
+      studentId: row.studentId,
+      studentName: studentById.get(row.studentId)?.name ?? 'Unknown',
+      completedCount: row.completedCount,
+    }));
 
     return {
       totalStudents,

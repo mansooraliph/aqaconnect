@@ -22,4 +22,12 @@ export class UpdateEmployeeDto {
   @IsOptional()
   @IsEnum(ActiveStatusDto)
   status?: ActiveStatusDto;
+
+  // Admin-initiated reset — sets the employee's login password directly,
+  // no current-password confirmation (that's the self-service change-password
+  // flow, which doesn't exist yet for this portal).
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  password?: string;
 }

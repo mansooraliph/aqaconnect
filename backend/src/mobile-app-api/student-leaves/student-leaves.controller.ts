@@ -12,10 +12,14 @@ import {
   Post,
   Query,
   Req,
+  UseGuards,
+  UseInterceptors,
   UsePipes,
 } from '@nestjs/common';
 import { Request } from 'express';
 import { MobileStudentLeavesService } from './student-leaves.service';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { ApplyLeaveDto } from './dto/apply-leave.dto';
 import { CreateLeaveForStudentDto } from './dto/create-leave-for-student.dto';
 import { BulkReviewLeavesDto } from './dto/bulk-review-leaves.dto';
@@ -24,6 +28,7 @@ import { UpdateLeaveDto } from './dto/update-leave.dto';
 import { BulkManageLeavesDto } from './dto/bulk-manage-leaves.dto';
 import { MobileContextService } from '../common/mobile-context.service';
 import { MobileValidationPipe } from '../common/mobile-validation.pipe';
+import { MobileApiLoggingInterceptor } from '../common/mobile-api-logging.interceptor';
 
 interface AuthedRequest extends Request {
   user: { userId: string };
@@ -31,6 +36,9 @@ interface AuthedRequest extends Request {
 
 /** Mirrors legacy `Route::prefix('student_leave')->group(...)`, i.e. `/api/app/student_leave`. Note: this legacy controller never uses the `Reply` helper — every response is a plain `{message, ...}` array, with no `status` envelope key. */
 @Controller('app/student_leave')
+@UseGuards(PermissionsGuard)
+@RequirePermission('mobile_api.student_leaves.access')
+@UseInterceptors(MobileApiLoggingInterceptor)
 @UsePipes(new MobileValidationPipe())
 export class StudentLeavesController {
   constructor(

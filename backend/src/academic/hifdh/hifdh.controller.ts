@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/co
 import { HifdhService } from './hifdh.service';
 import { GenerateSchedulesDto } from './dto/generate-schedules.dto';
 import { RescheduleDto } from './dto/reschedule.dto';
+import { BulkRescheduleDto } from './dto/bulk-reschedule.dto';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { BranchScopeGuard } from '../../common/guards/branch-scope.guard';
@@ -19,14 +20,22 @@ export class HifdhSchedulesController {
     @Query('studentId') studentId?: string,
     @Query('surahId') surahId?: string,
     @Query('status') status?: string,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+    @Query('fromDay') fromDay?: string,
+    @Query('toDay') toDay?: string,
   ) {
-    return this.service.listSchedules(studentId, surahId, status);
+    return this.service.listSchedules(studentId, surahId, status, fromDate, toDate, fromDay, toDay);
   }
 
   @Get('progress-summary')
   @RequirePermission('academic.hifdh_progress.view')
-  progressSummary(@Param('branchId') branchId: string, @Query('halqaId') halqaId?: string) {
-    return this.service.getProgressSummary(branchId, halqaId);
+  progressSummary(
+    @Param('branchId') branchId: string,
+    @Query('halqaId') halqaId?: string,
+    @Query('studentId') studentId?: string,
+  ) {
+    return this.service.getProgressSummary(branchId, halqaId, studentId);
   }
 
   @Post('generate')
@@ -42,27 +51,32 @@ export class HifdhSchedulesController {
 
   @Post(':id/mark-completed')
   @RequirePermission('academic.hifdh_progress.mark')
-  markCompleted(@Param('id') id: string) {
-    return this.service.markCompleted(id);
+  markCompleted(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.service.markCompleted(id, user.userId);
   }
 
   @Post(':id/mark-in-progress')
   @RequirePermission('academic.hifdh_progress.mark')
-  markInProgress(@Param('id') id: string) {
-    return this.service.markInProgress(id);
+  markInProgress(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.service.markInProgress(id, user.userId);
   }
 
   @Post(':id/verify')
   @RequirePermission('academic.hifdh_progress.verify')
-  async verify(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
-    const teacherId = await this.service.requireOwnTeacherId(user.userId);
-    return this.service.verifySchedule(id, teacherId);
+  verify(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.service.verifySchedule(id, user.userId);
   }
 
   @Post(':id/reschedule')
   @RequirePermission('academic.hifdh_schedules.manage')
   reschedule(@Param('id') id: string, @Body() dto: RescheduleDto) {
     return this.service.reschedule(id, dto);
+  }
+
+  @Post('bulk-reschedule')
+  @RequirePermission('academic.hifdh_schedules.manage')
+  bulkReschedule(@Body() dto: BulkRescheduleDto) {
+    return this.service.bulkReschedule(dto.studentIds, dto.newStartDate, dto.fromDate);
   }
 }
 
@@ -81,10 +95,13 @@ export class StudentSurahProgressController {
     return this.service.listProgress(studentId, surahId, status);
   }
 
-  @Post(':id/verify')
+  @Post(':studentId/:surahId/verify')
   @RequirePermission('academic.hifdh_progress.verify')
-  async verify(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
-    const teacherId = await this.service.requireOwnTeacherId(user.userId);
-    return this.service.verifyProgressDirect(id, teacherId);
+  verify(
+    @Param('studentId') studentId: string,
+    @Param('surahId') surahId: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.service.verifySurahProgress(studentId, surahId, user.userId);
   }
 }

@@ -1,11 +1,16 @@
+import { useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
+import { ChevronRight } from 'lucide-react';
 import { useAuthStore } from '../store/auth';
 import { api } from '../lib/api';
+import { MODULES } from '../layout/AppLayout';
 import { PageHeader } from '../components/ui/PageHeader';
 import { StatCard } from '../components/ui/StatCard';
 import { DataTable } from '../components/ui/DataTable';
 import { Badge } from '../components/ui/Badge';
+import { cn } from '../lib/utils/cn';
 
 interface HalqaBreakdownRow {
   halqaId: string;
@@ -216,8 +221,86 @@ function FeesKpiSection() {
   );
 }
 
-export function DashboardPage() {
+function getGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+
+function WelcomeSection() {
   const user = useAuthStore((s) => s.user);
+
+  const today = new Date().toLocaleDateString(undefined, {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  });
+
+  return (
+    <div className="rounded-card border border-border bg-white p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-base font-semibold text-text-primary">
+            {getGreeting()}, {user?.name?.split(' ')[0]}
+          </h2>
+          <p className="mt-1 text-sm text-text-muted">{today}</p>
+        </div>
+        <Badge tone={user?.isGlobal ? 'blue' : 'gray'}>
+          {user?.isGlobal ? 'Global scope · all branches' : 'Branch-scoped'}
+        </Badge>
+      </div>
+    </div>
+  );
+}
+
+function QuickLinksSection() {
+  const navigate = useNavigate();
+  const hasPermission = useAuthStore((s) => s.hasPermission);
+
+  const links = useMemo(
+    () =>
+      MODULES.map((m) => ({ ...m, items: m.items.filter((i) => hasPermission(i.permission)) })).filter(
+        (m) => m.items.length > 0,
+      ),
+    [hasPermission],
+  );
+
+  if (links.length === 0) return null;
+
+  return (
+    <div className="mt-6 rounded-card border border-border bg-white p-5">
+      <h2 className="text-base font-semibold text-text-primary">Quick links</h2>
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {links.map((m) => {
+          const Icon = m.icon;
+          return (
+            <button
+              key={m.key}
+              onClick={() => navigate(m.items[0].key)}
+              className={cn(
+                'flex items-center gap-3 rounded-card border border-border p-4 text-left transition-colors',
+                'hover:border-brand/40 hover:bg-brand/5',
+              )}
+            >
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-card bg-table-head text-text-muted">
+                <Icon className="h-4.5 w-4.5" />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium text-text-primary">{m.label}</span>
+                <span className="block truncate text-xs text-text-muted">{m.items.length} section{m.items.length === 1 ? '' : 's'}</span>
+              </span>
+              <ChevronRight className="h-4 w-4 shrink-0 text-text-faint" />
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+export function DashboardPage() {
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const canViewAcademicDashboard = hasPermission('academic.dashboard.view');
   const canViewHrDashboard = hasPermission('hr.employees.view');
@@ -228,47 +311,8 @@ export function DashboardPage() {
     <div className="flex flex-col gap-4">
       <PageHeader title="Dashboard" variant="plain" />
 
-      <div className="rounded-card border border-border bg-white p-5">
-        <h2 className="text-base font-semibold text-text-primary">Phase 2.0 Foundation complete</h2>
-        <p className="mt-1 text-sm text-text-muted">
-          Auth, RBAC, and branch scoping are live. Functional module screens
-          (Configuration, HR, Student Management, Fees, Academic) land in later
-          phases.
-        </p>
-
-        <dl className="mt-4 max-w-[480px] divide-y divide-border rounded-card border border-border text-sm">
-          <div className="flex justify-between gap-4 px-4 py-2">
-            <dt className="font-medium text-text-muted">Logged in as</dt>
-            <dd className="text-right text-text-primary">
-              {user?.firstName} {user?.lastName} ({user?.email})
-            </dd>
-          </div>
-          <div className="flex justify-between gap-4 px-4 py-2">
-            <dt className="font-medium text-text-muted">Scope</dt>
-            <dd className="text-right text-text-primary">
-              {user?.isGlobal ? 'Global (all branches)' : 'Branch-scoped'}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-4 px-4 py-2">
-            <dt className="font-medium text-text-muted">Roles</dt>
-            <dd className="flex flex-wrap justify-end gap-1">
-              {user?.roles.map((r) => (
-                <Badge key={r.id}>{r.name}</Badge>
-              ))}
-            </dd>
-          </div>
-          <div className="flex justify-between gap-4 px-4 py-2">
-            <dt className="font-medium text-text-muted">Permissions</dt>
-            <dd className="flex flex-wrap justify-end gap-1">
-              {user?.permissions.map((p) => (
-                <Badge key={p} tone="blue">
-                  {p}
-                </Badge>
-              ))}
-            </dd>
-          </div>
-        </dl>
-      </div>
+      <WelcomeSection />
+      <QuickLinksSection />
 
       {canViewAcademicDashboard && <AcademicKpiSection />}
       {canViewHrDashboard && <HrKpiSection />}

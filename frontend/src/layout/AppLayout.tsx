@@ -11,6 +11,7 @@ import {
   GraduationCap,
   DollarSign,
   BookOpen,
+  Smartphone,
   ChevronLeft,
   LogOut,
   ChevronDown,
@@ -21,20 +22,31 @@ import { api } from '../lib/api';
 import { Select } from '../components/ui/Select';
 import { cn } from '../lib/utils/cn';
 
-interface NavItem {
+export interface NavItem {
   key: string;
   label: string;
   permission: string;
 }
 
-interface ModuleDef {
+function initials(name: string | undefined): string {
+  if (!name) return '';
+  return name
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join('')
+    .toUpperCase();
+}
+
+export interface ModuleDef {
   key: string;
   label: string;
   icon: ComponentType<{ className?: string }>;
   items: NavItem[];
 }
 
-const MODULES: ModuleDef[] = [
+export const MODULES: ModuleDef[] = [
   {
     key: 'configuration',
     label: 'Configuration',
@@ -105,6 +117,16 @@ const MODULES: ModuleDef[] = [
       { key: '/academic/current-classes', label: 'Current Classes', permission: 'academic.current_classes.view' },
     ],
   },
+  {
+    key: 'mobile',
+    label: 'Mobile API',
+    icon: Smartphone,
+    items: [
+      { key: '/mobile/permissions', label: 'Permissions', permission: 'system.mobile_api.view' },
+      { key: '/mobile/api-docs', label: 'API Documentation', permission: 'system.mobile_api.view' },
+      { key: '/mobile/usage-history', label: 'Usage History', permission: 'system.mobile_api.view' },
+    ],
+  },
 ];
 
 export function AppLayout() {
@@ -160,7 +182,7 @@ export function AppLayout() {
   const handleLogout = async () => {
     try {
       if (refreshToken) {
-        await api.post('/auth/logout', { refreshToken });
+        await api.post('/auth/logout', { refresh_token: refreshToken });
       }
     } finally {
       clear();
@@ -250,13 +272,10 @@ export function AppLayout() {
         <div className="border-t border-white/10 p-3">
           <div className="flex items-center gap-2 px-1 py-1 text-sm">
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white/10 text-xs font-semibold">
-              {user?.firstName?.[0]}
-              {user?.lastName?.[0]}
+              {initials(user?.name)}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="truncate font-medium text-white">
-                {user?.firstName} {user?.lastName}
-              </div>
+              <div className="truncate font-medium text-white">{user?.name}</div>
             </div>
           </div>
         </div>
@@ -289,11 +308,9 @@ export function AppLayout() {
                 className="flex items-center gap-2 rounded-card px-2 py-1.5 hover:bg-table-alt"
               >
                 <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-light text-xs font-semibold text-blue">
-                  {user?.firstName?.[0]}
+                  {initials(user?.name)}
                 </div>
-                <span className="text-sm text-text-primary">
-                  {user?.firstName} {user?.lastName}
-                </span>
+                <span className="text-sm text-text-primary">{user?.name}</span>
                 <ChevronDown className="h-3.5 w-3.5 text-text-faint" />
               </button>
               {userMenuOpen && (

@@ -10,6 +10,8 @@ import {
   Post,
   Query,
   Req,
+  UseGuards,
+  UseInterceptors,
   UsePipes,
 } from '@nestjs/common';
 import { Request } from 'express';
@@ -21,6 +23,9 @@ import { GetUnassignedStudentsQueryDto } from './dto/get-unassigned-students-que
 import { MobileContextService } from '../common/mobile-context.service';
 import { MobileValidationPipe } from '../common/mobile-validation.pipe';
 import { Reply } from '../common/reply';
+import { MobileApiLoggingInterceptor } from '../common/mobile-api-logging.interceptor';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 
 interface AuthedRequest extends Request {
   user: { userId: string };
@@ -28,6 +33,9 @@ interface AuthedRequest extends Request {
 
 /** Mirrors legacy `Route::prefix('halqas')->group(...)`, i.e. `/api/app/halqas`. */
 @Controller('app/halqas')
+@UseGuards(PermissionsGuard)
+@RequirePermission('mobile_api.halqas.access')
+@UseInterceptors(MobileApiLoggingInterceptor)
 @UsePipes(new MobileValidationPipe())
 export class HalqasController {
   constructor(

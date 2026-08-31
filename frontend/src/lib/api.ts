@@ -25,11 +25,11 @@ async function refreshAccessToken(): Promise<string> {
   try {
     const response = await axios.post(
       `${api.defaults.baseURL}/auth/refresh`,
-      { refreshToken },
+      { refresh_token: refreshToken },
     );
-    const newAccessToken: string = response.data.accessToken;
+    const newAccessToken: string = response.data.token;
     // The old refresh token is rotated server-side; persist the new one too.
-    useAuthStore.setState({ refreshToken: response.data.refreshToken });
+    useAuthStore.setState({ refreshToken: response.data.refresh_token });
     setAccessToken(newAccessToken);
     return newAccessToken;
   } catch (err) {

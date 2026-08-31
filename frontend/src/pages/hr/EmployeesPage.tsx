@@ -16,6 +16,12 @@ import { Checkbox } from '../../components/ui/Checkbox';
 import { StatusBadge } from '../../components/ui/StatusBadge';
 import { toast } from '../../components/ui/toast';
 
+function getErrorMessage(err: unknown, fallback: string): string {
+  const serverMessage = (err as { response?: { data?: { message?: string } } }).response?.data
+    ?.message;
+  return serverMessage ?? fallback;
+}
+
 interface Department {
   id: string;
   name: string;
@@ -26,17 +32,28 @@ interface Designation {
   name: string;
 }
 
+type EmployeeType = 'TEACHER' | 'ADMIN' | 'OFFICE_STAFF';
+
+const EMPLOYEE_TYPE_LABELS: Record<EmployeeType, string> = {
+  TEACHER: 'Teacher',
+  ADMIN: 'Admin',
+  OFFICE_STAFF: 'Office Staff',
+};
+
 interface EmployeeUser {
-  email: string;
+  username: string;
+  email: string | null;
   firstName: string;
   lastName: string;
   phone: string | null;
+  whatsapp: string | null;
   isActive: boolean;
 }
 
 interface Employee {
   id: string;
   employeeCode: string;
+  employeeType: EmployeeType;
   dateOfJoining: string | null;
   status: 'ACTIVE' | 'INACTIVE';
   departmentId: string | null;
@@ -47,11 +64,13 @@ interface Employee {
 }
 
 interface FormValues {
-  email: string;
+  name: string;
+  username: string;
   password: string;
-  firstName: string;
-  lastName: string;
   phone: string;
+  whatsapp: string;
+  email: string;
+  employeeType: EmployeeType;
   employeeCode: string;
   departmentId: string;
   designationId: string;
@@ -60,11 +79,13 @@ interface FormValues {
 }
 
 const EMPTY_FORM: FormValues = {
-  email: '',
+  name: '',
+  username: '',
   password: '',
-  firstName: '',
-  lastName: '',
   phone: '',
+  whatsapp: '',
+  email: '',
+  employeeType: 'OFFICE_STAFF',
   employeeCode: '',
   departmentId: '',
   designationId: '',
@@ -110,6 +131,8 @@ export function EmployeesPage() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [values, setValues] = useState<FormValues>(EMPTY_FORM);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [typeFilter, setTypeFilter] = useState('');
+  const [designationFilter, setDesignationFilter] = useState('');
 
   const departmentOptions = (departmentsQuery.data ?? []).map((d) => ({ label: d.name, value: d.id }));
   const designationOptions = (designationsQuery.data ?? []).map((d) => ({ label: d.name, value: d.id }));
@@ -130,6 +153,7 @@ export function EmployeesPage() {
     setValues({
       ...EMPTY_FORM,
       employeeCode: record.employeeCode,
+      employeeType: record.employeeType,
       departmentId: record.departmentId ?? '',
       designationId: record.designationId ?? '',
       dateOfJoining: record.dateOfJoining ?? '',
@@ -147,16 +171,15 @@ export function EmployeesPage() {
   const validate = (): boolean => {
     const nextErrors: Record<string, string> = {};
     if (!editing) {
-      if (!values.email || !/^\S+@\S+\.\S+$/.test(values.email)) {
-        nextErrors.email = 'A valid email is required';
+      if (!values.username) nextErrors.username = 'Username is required';
+      if (values.email && !/^\S+@\S+\.\S+$/.test(values.email)) {
+        nextErrors.email = 'Must be a valid email';
       }
-      if (!values.password || values.password.length < 8) {
-        nextErrors.password = 'Minimum 8 characters';
+      if (!values.password) {
+        nextErrors.password = 'Password is required';
       }
-      if (!values.firstName) nextErrors.firstName = 'First name is required';
-      if (!values.lastName) nextErrors.lastName = 'Last name is required';
+      if (!values.name) nextErrors.name = 'Name is required';
     }
-    if (!values.employeeCode) nextErrors.employeeCode = 'Employee code is required';
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   };
@@ -169,25 +192,28 @@ export function EmployeesPage() {
         await update.mutateAsync({
           id: editing.id,
           payload: {
-            employeeCode: values.employeeCode,
+            employeeCode: values.employeeCode || undefined,
             departmentId: values.departmentId || null,
             designationId: values.designationId || null,
             dateOfJoining: values.dateOfJoining || null,
             status: values.status,
+            password: values.password || undefined,
           },
         });
         toast.success('Updated');
       } else {
-        // Create payload includes account-provisioning fields (email/password/
-        // firstName/lastName) that aren't part of the Employee read-model,
-        // so this doesn't fit useBranchResource's Partial<Employee> typing.
+        // Create payload includes account-provisioning fields (username/email/
+        // password/name) that aren't part of the Employee read-model, so this
+        // doesn't fit useBranchResource's Partial<Employee> typing.
         await create.mutateAsync({
-          email: values.email,
+          name: values.name,
+          username: values.username,
           password: values.password,
-          firstName: values.firstName,
-          lastName: values.lastName,
           phone: values.phone || undefined,
-          employeeCode: values.employeeCode,
+          whatsapp: values.whatsapp || undefined,
+          email: values.email || undefined,
+          employeeType: values.employeeType,
+          employeeCode: values.employeeCode || undefined,
           departmentId: values.departmentId || undefined,
           designationId: values.designationId || undefined,
           dateOfJoining: values.dateOfJoining || undefined,
@@ -195,8 +221,8 @@ export function EmployeesPage() {
         toast.success('Created');
       }
       setModalOpen(false);
-    } catch {
-      toast.error('Something went wrong');
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Something went wrong'));
     } finally {
       setSubmitting(false);
     }
@@ -214,7 +240,11 @@ export function EmployeesPage() {
     }
   };
 
-  const data = list.data ?? [];
+  const data = (list.data ?? []).filter((e) => {
+    if (typeFilter && e.employeeType !== typeFilter) return false;
+    if (designationFilter && e.designationId !== designationFilter) return false;
+    return true;
+  });
   const allSelected = data.length > 0 && selectedRowKeys.length === data.length;
   const someSelected = selectedRowKeys.length > 0 && !allSelected;
 
@@ -255,9 +285,24 @@ export function EmployeesPage() {
       cell: ({ row }) => `${row.original.user.firstName} ${row.original.user.lastName}`,
     },
     {
+      id: 'username',
+      header: 'Username',
+      cell: ({ row }) => row.original.user.username,
+    },
+    {
+      id: 'phone',
+      header: 'Mobile',
+      cell: ({ row }) => row.original.user.phone ?? '-',
+    },
+    {
       id: 'email',
       header: 'Email',
       cell: ({ row }) => row.original.user.email,
+    },
+    {
+      id: 'employeeType',
+      header: 'Type',
+      cell: ({ row }) => EMPLOYEE_TYPE_LABELS[row.original.employeeType],
     },
     { accessorKey: 'employeeCode', header: 'Employee code' },
     {
@@ -337,12 +382,45 @@ export function EmployeesPage() {
         designations must be created first under Configuration.
       </p>
 
-      <DataTable<Employee> columns={columns} data={data} isLoading={list.isLoading} />
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="w-48">
+          <Field label="Type">
+            <Select
+              options={[
+                { label: 'Teacher', value: 'TEACHER' },
+                { label: 'Admin', value: 'ADMIN' },
+                { label: 'Office Staff', value: 'OFFICE_STAFF' },
+              ]}
+              value={typeFilter}
+              placeholder="All types"
+              onChange={(e) => setTypeFilter(e.target.value)}
+            />
+          </Field>
+        </div>
+        <div className="w-48">
+          <Field label="Designation">
+            <Select
+              options={designationOptions}
+              value={designationFilter}
+              placeholder="All designations"
+              onChange={(e) => setDesignationFilter(e.target.value)}
+            />
+          </Field>
+        </div>
+        {(typeFilter || designationFilter) && (
+          <Button variant="outline" size="sm" onClick={() => { setTypeFilter(''); setDesignationFilter(''); }}>
+            Clear filters
+          </Button>
+        )}
+      </div>
+
+      <DataTable<Employee> columns={columns} data={data} isLoading={list.isLoading} searchable />
 
       <Modal
         open={modalOpen}
         title={editing ? 'Edit Employee' : 'Add Employee'}
         onClose={handleCancel}
+        position="right"
         footer={
           <>
             <Button variant="outline" onClick={handleCancel} disabled={submitting}>
@@ -357,11 +435,16 @@ export function EmployeesPage() {
         <div className="flex flex-col gap-4">
           {!editing && (
             <>
-              <Field label="Email" required error={errors.email}>
+              <Field label="Name" required error={errors.name}>
                 <Input
-                  type="email"
-                  value={values.email}
-                  onChange={(e) => setField('email', e.target.value)}
+                  value={values.name}
+                  onChange={(e) => setField('name', e.target.value)}
+                />
+              </Field>
+              <Field label="Username" required error={errors.username} hint="Used to log in — doesn't need to be an email.">
+                <Input
+                  value={values.username}
+                  onChange={(e) => setField('username', e.target.value)}
                 />
               </Field>
               <Field label="Password" required error={errors.password}>
@@ -371,27 +454,39 @@ export function EmployeesPage() {
                   onChange={(e) => setField('password', e.target.value)}
                 />
               </Field>
-              <Field label="First name" required error={errors.firstName}>
-                <Input
-                  value={values.firstName}
-                  onChange={(e) => setField('firstName', e.target.value)}
-                />
-              </Field>
-              <Field label="Last name" required error={errors.lastName}>
-                <Input
-                  value={values.lastName}
-                  onChange={(e) => setField('lastName', e.target.value)}
-                />
-              </Field>
-              <Field label="Phone">
+              <Field label="Mobile">
                 <Input
                   value={values.phone}
                   onChange={(e) => setField('phone', e.target.value)}
                 />
               </Field>
+              <Field label="WhatsApp">
+                <Input
+                  value={values.whatsapp}
+                  onChange={(e) => setField('whatsapp', e.target.value)}
+                />
+              </Field>
+              <Field label="Email" error={errors.email}>
+                <Input
+                  type="email"
+                  value={values.email}
+                  onChange={(e) => setField('email', e.target.value)}
+                />
+              </Field>
+              <Field label="Employee type" required hint="Teacher also creates a linked Teacher record, so they show up in the Teachers list.">
+                <Select
+                  options={[
+                    { label: 'Teacher', value: 'TEACHER' },
+                    { label: 'Admin', value: 'ADMIN' },
+                    { label: 'Office Staff', value: 'OFFICE_STAFF' },
+                  ]}
+                  value={values.employeeType}
+                  onChange={(e) => setField('employeeType', e.target.value as EmployeeType)}
+                />
+              </Field>
             </>
           )}
-          <Field label="Employee code" required error={errors.employeeCode}>
+          <Field label="Employee code" error={errors.employeeCode} hint="Auto-generated (next EMP###) when left blank.">
             <Input
               value={values.employeeCode}
               onChange={(e) => setField('employeeCode', e.target.value)}
@@ -421,16 +516,25 @@ export function EmployeesPage() {
             />
           </Field>
           {editing && (
-            <Field label="Status">
-              <Select
-                options={[
-                  { label: 'ACTIVE', value: 'ACTIVE' },
-                  { label: 'INACTIVE', value: 'INACTIVE' },
-                ]}
-                value={values.status}
-                onChange={(e) => setField('status', e.target.value as 'ACTIVE' | 'INACTIVE')}
-              />
-            </Field>
+            <>
+              <Field label="Status">
+                <Select
+                  options={[
+                    { label: 'ACTIVE', value: 'ACTIVE' },
+                    { label: 'INACTIVE', value: 'INACTIVE' },
+                  ]}
+                  value={values.status}
+                  onChange={(e) => setField('status', e.target.value as 'ACTIVE' | 'INACTIVE')}
+                />
+              </Field>
+              <Field label="Reset password" error={errors.password} hint="Leave blank to keep the current password.">
+                <Input
+                  type="password"
+                  value={values.password}
+                  onChange={(e) => setField('password', e.target.value)}
+                />
+              </Field>
+            </>
           )}
         </div>
       </Modal>

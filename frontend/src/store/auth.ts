@@ -9,13 +9,15 @@ export interface RoleGrant {
 
 export interface AuthUser {
   id: string;
-  email: string;
-  firstName: string;
-  lastName: string;
+  username: string;
+  email: string | null;
+  name: string;
+  image: string | null;
+  position: string | null;
   branchId: string | null;
   isGlobal: boolean;
   roles: RoleGrant[];
-  permissions: string[];
+  permissionKeys: string[];
 }
 
 interface AuthState {
@@ -86,5 +88,5 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     localStorage.removeItem(STORAGE_KEY);
   },
 
-  hasPermission: (key: string) => get().user?.permissions.includes(key) ?? false,
+  hasPermission: (key) => get().user?.permissionKeys?.includes(key) ?? false,
 }));

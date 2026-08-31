@@ -11,10 +11,14 @@ import {
   Post,
   Query,
   Req,
+  UseGuards,
+  UseInterceptors,
   UsePipes,
 } from '@nestjs/common';
 import { Request } from 'express';
 import { MobileStudentsService } from './students.service';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { CreateStudentDto } from './dto/create-student.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
 import { ClassSectionYearsQueryDto } from './dto/class-section-years-query.dto';
@@ -25,6 +29,7 @@ import { AddStudentExamDto } from './dto/add-student-exam.dto';
 import { UpdateStudentExamDto } from './dto/update-student-exam.dto';
 import { MobileContextService } from '../common/mobile-context.service';
 import { MobileValidationPipe } from '../common/mobile-validation.pipe';
+import { MobileApiLoggingInterceptor } from '../common/mobile-api-logging.interceptor';
 
 interface AuthedRequest extends Request {
   user: { userId: string };
@@ -32,6 +37,9 @@ interface AuthedRequest extends Request {
 
 /** Mirrors legacy `Route::prefix('students')->group(...)`, i.e. `/api/app/students`. */
 @Controller('app/students')
+@UseGuards(PermissionsGuard)
+@RequirePermission('mobile_api.students.access')
+@UseInterceptors(MobileApiLoggingInterceptor)
 @UsePipes(new MobileValidationPipe())
 export class StudentsController {
   constructor(

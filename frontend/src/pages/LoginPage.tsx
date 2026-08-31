@@ -9,7 +9,7 @@ import { Field, Input } from '../components/ui/Input';
 export function LoginPage() {
   const navigate = useNavigate();
   const setSession = useAuthStore((s) => s.setSession);
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -19,9 +19,33 @@ export function LoginPage() {
     setError(null);
     setLoading(true);
     try {
-      const response = await api.post('/auth/login', { username, password });
-      const { accessToken, refreshToken, user } = response.data;
-      setSession(accessToken, refreshToken, user);
+      const response = await api.post('/auth/login', { email, password });
+      const {
+        token,
+        refresh_token,
+        id,
+        username,
+        email: userEmail,
+        name,
+        image,
+        position,
+        branchId,
+        isGlobal,
+        roles,
+        permissionKeys,
+      } = response.data;
+      setSession(token, refresh_token, {
+        id,
+        username,
+        email: userEmail,
+        name,
+        image,
+        position,
+        branchId,
+        isGlobal,
+        roles,
+        permissionKeys,
+      });
       navigate('/dashboard', { replace: true });
     } catch {
       setError('Invalid username or password.');
@@ -42,13 +66,13 @@ export function LoginPage() {
           </div>
         )}
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
-          <Field label="Username" required>
+          <Field label="Username or email" required>
             <Input
               type="text"
               autoComplete="username"
               required
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
             />
           </Field>
           <Field label="Password" required>

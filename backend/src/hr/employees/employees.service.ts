@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
@@ -9,6 +15,11 @@ import type { EmployeeImportRow } from './employees.import';
 
 const SALT_ROUNDS = 10;
 const IMPORT_DEFAULT_PASSWORD = 'Welcome123!';
+
+function splitName(name: string): { firstName: string; lastName?: string } {
+  const [firstName, ...rest] = name.trim().split(/\s+/);
+  return { firstName, lastName: rest.length > 0 ? rest.join(' ') : undefined };
+}
 
 @Injectable()
 export class EmployeesService {
@@ -27,9 +38,17 @@ export class EmployeesService {
         firstName: true,
         lastName: true,
         phone: true,
+        whatsapp: true,
         isActive: true,
       },
     };
+  }
+
+  private async assertUsernameAvailable(username: string) {
+    const existing = await this.prisma.user.findUnique({ where: { username } });
+    if (existing) {
+      throw new ConflictException('That username is already taken.');
+    }
   }
 
   /** Next "EMP###" code for this branch, used when the caller doesn't supply one. */
@@ -96,6 +115,7 @@ export class EmployeesService {
   }
 
   async create(branchId: string, dto: CreateEmployeeDto) {
+    await this.assertUsernameAvailable(dto.username);
     await this.assertDepartmentAndDesignationBelongToBranch(
       branchId,
       dto.departmentId,
@@ -104,6 +124,8 @@ export class EmployeesService {
 
     const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
     const employeeCode = dto.employeeCode ?? (await this.nextEmployeeCode(branchId));
+    const { firstName, lastName } = splitName(dto.name);
+    const employeeType = dto.employeeType ?? 'OFFICE_STAFF';
 
     const employee = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
@@ -111,24 +133,41 @@ export class EmployeesService {
           username: dto.username,
           email: dto.email,
           passwordHash,
-          firstName: dto.firstName,
-          lastName: dto.lastName,
+          firstName,
+          lastName,
           phone: dto.phone,
+          whatsapp: dto.whatsapp,
           branchId,
         },
       });
 
-      return tx.employee.create({
+      const created = await tx.employee.create({
         data: {
           userId: user.id,
           branchId,
           employeeCode,
+          employeeType,
           departmentId: dto.departmentId,
           designationId: dto.designationId,
           dateOfJoining: dto.dateOfJoining ? new Date(dto.dateOfJoining) : undefined,
         },
         include: this.includeClause(),
       });
+
+      // A Teacher-type employee gets a linked Teacher record on the same
+      // login, so they also appear in the Teachers list/academic modules —
+      // Teachers are no longer created standalone (see TeachersService).
+      if (employeeType === 'TEACHER') {
+        const teacherRole = await tx.role.findUnique({ where: { name: 'Teacher' } });
+        await tx.teacher.create({
+          data: { userId: user.id, branchId, employeeId: created.id, employeeCode },
+        });
+        if (teacherRole) {
+          await tx.userRole.create({ data: { userId: user.id, roleId: teacherRole.id } });
+        }
+      }
+
+      return created;
     });
 
     // Fire-and-forget invite email: employees provisioned here don't get a
@@ -138,7 +177,7 @@ export class EmployeesService {
     // was provided (email is optional now that login uses username).
     if (dto.email) {
       this.mail
-        .sendEmployeeInvite(dto.email, dto.firstName)
+        .sendEmployeeInvite(dto.email, firstName)
         .catch((err) => this.logger.error(`Failed to send employee invite email to ${dto.email}`, err));
     }
 
@@ -146,23 +185,30 @@ export class EmployeesService {
   }
 
   async update(branchId: string, id: string, dto: UpdateEmployeeDto) {
-    await this.findOne(branchId, id);
+    const existing = await this.findOne(branchId, id);
     await this.assertDepartmentAndDesignationBelongToBranch(
       branchId,
       dto.departmentId,
       dto.designationId,
     );
 
-    return this.prisma.employee.update({
-      where: { id },
-      data: {
-        ...(dto.employeeCode !== undefined && { employeeCode: dto.employeeCode }),
-        ...(dto.departmentId !== undefined && { departmentId: dto.departmentId }),
-        ...(dto.designationId !== undefined && { designationId: dto.designationId }),
-        ...(dto.dateOfJoining !== undefined && { dateOfJoining: new Date(dto.dateOfJoining) }),
-        ...(dto.status !== undefined && { status: dto.status }),
-      },
-      include: this.includeClause(),
+    return this.prisma.$transaction(async (tx) => {
+      if (dto.password) {
+        const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
+        await tx.user.update({ where: { id: existing.userId }, data: { passwordHash } });
+      }
+
+      return tx.employee.update({
+        where: { id },
+        data: {
+          ...(dto.employeeCode !== undefined && { employeeCode: dto.employeeCode }),
+          ...(dto.departmentId !== undefined && { departmentId: dto.departmentId }),
+          ...(dto.designationId !== undefined && { designationId: dto.designationId }),
+          ...(dto.dateOfJoining !== undefined && { dateOfJoining: new Date(dto.dateOfJoining) }),
+          ...(dto.status !== undefined && { status: dto.status }),
+        },
+        include: this.includeClause(),
+      });
     });
   }
 

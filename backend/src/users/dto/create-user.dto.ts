@@ -10,16 +10,14 @@ export class CreateUserDto {
   email?: string;
 
   @IsString()
-  @MinLength(8)
+  @MinLength(1)
   password: string;
 
+  // Single display name, split into firstName/lastName at the User record
+  // level, which has no single-name column.
   @IsString()
   @MinLength(1)
-  firstName: string;
-
-  @IsOptional()
-  @IsString()
-  lastName?: string;
+  name: string;
 
   @IsOptional()
   @IsString()

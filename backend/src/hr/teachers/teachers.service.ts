@@ -1,10 +1,15 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateTeacherDto } from './dto/create-teacher.dto';
 import { UpdateTeacherDto } from './dto/update-teacher.dto';
 
 const SALT_ROUNDS = 10;
+
+function splitName(name: string): { firstName: string; lastName?: string } {
+  const [firstName, ...rest] = name.trim().split(/\s+/);
+  return { firstName, lastName: rest.length > 0 ? rest.join(' ') : undefined };
+}
 
 @Injectable()
 export class TeachersService {
@@ -17,6 +22,8 @@ export class TeachersService {
         email: true,
         firstName: true,
         lastName: true,
+        phone: true,
+        whatsapp: true,
         isActive: true,
       },
     };
@@ -48,6 +55,13 @@ export class TeachersService {
     return record;
   }
 
+  private async assertUsernameAvailable(username: string) {
+    const existing = await this.prisma.user.findUnique({ where: { username } });
+    if (existing) {
+      throw new ConflictException('That username is already taken.');
+    }
+  }
+
   private async assertEmployeeBelongsToBranch(branchId: string, employeeId?: string) {
     if (!employeeId) {
       return;
@@ -61,9 +75,11 @@ export class TeachersService {
   }
 
   async create(branchId: string, dto: CreateTeacherDto) {
+    await this.assertUsernameAvailable(dto.username);
     await this.assertEmployeeBelongsToBranch(branchId, dto.employeeId);
 
     const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
+    const { firstName, lastName } = splitName(dto.name);
 
     return this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
@@ -71,9 +87,10 @@ export class TeachersService {
           username: dto.username,
           email: dto.email,
           passwordHash,
-          firstName: dto.firstName,
-          lastName: dto.lastName,
+          firstName,
+          lastName,
           phone: dto.phone,
+          whatsapp: dto.whatsapp,
           branchId,
         },
       });

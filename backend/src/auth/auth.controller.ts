@@ -16,21 +16,21 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   login(@Body() dto: LoginDto) {
-    return this.authService.login(dto.username, dto.password);
+    return this.authService.login(dto.email, dto.password);
   }
 
   @Public()
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   refresh(@Body() dto: RefreshDto) {
-    return this.authService.refresh(dto.refreshToken);
+    return this.authService.refresh(dto.refresh_token);
   }
 
   @Public()
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   async logout(@Body() dto: RefreshDto) {
-    await this.authService.logout(dto.refreshToken);
+    await this.authService.logout(dto.refresh_token);
     return { message: 'Logged out' };
   }
 

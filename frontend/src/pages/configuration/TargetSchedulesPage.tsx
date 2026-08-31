@@ -40,6 +40,12 @@ interface TargetScheduleRow {
   examName: string | null;
 }
 
+const SCHEDULE_TYPE_OPTIONS = [
+  { label: 'Hifdh', value: 'Hifdh' },
+  { label: 'Preparation', value: 'Preparation' },
+  { label: 'Exam', value: 'Exam' },
+];
+
 export function TargetSchedulesPage() {
   const hasPermission = useAuthStore((s) => s.hasPermission);
   const canManage = hasPermission('configuration.target_schedules.manage');
@@ -69,14 +75,7 @@ export function TargetSchedulesPage() {
       .filter((r) => !filterType || r.scheduleType === filterType);
   }, [list.data, filterSurahId, filterType]);
 
-  const typeOptions = useMemo(
-    () =>
-      [...new Set((list.data ?? []).map((r) => r.scheduleType).filter((t): t is string => Boolean(t)))].map((t) => ({
-        label: t,
-        value: t,
-      })),
-    [list.data],
-  );
+  const typeOptions = SCHEDULE_TYPE_OPTIONS;
 
   // ---- Inline editing ----
   const [savingId, setSavingId] = useState<string | null>(null);
@@ -102,7 +101,7 @@ export function TargetSchedulesPage() {
     { name: 'surahId', label: 'Surah', type: 'select', options: surahOptions },
     { name: 'fromAyah', label: 'Verse from', type: 'number' },
     { name: 'toAyah', label: 'Verse to', type: 'number' },
-    { name: 'scheduleType', label: 'Schedule type', type: 'text' },
+    { name: 'scheduleType', label: 'Schedule type', type: 'select', options: SCHEDULE_TYPE_OPTIONS },
     { name: 'examName', label: 'Exam name', type: 'text' },
   ];
 
@@ -325,11 +324,13 @@ export function TargetSchedulesPage() {
       cell: ({ row }) => {
         const record = row.original;
         return (
-          <Input
-            defaultValue={record.scheduleType ?? ''}
+          <Select
+            value={record.scheduleType ?? ''}
             disabled={!canManage}
-            className="w-24"
-            onBlur={(e) => {
+            className="w-28"
+            placeholder="—"
+            options={[{ label: '—', value: '' }, ...SCHEDULE_TYPE_OPTIONS]}
+            onChange={(e) => {
               const next = e.target.value === '' ? null : e.target.value;
               if (next !== record.scheduleType) patchRow(record, { scheduleType: next });
             }}

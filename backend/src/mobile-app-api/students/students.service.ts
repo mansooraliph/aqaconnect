@@ -185,6 +185,13 @@ export class MobileStudentsService {
         },
       });
 
+      // Auto-assign the seeded "Student" role so the account is immediately
+      // usable on the mobile app, mirroring TeachersService's convention.
+      const studentRole = await tx.role.findUnique({ where: { name: 'Student' } });
+      if (studentRole) {
+        await tx.userRole.create({ data: { userId: user.id, roleId: studentRole.id } });
+      }
+
       if (dto.halqa_id) {
         await tx.halqaStudent.create({ data: { halqaId: dto.halqa_id, studentId: student.id } });
       }
@@ -192,7 +199,7 @@ export class MobileStudentsService {
       return student.id;
     });
 
-    await this.hifdh.generateInitialSchedulesForStudent(studentId, dto.halqa_id ?? '', dto.hifdh_start_date);
+    await this.hifdh.generateInitialSchedulesForStudent(studentId, branchId, dto.halqa_id ?? '', dto.hifdh_start_date);
 
     const data = await this.serializeStudent(studentId);
     return { ...data, generated_password: dto.password ? null : password };
@@ -694,7 +701,9 @@ export class MobileStudentsService {
     });
     for (const c of completions) {
       const date = toDateOnly(c.updatedAt);
-      const description = `Completed portion: ${c.surah.nameEnglish} verses ${c.fromAyah} to ${c.toAyah}`;
+      const description = c.surah
+        ? `Completed portion: ${c.surah.nameEnglish} verses ${c.fromAyah} to ${c.toAyah}`
+        : `Completed: ${c.examName ?? 'milestone'}`;
       push(
         date,
         withId({ type: 'surah_schedule_completion', description, time: c.updatedAt.toISOString() }, c.id, 'surah_schedule'),
@@ -716,29 +725,39 @@ export class MobileStudentsService {
       push(date, withId(entry, a.id, 'attendance'));
     }
 
-    // 4. StudentSurahProgress
-    const progressItems = await this.prisma.studentSurahProgress.findMany({
-      where: {
-        studentId,
-        status: { in: ['COMPLETED', 'VERIFIED'] },
-        OR: [{ updatedAt: { gte: start, lte: end } }, { completedAt: { gte: start, lte: end } }],
-      },
+    // 4. Surah-completed events, derived from the per-ayah progress ledger
+    // (StudentSurahProgressEntry) — a surah counts as "completed" once every
+    // one of its ayah entries is VERIFIED; the event date is the latest of
+    // those verification timestamps.
+    const progressEntries = await this.prisma.studentSurahProgressEntry.findMany({
+      where: { studentId, type: 'NEW_LESSON', surahId: { not: null } },
       include: { surah: { select: { nameEnglish: true } } },
     });
-    for (const p of progressItems) {
-      const at = p.completedAt ?? p.updatedAt;
-      const date = toDateOnly(at);
+    const bySurah = new Map<string, { surahName: string; total: number; verified: number; latestAt: Date }>();
+    for (const e of progressEntries) {
+      if (!e.surahId || !e.surah) continue;
+      const at = e.verifiedAt ?? e.completedAt ?? e.updatedAt;
+      const g = bySurah.get(e.surahId) ?? { surahName: e.surah.nameEnglish, total: 0, verified: 0, latestAt: at };
+      g.total += 1;
+      if (e.status === 'VERIFIED') g.verified += 1;
+      if (at > g.latestAt) g.latestAt = at;
+      bySurah.set(e.surahId, g);
+    }
+    for (const [surahId, g] of bySurah) {
+      if (g.total === 0 || g.verified !== g.total) continue;
+      if (g.latestAt < start || g.latestAt > end) continue;
+      const date = toDateOnly(g.latestAt);
       push(
         date,
         withId(
           {
             type: 'surah_progress',
-            description: `Completed Surah: ${p.surah.nameEnglish}`,
-            time: at.toISOString(),
-            surah_id: p.surahId,
-            ...(opts.includeIdAndType && { ayah_number: p.ayahsCompleted }),
+            description: `Completed Surah: ${g.surahName}`,
+            time: g.latestAt.toISOString(),
+            surah_id: surahId,
+            ...(opts.includeIdAndType && { total_ayahs: g.total }),
           },
-          p.id,
+          `${studentId}:${surahId}`,
           'surah_progress',
         ),
       );

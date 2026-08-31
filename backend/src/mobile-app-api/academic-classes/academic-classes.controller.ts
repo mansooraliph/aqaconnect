@@ -8,6 +8,8 @@ import {
   Patch,
   Post,
   Req,
+  UseGuards,
+  UseInterceptors,
   UsePipes,
 } from '@nestjs/common';
 import { Request } from 'express';
@@ -16,6 +18,9 @@ import { StoreAcademicClassDto } from './dto/store-academic-class.dto';
 import { UpdateAcademicClassDto } from './dto/update-academic-class.dto';
 import { MobileContextService } from '../common/mobile-context.service';
 import { MobileValidationPipe } from '../common/mobile-validation.pipe';
+import { MobileApiLoggingInterceptor } from '../common/mobile-api-logging.interceptor';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 
 interface AuthedRequest extends Request {
   user: { userId: string };
@@ -23,6 +28,9 @@ interface AuthedRequest extends Request {
 
 /** Mirrors legacy `Route::prefix('academic')->group(...)` under `app/`, i.e. `/api/app/academic/classes`. */
 @Controller('app/academic/classes')
+@UseGuards(PermissionsGuard)
+@RequirePermission('mobile_api.academic_classes.access')
+@UseInterceptors(MobileApiLoggingInterceptor)
 @UsePipes(new MobileValidationPipe())
 export class AcademicClassesController {
   constructor(

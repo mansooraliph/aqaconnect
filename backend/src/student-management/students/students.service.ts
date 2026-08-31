@@ -90,7 +90,7 @@ export class StudentsService {
         include: this.includeClause(),
       });
       if (dto.halqaId) {
-        await this.hifdh.generateInitialSchedulesForStudent(student.id, dto.halqaId, dto.hifdhStartDate);
+        await this.hifdh.generateInitialSchedulesForStudent(student.id, branchId, dto.halqaId, dto.hifdhStartDate);
       }
       return { student, loginCreated: false };
     }
@@ -129,13 +129,20 @@ export class StudentsService {
         include: this.includeClause(),
       });
 
+      // Auto-assign the seeded "Student" role so the account is immediately
+      // usable on the mobile app, mirroring TeachersService's convention.
+      const studentRole = await tx.role.findUnique({ where: { name: 'Student' } });
+      if (studentRole) {
+        await tx.userRole.create({ data: { userId: user.id, roleId: studentRole.id } });
+      }
+
       return { student, temporaryPassword };
     });
 
     // Outside the transaction, matching legacy: a schedule-generation failure
     // must never roll back or block student creation.
     if (dto.halqaId) {
-      await this.hifdh.generateInitialSchedulesForStudent(student.id, dto.halqaId, dto.hifdhStartDate);
+      await this.hifdh.generateInitialSchedulesForStudent(student.id, branchId, dto.halqaId, dto.hifdhStartDate);
     }
 
     return {

@@ -18,7 +18,7 @@ export class UpdateTeacherDto {
 
   @IsOptional()
   @IsString()
-  @MinLength(6)
+  @MinLength(1)
   password?: string;
 
   @IsOptional()

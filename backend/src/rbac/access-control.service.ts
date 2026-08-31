@@ -58,4 +58,93 @@ export class AccessControlService {
   canAccessBranch(context: UserAccessContext, branchId: string): boolean {
     return context.isGlobal || context.allowedBranchIds.has(branchId);
   }
+
+  /**
+   * Builds the exact legacy source system's per-module permission shape
+   * (module -> { action: boolean, own_type?: string }), for clients that
+   * still expect that structure. Every module and action from the legacy
+   * catalog is always present, `false` unless mapped to a granted aqa_v2
+   * permission key below.
+   *
+   * Modules with no aqa_v2 equivalent (`tasks`, `projects`, `leads`,
+   * `schedule`, `proposals`, `clients`, `tickets`, `overtime_requests`,
+   * `admin_halqa`, `attendance_punch`, and the `apply_for_ot` action) are
+   * always `false` — there is nothing in aqa_v2 to derive them from.
+   * `own_type` strings are static per-module placeholders copied from the
+   * legacy system's own defaults, not derived from any aqa_v2 data — aqa_v2
+   * has no equivalent "own vs all" scoping concept to compute them from.
+   */
+  buildLegacyPermissions(granted: Set<string>): Record<string, Record<string, boolean | string>> {
+    const has = (key: string) => granted.has(key);
+
+    return {
+      tasks: { view: false, own_type: 'all', create: false, edit: false, delete: false, assign: false },
+      projects: { view: false, own_type: 'all', create: false, edit: false, delete: false, assign: false },
+      leads: { view: false, own_type: '', create: false, edit: false, delete: false, assign: false },
+      schedule: { view: false, create: false, edit: false, delete: false },
+      proposals: { view: false, own_type: '', create: false, edit: false, delete: false },
+      employees: {
+        view: has('hr.employees.view'),
+        own_type: '',
+        create: has('hr.employees.manage'),
+        edit: has('hr.employees.manage'),
+        delete: has('hr.employees.manage'),
+      },
+      clients: { view: false, own_type: '', create: false, edit: false, delete: false },
+      teachers: {
+        create: has('hr.teachers.manage'),
+        view: has('hr.teachers.view'),
+        own_type: 'all',
+        edit: has('hr.teachers.manage'),
+        delete: has('hr.teachers.manage'),
+      },
+      students: {
+        create: has('student_management.students.manage'),
+        view: has('student_management.students.view'),
+        edit: has('student_management.students.manage'),
+        delete: has('student_management.students.manage'),
+        assign: has('student_management.students.manage'),
+        own_type: 'all',
+      },
+      attendance: {
+        attendance_summary: has('hr.attendance.view'),
+        leaves: has('hr.leaves.view'),
+        apply_for_ot: false,
+        leave_approval: has('hr.leaves.approve'),
+        attendance_approval: has('hr.attendance.manage'),
+      },
+      attendance_punch: { Normal: false, Photo: false, Face: false, QR: false },
+      tickets: { view: false, own_type: 'all', create: false, edit: false, delete: false },
+      leaves: {
+        create: has('hr.leaves.apply'),
+        view: has('hr.leaves.view'),
+        own_type: 'own',
+        edit: has('hr.leaves.approve'),
+        delete: false,
+      },
+      overtime_requests: { view: false, own_type: 'all', create: false, edit: false, delete: false },
+      halqa: {
+        create: has('academic.halqas.manage'),
+        view: has('academic.halqas.view'),
+        edit: has('academic.halqas.manage'),
+        delete: has('academic.halqas.manage'),
+        own_type: 'all',
+      },
+      admin_halqa: { view: false, own_type: 'all', create: false, edit: false, delete: false },
+      lessons: {
+        create: has('academic.lessons.manage'),
+        view: has('academic.lessons.view'),
+        edit: has('academic.lessons.manage'),
+        delete: has('academic.lessons.manage'),
+        own_type: 'all',
+      },
+      hifdh: {
+        view: has('academic.hifdh_schedules.view') || has('academic.hifdh_progress.view'),
+        own_type: 'all',
+        create: has('academic.hifdh_schedules.manage'),
+        edit: has('academic.hifdh_progress.mark'),
+        delete: false,
+      },
+    };
+  }
 }

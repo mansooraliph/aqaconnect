@@ -1,9 +1,23 @@
-import { Controller, Get, HttpException, InternalServerErrorException, Param, Query, Req, UsePipes } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  HttpException,
+  InternalServerErrorException,
+  Param,
+  Query,
+  Req,
+  UseGuards,
+  UseInterceptors,
+  UsePipes,
+} from '@nestjs/common';
 import { Request } from 'express';
 import { SurahSchedulesService } from './surah-schedules.service';
 import { GetStudentScheduleQueryDto } from './dto/get-student-schedule-query.dto';
 import { MobileContextService } from '../common/mobile-context.service';
 import { MobileValidationPipe } from '../common/mobile-validation.pipe';
+import { MobileApiLoggingInterceptor } from '../common/mobile-api-logging.interceptor';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 
 interface AuthedRequest extends Request {
   user: { userId: string };
@@ -11,6 +25,9 @@ interface AuthedRequest extends Request {
 
 /** Mirrors legacy `Route::prefix('surah-schedules')->group(...)`, i.e. `/api/app/surah-schedules`. */
 @Controller('app/surah-schedules')
+@UseGuards(PermissionsGuard)
+@RequirePermission('mobile_api.surah_schedules.access')
+@UseInterceptors(MobileApiLoggingInterceptor)
 @UsePipes(new MobileValidationPipe())
 export class SurahSchedulesController {
   constructor(

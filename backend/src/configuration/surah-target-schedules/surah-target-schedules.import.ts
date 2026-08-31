@@ -16,10 +16,11 @@ export interface ImportRow {
 /**
  * Parses a Surah Target Schedule workbook: expected columns (in order,
  * header row 1) are day, surah no, ayah from, ayah to, type — matching the
- * "Aqa_Surah Target_Schedules.xlsx" reference file. A row whose "surah no"
- * cell isn't numeric (e.g. "Preparation day", "Exam Juz 30") is treated as a
- * milestone row: surahNumber/fromAyah/toAyah come back null and the text
- * goes into examName instead.
+ * "Aqa_Surah Target_Schedules.xlsx" reference file. The "type" column is
+ * "Hifd" for normal memorization rows, or "Preparation"/"Exam" for milestone
+ * rows. A row whose "surah no" cell isn't numeric (e.g. "Preparation day",
+ * "Exam Juz 30") is treated as a milestone row: surahNumber/fromAyah/toAyah
+ * come back null and the text goes into examName instead.
  */
 export async function parseSurahTargetScheduleWorkbook(buffer: Buffer): Promise<ImportRow[]> {
   const workbook = new ExcelJS.Workbook();

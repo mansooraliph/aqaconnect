@@ -7,9 +7,13 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AccessControlService } from '../rbac/access-control.service';
 
 export interface TokenPair {
-  accessToken: string;
-  refreshToken: string;
-  expiresIn: number;
+  /** Renamed from `accessToken` to match the legacy source system's field name. */
+  token: string;
+  token_type: 'bearer';
+  /** Renamed from `refreshToken`; no legacy equivalent exists (legacy has no revocable refresh token) but kept snake_case for consistency with the other renamed fields. */
+  refresh_token: string;
+  /** Renamed from `expiresIn` to match the legacy source system's field name. */
+  expires_in: number;
 }
 
 @Injectable()
@@ -51,14 +55,18 @@ export class AuthService {
     });
 
     return {
-      accessToken,
-      refreshToken: rawRefreshToken,
-      expiresIn: this.accessTokenTtlSeconds(),
+      token: accessToken,
+      token_type: 'bearer',
+      refresh_token: rawRefreshToken,
+      expires_in: this.accessTokenTtlSeconds(),
     };
   }
 
-  async validateUser(username: string, password: string) {
-    const user = await this.prisma.user.findUnique({ where: { username } });
+  /** `identifier` may be either the username or the email — login doesn't force users to remember which. */
+  async validateUser(identifier: string, password: string) {
+    const user = await this.prisma.user.findFirst({
+      where: { OR: [{ username: identifier }, { email: identifier }] },
+    });
     if (!user || !user.isActive) {
       return null;
     }
@@ -66,8 +74,8 @@ export class AuthService {
     return passwordMatches ? user : null;
   }
 
-  async login(username: string, password: string) {
-    const user = await this.validateUser(username, password);
+  async login(identifier: string, password: string) {
+    const user = await this.validateUser(identifier, password);
     if (!user) {
       throw new UnauthorizedException('Invalid username or password');
     }
@@ -79,20 +87,27 @@ export class AuthService {
 
     const tokens = await this.issueTokenPair(user.id, user.username);
     const accessContext = await this.accessControl.getUserAccessContext(user.id);
+    const permissions = this.accessControl.buildLegacyPermissions(accessContext.permissions);
+    const employee = await this.prisma.employee.findUnique({
+      where: { userId: user.id },
+      include: { designation: true },
+    });
 
     return {
       ...tokens,
-      user: {
-        id: user.id,
-        username: user.username,
-        email: user.email,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        branchId: user.branchId,
-        isGlobal: accessContext.isGlobal,
-        roles: accessContext.roles,
-        permissions: Array.from(accessContext.permissions),
-      },
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      name: [user.firstName, user.lastName].filter(Boolean).join(' '),
+      image: null, // placeholder: no avatar storage yet
+      position: employee?.designation?.name ?? null,
+      no_of_task: 0, // placeholder: task tracking not implemented yet
+      percentage: 0, // placeholder: task tracking not implemented yet
+      branchId: user.branchId,
+      isGlobal: accessContext.isGlobal,
+      roles: accessContext.roles,
+      permissions,
+      permissionKeys: Array.from(accessContext.permissions),
     };
   }
 
@@ -136,17 +151,26 @@ export class AuthService {
   async me(userId: string) {
     const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
     const accessContext = await this.accessControl.getUserAccessContext(userId);
+    const permissions = this.accessControl.buildLegacyPermissions(accessContext.permissions);
+    const employee = await this.prisma.employee.findUnique({
+      where: { userId: user.id },
+      include: { designation: true },
+    });
 
     return {
       id: user.id,
       username: user.username,
       email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
+      name: [user.firstName, user.lastName].filter(Boolean).join(' '),
+      image: null, // placeholder: no avatar storage yet
+      position: employee?.designation?.name ?? null,
+      no_of_task: 0, // placeholder: task tracking not implemented yet
+      percentage: 0, // placeholder: task tracking not implemented yet
       branchId: user.branchId,
       isGlobal: accessContext.isGlobal,
       roles: accessContext.roles,
-      permissions: Array.from(accessContext.permissions),
+      permissions,
+      permissionKeys: Array.from(accessContext.permissions),
     };
   }
 }

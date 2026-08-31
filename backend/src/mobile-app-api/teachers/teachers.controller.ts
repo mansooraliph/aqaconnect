@@ -1,4 +1,17 @@
-import { Body, Controller, Delete, Get, HttpException, Param, Patch, Post, Req, UsePipes } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpException,
+  Param,
+  Patch,
+  Post,
+  Req,
+  UseGuards,
+  UseInterceptors,
+  UsePipes,
+} from '@nestjs/common';
 import { Request } from 'express';
 import { TeachersService } from './teachers.service';
 import { StoreTeacherDto } from './dto/store-teacher.dto';
@@ -6,6 +19,9 @@ import { UpdateTeacherDto } from './dto/update-teacher.dto';
 import { MobileContextService } from '../common/mobile-context.service';
 import { MobileValidationPipe } from '../common/mobile-validation.pipe';
 import { Reply } from '../common/reply';
+import { MobileApiLoggingInterceptor } from '../common/mobile-api-logging.interceptor';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 
 interface AuthedRequest extends Request {
   user: { userId: string };
@@ -13,6 +29,9 @@ interface AuthedRequest extends Request {
 
 /** Mirrors legacy `Route::prefix('teachers')->group(...)`, i.e. `/api/app/teachers`. */
 @Controller('app/teachers')
+@UseGuards(PermissionsGuard)
+@RequirePermission('mobile_api.teachers.access')
+@UseInterceptors(MobileApiLoggingInterceptor)
 @UsePipes(new MobileValidationPipe())
 export class TeachersController {
   constructor(

@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
+import { ProgressEntryStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GenerateSchedulesDto } from './dto/generate-schedules.dto';
 import { RescheduleDto } from './dto/reschedule.dto';
@@ -25,12 +26,32 @@ export class HifdhService {
 
   // ── Schedules ──────────────────────────────────────────────────────────
 
-  listSchedules(studentId?: string, surahId?: string, status?: string) {
+  listSchedules(
+    studentId?: string,
+    surahId?: string,
+    status?: string,
+    fromDate?: string,
+    toDate?: string,
+    fromDay?: string,
+    toDay?: string,
+  ) {
     return this.prisma.surahHifdhStudentSchedule.findMany({
       where: {
         ...(studentId && { studentId }),
         ...(surahId && { surahId }),
         ...(status && { status: status as never }),
+        ...((fromDate || toDate) && {
+          scheduledDate: {
+            ...(fromDate && { gte: new Date(fromDate) }),
+            ...(toDate && { lte: new Date(toDate) }),
+          },
+        }),
+        ...((fromDay || toDay) && {
+          day: {
+            ...(fromDay && { gte: Number(fromDay) }),
+            ...(toDay && { lte: Number(toDay) }),
+          },
+        }),
       },
       include: {
         student: { select: { id: true, name: true, studentCode: true } },
@@ -39,7 +60,12 @@ export class HifdhService {
         rescheduledFrom: true,
         rescheduledTo: true,
       },
-      orderBy: { scheduledDate: 'asc' },
+      // scheduledDate alone doesn't uniquely order multi-row days (a sabaq +
+      // several sabqi/manzil rows can share one date) — day/createdAt as
+      // tiebreaks keep the list in the same sequence as the master target
+      // schedule/generation order instead of whatever order Postgres happens
+      // to return ties in (which can drift after an UPDATE rewrites a row).
+      orderBy: [{ scheduledDate: 'asc' }, { day: 'asc' }, { createdAt: 'asc' }],
     });
   }
 
@@ -58,20 +84,16 @@ export class HifdhService {
    * already have a schedule for that student, rather than duplicating. Rows
    * may each reference a different surah (same as the legacy per-row
    * surah_number), so surahId/fromAyah/toAyah come from each row, not a
-   * single shared template. Milestone rows with no surah portion (e.g.
-   * "Preparation day", "Exam Juz 30") are skipped — they have nothing to
-   * generate a memorization schedule row from.
+   * single shared template. Milestone rows with no surah portion ("Exam",
+   * "Preparation") are included too — surahId/fromAyah/toAyah come back
+   * null and examName carries the descriptive text.
    */
   async generateSchedules(branchId: string, teacherId: string | undefined, dto: GenerateSchedulesDto) {
-    const allRows = await this.prisma.surahTargetSchedule.findMany({
-      orderBy: { dayNumber: 'asc' },
+    const targets = await this.prisma.surahTargetSchedule.findMany({
+      orderBy: [{ dayNumber: 'asc' }, { sortOrder: 'asc' }],
     });
-    const targets = allRows.filter(
-      (r): r is typeof r & { surahId: string; fromAyah: number; toAyah: number } =>
-        r.surahId !== null && r.fromAyah !== null && r.toAyah !== null,
-    );
     if (targets.length === 0) {
-      throw new BadRequestException('The target schedule has no day-by-day surah portions to generate from');
+      throw new BadRequestException('The target schedule has no day-by-day rows to generate from');
     }
 
     const students = await this.prisma.student.findMany({
@@ -100,7 +122,7 @@ export class HifdhService {
           scheduledDate.setUTCDate(scheduledDate.getUTCDate() + (target.dayNumber - 1));
 
           const existing = await tx.surahHifdhStudentSchedule.findFirst({
-            where: { studentId: student.id, surahId: target.surahId, scheduledDate },
+            where: { studentId: student.id, surahTargetId: target.id },
           });
           if (existing) continue;
 
@@ -148,21 +170,29 @@ export class HifdhService {
    * (buggy) behavior, not the apparent intent. Never throws: a failure here
    * must not block student creation, matching legacy's own try/catch.
    */
-  async generateInitialSchedulesForStudent(studentId: string, halqaId: string, startDate?: string): Promise<void> {
+  async generateInitialSchedulesForStudent(
+    studentId: string,
+    branchId: string,
+    halqaId: string,
+    startDate?: string,
+  ): Promise<void> {
     try {
       const targets = await this.prisma.surahTargetSchedule.findMany({
-        where: { stage: 'HIFDH', surahId: { not: null }, fromAyah: { not: null }, toAyah: { not: null } },
-        orderBy: { dayNumber: 'asc' },
+        where: { stage: 'HIFDH' },
+        orderBy: [{ dayNumber: 'asc' }, { sortOrder: 'asc' }],
       });
       if (targets.length === 0) return;
 
       const base = startDate ? new Date(startDate) : new Date();
       const baseUtc = new Date(Date.UTC(base.getFullYear(), base.getMonth(), base.getDate()));
-      const scheduledSurahIds = new Set<string>();
+      // One row per individual ayah (legacy's own per-ayah granularity, see
+      // StudentSurahProgressEntry) — deduped across target rows so an ayah
+      // revisited by a later HIFDH-stage row (e.g. a revision pass) doesn't
+      // get a second "new lesson" entry.
+      const seenAyahs = new Set<string>();
+      const progressEntries: { surahId: string; fromAyah: number; toAyah: number; day: number }[] = [];
 
       for (const target of targets) {
-        if (!target.surahId || target.fromAyah === null || target.toAyah === null) continue;
-
         const scheduledDate = new Date(baseUtc);
         scheduledDate.setUTCDate(scheduledDate.getUTCDate() + (target.dayNumber - 1));
 
@@ -190,24 +220,37 @@ export class HifdhService {
             estimatedDurationMinutes: target.estimatedDurationMinutes,
           },
         });
-        scheduledSurahIds.add(target.surahId);
+
+        // Milestone rows ("Preparation"/"Exam") carry no surah portion — they
+        // still get a schedule row above, but there's no ayah range to seed
+        // into the per-ayah progress ledger.
+        if (!target.surahId || target.fromAyah === null || target.toAyah === null) continue;
+
+        for (let ayah = target.fromAyah; ayah <= target.toAyah; ayah++) {
+          const key = `${target.surahId}:${ayah}`;
+          if (seenAyahs.has(key)) continue;
+          seenAyahs.add(key);
+          progressEntries.push({ surahId: target.surahId, fromAyah: ayah, toAyah: ayah, day: target.dayNumber });
+        }
       }
 
-      // Mirrors the legacy CreateStudentSurahProgressJob, eagerly seeding a
-      // progress row per surah right after schedule generation — adapted to
-      // this schema's cumulative per-surah aggregate (legacy seeded one row
-      // per ayah instead, since its StudentSurahProgress table was
-      // per-ayah-granular). skipDuplicates guards re-runs and the
-      // studentId_surahId unique constraint.
-      if (scheduledSurahIds.size > 0) {
-        await this.prisma.studentSurahProgress.createMany({
-          data: [...scheduledSurahIds].map((surahId) => ({
+      // Seeds the shared per-ayah progress ledger (StudentSurahProgressEntry)
+      // that both the admin portal and the mobile app read/write — the
+      // single source of truth for Hifdh progress, kept in sync between the
+      // two going forward via HifdhService's own mark-completed/verify calls
+      // and the mobile app's own endpoints.
+      if (progressEntries.length > 0) {
+        await this.prisma.studentSurahProgressEntry.createMany({
+          data: progressEntries.map((e) => ({
+            branchId,
             studentId,
-            surahId,
-            ayahsCompleted: 0,
-            status: 'IN_PROGRESS' as const,
+            surahId: e.surahId,
+            fromAyah: e.fromAyah,
+            toAyah: e.toAyah,
+            day: e.day,
+            type: 'NEW_LESSON' as const,
+            status: 'NOT_STARTED' as const,
           })),
-          skipDuplicates: true,
         });
       }
     } catch {
@@ -215,8 +258,36 @@ export class HifdhService {
     }
   }
 
+  /**
+   * Pushes a schedule-row status change onto the matching ayah-range of
+   * StudentSurahProgressEntry rows — the same per-ayah ledger the mobile app
+   * reads and writes (type NEW_LESSON only, so mobile's own Old/Juzh Lesson
+   * entries are never touched). No-ops for milestone rows (no surah
+   * portion). `fromStatus` scopes which entries are eligible to advance, so
+   * e.g. verify only promotes ayahs already COMPLETED rather than skipping
+   * NOT_STARTED/IN_PROGRESS ones straight to VERIFIED.
+   */
+  private async syncProgressEntries(
+    tx: Prisma.TransactionClient,
+    schedule: { studentId: string; surahId: string | null; fromAyah: number | null; toAyah: number | null },
+    fromStatus: ProgressEntryStatus | ProgressEntryStatus[],
+    data: Prisma.StudentSurahProgressEntryUncheckedUpdateManyInput,
+  ) {
+    if (!schedule.surahId || schedule.fromAyah === null || schedule.toAyah === null) return;
+    await tx.studentSurahProgressEntry.updateMany({
+      where: {
+        studentId: schedule.studentId,
+        surahId: schedule.surahId,
+        type: 'NEW_LESSON',
+        fromAyah: { gte: schedule.fromAyah, lte: schedule.toAyah },
+        status: Array.isArray(fromStatus) ? { in: fromStatus } : fromStatus,
+      },
+      data,
+    });
+  }
+
   /** Student-side "I've done this portion" — moves it to NEEDS_REVIEW, awaiting teacher verification. */
-  async markCompleted(id: string) {
+  async markCompleted(id: string, userId?: string) {
     const schedule = await this.findScheduleOrThrow(id);
     if (schedule.status === 'COMPLETED') {
       throw new ConflictException('A verified schedule cannot be marked completed again');
@@ -226,12 +297,16 @@ export class HifdhService {
         where: { id },
         data: { status: 'NEEDS_REVIEW', completedAt: new Date() },
       });
-      await this.recalculateSurahProgress(tx, schedule.studentId, schedule.surahId);
+      await this.syncProgressEntries(tx, schedule, [ProgressEntryStatus.NOT_STARTED, ProgressEntryStatus.IN_PROGRESS], {
+        status: ProgressEntryStatus.COMPLETED,
+        completedAt: new Date(),
+        ...(userId && { lastUpdatedById: userId }),
+      });
       return updated;
     });
   }
 
-  async markInProgress(id: string) {
+  async markInProgress(id: string, userId?: string) {
     const schedule = await this.findScheduleOrThrow(id);
     if (schedule.status === 'COMPLETED') {
       throw new ConflictException('A verified schedule cannot be reverted');
@@ -241,13 +316,16 @@ export class HifdhService {
         where: { id },
         data: { status: 'IN_PROGRESS', startedAt: schedule.startedAt ?? new Date() },
       });
-      await this.recalculateSurahProgress(tx, schedule.studentId, schedule.surahId);
+      await this.syncProgressEntries(tx, schedule, [ProgressEntryStatus.NOT_STARTED, ProgressEntryStatus.COMPLETED], {
+        status: ProgressEntryStatus.IN_PROGRESS,
+        ...(userId && { lastUpdatedById: userId }),
+      });
       return updated;
     });
   }
 
-  /** Teacher confirmation — the terminal state (legacy's old "VERIFIED"). */
-  async verifySchedule(id: string, teacherId: string) {
+  /** Confirmation — the terminal state (legacy's old "VERIFIED"). */
+  async verifySchedule(id: string, userId?: string) {
     const schedule = await this.findScheduleOrThrow(id);
     if (schedule.status !== 'NEEDS_REVIEW') {
       throw new ConflictException('Only a schedule awaiting review can be verified');
@@ -257,7 +335,12 @@ export class HifdhService {
         where: { id },
         data: { status: 'COMPLETED' },
       });
-      await this.recalculateSurahProgress(tx, schedule.studentId, schedule.surahId, teacherId);
+      await this.syncProgressEntries(tx, schedule, ProgressEntryStatus.COMPLETED, {
+        status: ProgressEntryStatus.VERIFIED,
+        verifiedAt: new Date(),
+        verifiedById: userId,
+        ...(userId && { lastUpdatedById: userId }),
+      });
       return updated;
     });
   }
@@ -274,23 +357,113 @@ export class HifdhService {
       throw new ConflictException('A verified schedule cannot be rescheduled');
     }
     return this.prisma.surahHifdhStudentSchedule.create({
-      data: {
-        studentId: schedule.studentId,
-        surahId: schedule.surahId,
-        teacherId: schedule.teacherId,
-        surahTargetId: schedule.surahTargetId,
-        pageNumberFrom: schedule.pageNumberFrom,
-        pageNumberTo: schedule.pageNumberTo,
-        lineFrom: schedule.lineFrom,
-        lineTo: schedule.lineTo,
-        portionDescription: schedule.portionDescription,
-        fromAyah: schedule.fromAyah,
-        toAyah: schedule.toAyah,
-        scheduledDate: new Date(dto.newDate),
-        rescheduledFromId: schedule.id,
-        status: 'PENDING',
-      },
+      data: this.rescheduleRowData(schedule, new Date(dto.newDate), false),
     });
+  }
+
+  /**
+   * Builds the create-data for a schedule row's replacement — either shifted
+   * to a new date (pending items, status reset to PENDING) or an unchanged
+   * copy (completed items, same date/status, so their history carries over
+   * to the new schedule instead of being left behind on the invalidated
+   * old one).
+   */
+  private rescheduleRowData(
+    schedule: Prisma.SurahHifdhStudentScheduleGetPayload<Record<string, never>>,
+    scheduledDate: Date,
+    preserveCompletion: boolean,
+  ) {
+    return {
+      studentId: schedule.studentId,
+      surahId: schedule.surahId,
+      teacherId: schedule.teacherId,
+      surahTargetId: schedule.surahTargetId,
+      pageNumberFrom: schedule.pageNumberFrom,
+      pageNumberTo: schedule.pageNumberTo,
+      lineFrom: schedule.lineFrom,
+      lineTo: schedule.lineTo,
+      portionDescription: schedule.portionDescription,
+      fromAyah: schedule.fromAyah,
+      toAyah: schedule.toAyah,
+      day: schedule.day,
+      scheduleType: schedule.scheduleType,
+      examName: schedule.examName,
+      estimatedDurationMinutes: schedule.estimatedDurationMinutes,
+      difficultyLevel: schedule.difficultyLevel,
+      priority: schedule.priority,
+      scheduledDate,
+      rescheduledFromId: schedule.id,
+      ...(preserveCompletion
+        ? {
+            status: schedule.status,
+            completionDate: schedule.completionDate,
+            completionPercentage: schedule.completionPercentage,
+            memorizationQuality: schedule.memorizationQuality,
+            teacherNotes: schedule.teacherNotes,
+            studentNotes: schedule.studentNotes,
+            revisionCount: schedule.revisionCount,
+            lastRevisionDate: schedule.lastRevisionDate,
+            nextRevisionDue: schedule.nextRevisionDue,
+            actualDurationMinutes: schedule.actualDurationMinutes,
+            startedAt: schedule.startedAt,
+            completedAt: schedule.completedAt,
+          }
+        : { status: 'PENDING' as const }),
+    };
+  }
+
+  /**
+   * Bulk, per-student version of reschedule() — used to shift a student's (or
+   * several students') whole remaining schedule after a disruption (absence,
+   * holiday, curriculum restart), rather than one row at a time. Pending
+   * (not-yet-COMPLETED) rows get a new shifted copy; COMPLETED rows get an
+   * unchanged copy (same date/status) so their history carries over to the
+   * new schedule too. Either way, every row not already superseded by an
+   * earlier reschedule is replaced — the old rows are left in place but
+   * become superseded (and so excluded from progress-summary totals) via the
+   * rescheduledFrom/rescheduledTo relation. Preserves the original
+   * day-to-day spacing for shifted rows: every one moves by the same delta
+   * (newStartDate minus that student's earliest affected pending row), so a
+   * multi-row day stays a multi-row day instead of being compressed onto
+   * consecutive dates.
+   */
+  async bulkReschedule(studentIds: string[], newStartDate: string, fromDate?: string) {
+    let rescheduled = 0;
+    let copied = 0;
+    await this.prisma.$transaction(async (tx) => {
+      for (const studentId of studentIds) {
+        const rows = await tx.surahHifdhStudentSchedule.findMany({
+          where: {
+            studentId,
+            rescheduledTo: { none: {} },
+            ...(fromDate && { scheduledDate: { gte: new Date(fromDate) } }),
+          },
+          orderBy: { scheduledDate: 'asc' },
+        });
+        if (rows.length === 0) continue;
+
+        const pendingRows = rows.filter((r) => r.status !== 'COMPLETED');
+        const completedRows = rows.filter((r) => r.status === 'COMPLETED');
+
+        if (pendingRows.length > 0) {
+          const deltaMs = new Date(newStartDate).getTime() - pendingRows[0].scheduledDate.getTime();
+          for (const row of pendingRows) {
+            await tx.surahHifdhStudentSchedule.create({
+              data: this.rescheduleRowData(row, new Date(row.scheduledDate.getTime() + deltaMs), false),
+            });
+            rescheduled++;
+          }
+        }
+
+        for (const row of completedRows) {
+          await tx.surahHifdhStudentSchedule.create({
+            data: this.rescheduleRowData(row, row.scheduledDate, true),
+          });
+          copied++;
+        }
+      }
+    });
+    return { rescheduled, copied };
   }
 
   /**
@@ -300,12 +473,13 @@ export class HifdhService {
    * still appear, with zeroed counts. `overdueCount` mirrors the legacy
    * definition — not-yet-COMPLETED rows whose scheduledDate is in the past.
    */
-  async getProgressSummary(branchId: string, halqaId?: string) {
+  async getProgressSummary(branchId: string, halqaId?: string, studentId?: string) {
     const students = await this.prisma.student.findMany({
       where: {
         branchId,
         status: 'ACTIVE',
         ...(halqaId && { halqaMemberships: { some: { halqaId, removedAt: null } } }),
+        ...(studentId && { id: studentId }),
       },
       include: {
         halqaMemberships: {
@@ -319,15 +493,18 @@ export class HifdhService {
     const studentIds = students.map((s) => s.id);
     if (studentIds.length === 0) return [];
 
+    // Rows superseded by a later reschedule (rescheduledTo set) are excluded
+    // throughout — they're historical, not part of the student's active
+    // schedule, so they shouldn't count toward totals/completed/overdue.
     const [totalGroups, completedGroups, overdueGroups] = await Promise.all([
       this.prisma.surahHifdhStudentSchedule.groupBy({
         by: ['studentId'],
-        where: { studentId: { in: studentIds } },
+        where: { studentId: { in: studentIds }, rescheduledTo: { none: {} } },
         _count: { _all: true },
       }),
       this.prisma.surahHifdhStudentSchedule.groupBy({
         by: ['studentId'],
-        where: { studentId: { in: studentIds }, status: 'COMPLETED' },
+        where: { studentId: { in: studentIds }, status: 'COMPLETED', rescheduledTo: { none: {} } },
         _count: { _all: true },
       }),
       this.prisma.surahHifdhStudentSchedule.groupBy({
@@ -336,6 +513,7 @@ export class HifdhService {
           studentId: { in: studentIds },
           status: { not: 'COMPLETED' },
           scheduledDate: { lt: new Date() },
+          rescheduledTo: { none: {} },
         },
         _count: { _all: true },
       }),
@@ -371,89 +549,103 @@ export class HifdhService {
     return rows;
   }
 
-  // ── Cumulative per-surah progress ─────────────────────────────────────
+  // ── Per-surah progress, aggregated from StudentSurahProgressEntry ──────
+  // This is the same per-ayah ledger the mobile app reads/writes (see
+  // mobile-app-api/student-surah-progress) — the admin "Progress by Surah"
+  // view is a synthetic per-(student, surah) rollup over those rows (type
+  // NEW_LESSON only), not a separately-maintained table, so the two stay in
+  // sync by construction rather than by keeping two stores updated in
+  // lockstep.
 
-  listProgress(studentId?: string, surahId?: string, status?: string) {
-    return this.prisma.studentSurahProgress.findMany({
+  async listProgress(studentId?: string, surahId?: string, status?: string) {
+    const entries = await this.prisma.studentSurahProgressEntry.findMany({
       where: {
+        type: 'NEW_LESSON',
+        surahId: { not: null },
         ...(studentId && { studentId }),
         ...(surahId && { surahId }),
-        ...(status && { status: status as never }),
       },
       include: {
         student: { select: { id: true, name: true, studentCode: true } },
         surah: { select: { number: true, nameEnglish: true, totalAyahs: true } },
-        verifiedBy: { include: { user: { select: { firstName: true, lastName: true } } } },
+        verifiedBy: { select: { firstName: true, lastName: true } },
       },
-      orderBy: { updatedAt: 'desc' },
     });
+
+    interface Group {
+      studentId: string;
+      surahId: string;
+      student: { id: string; name: string; studentCode: string };
+      surah: { number: number; nameEnglish: string; totalAyahs: number };
+      total: number;
+      completedOrVerified: number;
+      allVerified: boolean;
+      latestVerifiedAt: Date | null;
+      latestVerifiedBy: { firstName: string; lastName: string | null } | null;
+    }
+
+    const groups = new Map<string, Group>();
+    for (const e of entries) {
+      if (!e.surahId || !e.surah) continue;
+      const key = `${e.studentId}:${e.surahId}`;
+      const g = groups.get(key) ?? {
+        studentId: e.studentId,
+        surahId: e.surahId,
+        student: e.student,
+        surah: e.surah,
+        total: 0,
+        completedOrVerified: 0,
+        allVerified: true,
+        latestVerifiedAt: null,
+        latestVerifiedBy: null,
+      };
+      g.total += 1;
+      if (e.status === ProgressEntryStatus.COMPLETED || e.status === ProgressEntryStatus.VERIFIED) {
+        g.completedOrVerified += 1;
+      }
+      if (e.status !== ProgressEntryStatus.VERIFIED) g.allVerified = false;
+      if (e.verifiedBy && (!g.latestVerifiedAt || (e.verifiedAt && e.verifiedAt > g.latestVerifiedAt))) {
+        g.latestVerifiedAt = e.verifiedAt;
+        g.latestVerifiedBy = e.verifiedBy;
+      }
+      groups.set(key, g);
+    }
+
+    const rows = [...groups.values()].map((g) => ({
+      id: `${g.studentId}:${g.surahId}`,
+      studentId: g.studentId,
+      surahId: g.surahId,
+      ayahsCompleted: g.completedOrVerified,
+      status:
+        g.total > 0 && g.allVerified
+          ? ('VERIFIED' as const)
+          : g.total > 0 && g.completedOrVerified === g.total
+            ? ('COMPLETED' as const)
+            : ('IN_PROGRESS' as const),
+      verifiedBy: g.latestVerifiedBy,
+      student: g.student,
+      surah: g.surah,
+    }));
+
+    const filtered = status ? rows.filter((r) => r.status === status) : rows;
+    filtered.sort((a, b) => a.surah.number - b.surah.number);
+    return filtered;
   }
 
-  /**
-   * Recomputes a student's cumulative StudentSurahProgress from their
-   * NEEDS_REVIEW/COMPLETED schedule rows for that surah (in the schedule's
-   * own HifdhScheduleStatus vocabulary — COMPLETED there means
-   * teacher-confirmed, matching this method's own VERIFIED concept).
-   * ayahsCompleted is the furthest `toAyah` reached, never a naive sum
-   * (schedules can overlap on reschedule), and status only advances to
-   * COMPLETED once the whole surah is covered, or VERIFIED when a
-   * verification call passes a teacherId.
-   */
-  private async recalculateSurahProgress(
-    tx: Prisma.TransactionClient,
-    studentId: string,
-    surahId: string,
-    verifyingTeacherId?: string,
-  ) {
-    const [schedules, surah] = await Promise.all([
-      tx.surahHifdhStudentSchedule.findMany({
-        where: { studentId, surahId, status: { in: ['NEEDS_REVIEW', 'COMPLETED'] } },
-      }),
-      tx.surah.findUniqueOrThrow({ where: { id: surahId } }),
-    ]);
-
-    const ayahsCompleted = schedules.reduce((max, s) => Math.max(max, s.toAyah), 0);
-    const wholeSurahDone = ayahsCompleted >= surah.totalAyahs;
-    const anyVerified = schedules.some((s) => s.status === 'COMPLETED');
-
-    const status = verifyingTeacherId && wholeSurahDone
-      ? 'VERIFIED'
-      : anyVerified && wholeSurahDone
-        ? 'VERIFIED'
-        : wholeSurahDone
-          ? 'COMPLETED'
-          : 'IN_PROGRESS';
-
-    const existing = await tx.studentSurahProgress.findUnique({
-      where: { studentId_surahId: { studentId, surahId } },
+  /** Bulk-verifies every COMPLETED (student-done, awaiting-review) ayah entry for one student+surah. */
+  async verifySurahProgress(studentId: string, surahId: string, userId?: string) {
+    const result = await this.prisma.studentSurahProgressEntry.updateMany({
+      where: { studentId, surahId, type: 'NEW_LESSON', status: ProgressEntryStatus.COMPLETED },
+      data: {
+        status: ProgressEntryStatus.VERIFIED,
+        verifiedAt: new Date(),
+        verifiedById: userId,
+        ...(userId && { lastUpdatedById: userId }),
+      },
     });
-
-    const data = {
-      ayahsCompleted,
-      status: status as never,
-      completedAt: wholeSurahDone ? (existing?.completedAt ?? new Date()) : null,
-      ...(verifyingTeacherId && wholeSurahDone
-        ? { verifiedAt: new Date(), verifiedById: verifyingTeacherId }
-        : {}),
-    };
-
-    if (existing) {
-      return tx.studentSurahProgress.update({ where: { id: existing.id }, data });
+    if (result.count === 0) {
+      throw new ConflictException('No completed ayahs awaiting verification were found for this surah');
     }
-    return tx.studentSurahProgress.create({ data: { studentId, surahId, ...data } });
-  }
-
-  async verifyProgressDirect(id: string, teacherId: string) {
-    const progress = await this.prisma.studentSurahProgress.findUnique({ where: { id } });
-    if (!progress) {
-      throw new NotFoundException('Student Surah progress record not found');
-    }
-    if (progress.status !== 'COMPLETED') {
-      throw new ConflictException('Only COMPLETED progress can be verified');
-    }
-    return this.prisma.studentSurahProgress.update({
-      where: { id },
-      data: { status: 'VERIFIED', verifiedAt: new Date(), verifiedById: teacherId },
-    });
+    return { verified: result.count };
   }
 }

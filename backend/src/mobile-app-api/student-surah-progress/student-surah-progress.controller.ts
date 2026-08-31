@@ -8,10 +8,14 @@ import {
   Post,
   Query,
   Req,
+  UseGuards,
+  UseInterceptors,
   UsePipes,
 } from '@nestjs/common';
 import { Request } from 'express';
 import { StudentSurahProgressService } from './student-surah-progress.service';
+import { PermissionsGuard } from '../../common/guards/permissions.guard';
+import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { TypeFilterQueryDto } from './dto/type-filter-query.dto';
 import { GetStudentSurahProgressQueryDto } from './dto/get-student-surah-progress-query.dto';
 import { BulkMarkCompletedDto } from './dto/bulk-mark-completed.dto';
@@ -25,6 +29,7 @@ import { GetTopStudentsQueryDto } from './dto/get-top-students-query.dto';
 import { UpdateProgressDto } from './dto/update-progress.dto';
 import { MobileContextService } from '../common/mobile-context.service';
 import { MobileValidationPipe } from '../common/mobile-validation.pipe';
+import { MobileApiLoggingInterceptor } from '../common/mobile-api-logging.interceptor';
 
 interface AuthedRequest extends Request {
   user: { userId: string };
@@ -32,6 +37,9 @@ interface AuthedRequest extends Request {
 
 /** Mirrors legacy `Route::prefix('student-surah-progress')->group(...)`, i.e. `/api/app/student-surah-progress`. */
 @Controller('app/student-surah-progress')
+@UseGuards(PermissionsGuard)
+@RequirePermission('mobile_api.student_surah_progress.access')
+@UseInterceptors(MobileApiLoggingInterceptor)
 @UsePipes(new MobileValidationPipe())
 export class StudentSurahProgressController {
   constructor(

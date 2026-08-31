@@ -37,6 +37,9 @@ import { CurrentClassesPage } from './pages/academic/CurrentClassesPage';
 import { BranchesPage } from './pages/BranchesPage';
 import { UsersPage } from './pages/UsersPage';
 import { RolesPage } from './pages/RolesPage';
+import { MobileApiDocsPage } from './pages/mobile/MobileApiDocsPage';
+import { MobileApiUsageHistoryPage } from './pages/mobile/MobileApiUsageHistoryPage';
+import { MobilePermissionsPage } from './pages/mobile/MobilePermissionsPage';
 
 function App() {
   return (
@@ -85,6 +88,10 @@ function App() {
           <Route path="/academic/hifdh-tracking" element={<HifdhTrackingPage />} />
           <Route path="/academic/exams" element={<ExamsPage />} />
           <Route path="/academic/current-classes" element={<CurrentClassesPage />} />
+
+          <Route path="/mobile/permissions" element={<MobilePermissionsPage />} />
+          <Route path="/mobile/api-docs" element={<MobileApiDocsPage />} />
+          <Route path="/mobile/usage-history" element={<MobileApiUsageHistoryPage />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />

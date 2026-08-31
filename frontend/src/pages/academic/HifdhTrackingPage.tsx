@@ -42,9 +42,10 @@ interface TeacherRef {
 interface HifdhSchedule {
   id: string;
   studentId: string;
-  surahId: string;
-  fromAyah: number;
-  toAyah: number;
+  surahId: string | null;
+  day: number | null;
+  fromAyah: number | null;
+  toAyah: number | null;
   scheduledDate: string;
   status: HifdhScheduleStatus;
   teacherId: string | null;
@@ -53,7 +54,9 @@ interface HifdhSchedule {
   rescheduledFrom: { scheduledDate: string } | null;
   rescheduledTo: { id: string; scheduledDate: string } | null;
   student: { name: string; studentCode: string };
-  surah: { number: number; nameEnglish: string };
+  surah: { number: number; nameEnglish: string } | null;
+  scheduleType: string | null;
+  examName: string | null;
 }
 
 interface HalqaOption {
@@ -79,7 +82,7 @@ interface StudentSurahProgress {
   surahId: string;
   ayahsCompleted: number;
   status: HifdhStatus;
-  verifiedBy: { user: { firstName: string; lastName: string } } | null;
+  verifiedBy: { firstName: string; lastName: string | null } | null;
   student: { name: string; studentCode: string };
   surah: { number: number; nameEnglish: string; totalAyahs: number };
 }
@@ -151,7 +154,12 @@ export function HifdhTrackingPage() {
           surahsLoading={surahsQuery.isLoading}
         />
       ) : (
-        <ProgressSummaryTab activeBranchId={activeBranchId} hasPermission={hasPermission} />
+        <ProgressSummaryTab
+          activeBranchId={activeBranchId}
+          hasPermission={hasPermission}
+          surahOptions={surahOptions}
+          surahsLoading={surahsQuery.isLoading}
+        />
       )}
     </div>
   );
@@ -169,40 +177,13 @@ const SCHEDULE_STATUS_FILTER_OPTIONS = [
   { label: 'Completed', value: 'COMPLETED' },
 ];
 
-function StudentMultiSelect({
-  options,
-  value,
-  onChange,
-  loading,
-}: {
-  options: SelectOption[];
-  value: string[];
-  onChange: (next: string[]) => void;
-  loading?: boolean;
-}) {
-  const toggle = (id: string) => {
-    onChange(value.includes(id) ? value.filter((v) => v !== id) : [...value, id]);
-  };
-
+function StatCard({ label, value, tone }: { label: string; value: string | number; tone?: 'red' }) {
   return (
-    <div className="flex w-80 flex-col gap-1">
-      <span className="text-xs font-medium text-text-muted">
-        Students {value.length > 0 && `(${value.length} selected)`}
+    <div className="flex flex-1 flex-col gap-1 rounded-card border border-border bg-white p-4">
+      <span className="text-xs font-medium uppercase tracking-wide text-text-muted">{label}</span>
+      <span className={tone === 'red' ? 'text-2xl font-semibold text-red' : 'text-2xl font-semibold text-text-primary'}>
+        {value}
       </span>
-      <div className="max-h-40 overflow-y-auto rounded-card border border-border bg-white p-2">
-        {loading ? (
-          <p className="p-2 text-sm text-text-faint">Loading…</p>
-        ) : options.length === 0 ? (
-          <p className="p-2 text-sm text-text-faint">No students found</p>
-        ) : (
-          options.map((o) => (
-            <label key={o.value} className="flex items-center gap-2 rounded px-2 py-1 hover:bg-table-alt">
-              <Checkbox checked={value.includes(o.value)} onChange={() => toggle(o.value)} />
-              <span className="text-sm text-text-primary">{o.label}</span>
-            </label>
-          ))
-        )}
-      </div>
     </div>
   );
 }
@@ -224,337 +205,282 @@ function SchedulesTab({
 }) {
   const queryClient = useQueryClient();
   const canManage = hasPermission('academic.hifdh_schedules.manage');
-  const canView = hasPermission('academic.hifdh_schedules.view');
-  const canMark = hasPermission('academic.hifdh_progress.mark');
-  const canVerify = hasPermission('academic.hifdh_progress.verify');
+  const canView = hasPermission('academic.hifdh_progress.view');
 
-  // ---- Generate panel ----
-  const [genStudentIds, setGenStudentIds] = useState<string[]>([]);
-  const [genStartDate, setGenStartDate] = useState<string>('');
-  const [generating, setGenerating] = useState(false);
+  const halqasQuery = useBranchResource<HalqaOption>(activeBranchId, 'halqas').list;
+  const halqaOptions = (halqasQuery.data ?? []).map((h) => ({ label: h.name, value: h.id }));
 
   // ---- Filters ----
   const [filterStudentId, setFilterStudentId] = useState<string>('');
-  const [filterSurahId, setFilterSurahId] = useState<string>('');
-  const [filterStatus, setFilterStatus] = useState<string>('');
+  const [filterHalqaId, setFilterHalqaId] = useState<string>('');
 
-  const scheduleQueryKey = [
-    'hifdh-schedules',
-    activeBranchId,
-    filterStudentId,
-    filterSurahId,
-    filterStatus,
-  ];
-
-  const schedulesQuery = useQuery({
-    queryKey: scheduleQueryKey,
+  const summaryQuery = useQuery({
+    queryKey: ['hifdh-progress-summary', activeBranchId, filterHalqaId, filterStudentId],
     queryFn: async () =>
       (
-        await api.get<HifdhSchedule[]>(`/branches/${activeBranchId}/hifdh-schedules`, {
-          params: {
-            studentId: filterStudentId || undefined,
-            surahId: filterSurahId || undefined,
-            status: filterStatus || undefined,
-          },
-        })
+        await api.get<StudentProgressSummary[]>(
+          `/branches/${activeBranchId}/hifdh-schedules/progress-summary`,
+          { params: { halqaId: filterHalqaId || undefined, studentId: filterStudentId || undefined } },
+        )
       ).data,
     enabled: Boolean(activeBranchId && canView),
   });
 
-  const refetchSchedules = () => queryClient.invalidateQueries({ queryKey: ['hifdh-schedules'] });
-
-  const runGenerate = async () => {
-    if (genStudentIds.length === 0 || !genStartDate) {
-      toast.error('Select students and a start date');
-      return;
-    }
-    setGenerating(true);
-    try {
-      const { data } = await api.post<{ created: number; items: unknown[] }>(
-        `/branches/${activeBranchId}/hifdh-schedules/generate`,
-        {
-          studentIds: genStudentIds,
-          startDate: genStartDate,
-        },
-      );
-      toast.success(`Generated ${data.created} schedule${data.created === 1 ? '' : 's'}`);
-      refetchSchedules();
-    } catch (err) {
-      toast.error(getErrorMessage(err, 'Failed to generate schedules'));
-    } finally {
-      setGenerating(false);
-    }
+  const refetchAll = () => {
+    queryClient.invalidateQueries({ queryKey: ['hifdh-schedules'] });
+    queryClient.invalidateQueries({ queryKey: ['hifdh-progress-summary'] });
   };
 
-  const markCompletedMutation = useMutation({
-    mutationFn: async (id: string) =>
-      (await api.post(`/branches/${activeBranchId}/hifdh-schedules/${id}/mark-completed`)).data,
-    onSuccess: () => {
-      toast.success('Marked as completed');
-      refetchSchedules();
-    },
-    onError: (err) => toast.error(getErrorMessage(err, 'Failed to mark as completed')),
-  });
+  // ---- Selection + bulk/individual reschedule ----
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [rescheduleTargets, setRescheduleTargets] = useState<StudentProgressSummary[] | null>(null);
 
-  const markInProgressMutation = useMutation({
-    mutationFn: async (id: string) =>
-      (await api.post(`/branches/${activeBranchId}/hifdh-schedules/${id}/mark-in-progress`)).data,
-    onSuccess: () => {
-      toast.success('Reverted to in progress');
-      refetchSchedules();
-    },
-    onError: (err) => toast.error(getErrorMessage(err, 'Failed to revert')),
-  });
-
-  const verifyMutation = useMutation({
-    mutationFn: async (id: string) =>
-      (await api.post(`/branches/${activeBranchId}/hifdh-schedules/${id}/verify`)).data,
-    onSuccess: () => {
-      toast.success('Verified');
-      refetchSchedules();
-    },
-    onError: (err) => toast.error(getErrorMessage(err, 'Failed to verify')),
-  });
-
-  // ---- Reschedule modal ----
-  const [rescheduleTarget, setRescheduleTarget] = useState<HifdhSchedule | null>(null);
-  const [rescheduleDate, setRescheduleDate] = useState<string>('');
-  const [rescheduleLoading, setRescheduleLoading] = useState(false);
-
-  const openReschedule = (record: HifdhSchedule) => {
-    setRescheduleTarget(record);
-    setRescheduleDate(record.scheduledDate?.slice(0, 10) ?? '');
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]));
   };
 
-  const closeReschedule = () => {
-    setRescheduleTarget(null);
-    setRescheduleDate('');
-  };
+  const summary = summaryQuery.data ?? [];
+  const totals = summary.reduce(
+    (acc, s) => ({
+      total: acc.total + s.totalSchedules,
+      completed: acc.completed + s.completedSchedules,
+      overdue: acc.overdue + s.overdueCount,
+    }),
+    { total: 0, completed: 0, overdue: 0 },
+  );
 
-  const submitReschedule = async () => {
-    if (!rescheduleTarget || !rescheduleDate) return;
-    setRescheduleLoading(true);
-    try {
-      await api.post(`/branches/${activeBranchId}/hifdh-schedules/${rescheduleTarget.id}/reschedule`, {
-        newDate: rescheduleDate,
-      });
-      toast.success('Rescheduled — a new schedule row was created, the original is kept for history');
-      refetchSchedules();
-      closeReschedule();
-    } catch (err) {
-      toast.error(getErrorMessage(err, 'Failed to reschedule'));
-    } finally {
-      setRescheduleLoading(false);
-    }
-  };
+  // ---- View schedule drawer ----
+  const [scheduleTarget, setScheduleTarget] = useState<StudentProgressSummary | null>(null);
 
-  const columns: ColumnDef<HifdhSchedule, unknown>[] = [
+  const columns: ColumnDef<StudentProgressSummary, unknown>[] = [
     {
-      header: 'Student',
+      id: 'select',
+      header: '',
+      cell: ({ row }) => (
+        <Checkbox
+          checked={selectedIds.includes(row.original.studentId)}
+          onChange={() => toggleSelected(row.original.studentId)}
+        />
+      ),
+    },
+    { header: 'Student Name', accessorKey: 'studentName' },
+    { header: 'Student ID', accessorKey: 'studentCode' },
+    { header: 'Halqa', cell: ({ row }) => row.original.halqaName ?? '—' },
+    { header: 'Total Schedules', accessorKey: 'totalSchedules' },
+    { header: 'Completed', accessorKey: 'completedSchedules' },
+    {
+      header: 'Completion Percentage',
+      cell: ({ row }) => `${row.original.completionPercentage}%`,
+    },
+    {
+      header: 'Overdue Count',
       cell: ({ row }) =>
-        `${row.original.student.name} (${row.original.student.studentCode})`,
-    },
-    {
-      header: 'Surah',
-      cell: ({ row }) => `${row.original.surah.number}. ${row.original.surah.nameEnglish}`,
-    },
-    {
-      header: 'Ayahs',
-      cell: ({ row }) => `${row.original.fromAyah}-${row.original.toAyah}`,
-    },
-    {
-      header: 'Scheduled date',
-      accessorKey: 'scheduledDate',
-      cell: ({ row }) => {
-        const record = row.original;
-        return (
-          <div className="flex items-center gap-1.5">
-            <span>{record.scheduledDate ? new Date(record.scheduledDate).toLocaleDateString() : '-'}</span>
-            {record.rescheduledFrom && (
-              <span
-                title={`Rescheduled from ${new Date(record.rescheduledFrom.scheduledDate).toLocaleDateString()}`}
-              >
-                <Badge tone="purple">rescheduled</Badge>
-              </span>
-            )}
-            {record.rescheduledTo && (
-              <span
-                title={`Superseded by a reschedule to ${new Date(record.rescheduledTo.scheduledDate).toLocaleDateString()}`}
-              >
-                <Badge tone="gray">superseded</Badge>
-              </span>
-            )}
-          </div>
-        );
-      },
-    },
-    {
-      header: 'Status',
-      accessorKey: 'status',
-      cell: ({ row }) => <StatusBadge status={row.original.status} />,
-    },
-    {
-      header: 'Teacher',
-      cell: ({ row }) =>
-        row.original.teacher
-          ? `${row.original.teacher.user.firstName} ${row.original.teacher.user.lastName}`
-          : '—',
+        row.original.overdueCount > 0 ? (
+          <Badge tone="red">{row.original.overdueCount}</Badge>
+        ) : (
+          row.original.overdueCount
+        ),
     },
     {
       id: 'actions',
       header: '',
-      cell: ({ row }) => {
-        const record = row.original;
-        const isDone = record.status === 'COMPLETED';
-        return (
-          <div className="flex flex-wrap items-center gap-2">
-            {canMark && record.status === 'PENDING' && (
-              <Button
-                size="sm"
-                variant="outline"
-                loading={markInProgressMutation.isPending}
-                onClick={() => markInProgressMutation.mutate(record.id)}
-              >
-                Start
-              </Button>
-            )}
-            {canMark && record.status === 'IN_PROGRESS' && (
-              <Button
-                size="sm"
-                variant="outline"
-                loading={markCompletedMutation.isPending}
-                onClick={() => markCompletedMutation.mutate(record.id)}
-              >
-                Mark completed
-              </Button>
-            )}
-            {canMark && record.status === 'NEEDS_REVIEW' && (
-              <Button
-                size="sm"
-                variant="outline"
-                loading={markInProgressMutation.isPending}
-                onClick={() => markInProgressMutation.mutate(record.id)}
-              >
-                Mark in progress
-              </Button>
-            )}
-            {canVerify && record.status === 'NEEDS_REVIEW' && (
-              <Button
-                size="sm"
-                loading={verifyMutation.isPending}
-                onClick={() => verifyMutation.mutate(record.id)}
-              >
-                Verify
-              </Button>
-            )}
-            {canMark && !isDone && (
-              <Button size="sm" variant="outline" onClick={() => openReschedule(record)}>
-                Reschedule
-              </Button>
-            )}
-          </div>
-        );
-      },
+      cell: ({ row }) => (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" variant="outline" onClick={() => setScheduleTarget(row.original)}>
+            Schedule
+          </Button>
+          {canManage && (
+            <Button size="sm" variant="outline" onClick={() => setRescheduleTargets([row.original])}>
+              Reschedule
+            </Button>
+          )}
+        </div>
+      ),
     },
   ];
 
   return (
     <>
-      {canManage && (
-        <div className="rounded-card border border-border bg-white p-5">
-          <h3 className="text-sm font-semibold text-text-primary">Generate schedules</h3>
-          <p className="mt-1 text-sm text-text-muted">
-            Generates one schedule row per selected student for each day defined in the master
-            target schedule, starting from the given date. Re-running with the same inputs skips
-            days that already exist.
-          </p>
-          <div className="mt-3 flex flex-wrap items-end gap-3">
-            <StudentMultiSelect
-              options={studentOptions}
-              value={genStudentIds}
-              onChange={setGenStudentIds}
-              loading={studentsLoading}
-            />
-            <Field label="Start date">
-              <Input type="date" value={genStartDate} onChange={(e) => setGenStartDate(e.target.value)} />
-            </Field>
-            <Button loading={generating} onClick={runGenerate}>
-              Generate
-            </Button>
-          </div>
-        </div>
-      )}
-
-      <div className="flex flex-wrap items-end gap-3">
-        <Field label="Filter by student">
-          <Select
-            placeholder="All students"
-            value={filterStudentId}
-            onChange={(e) => setFilterStudentId(e.target.value)}
-            options={[{ label: 'All students', value: '' }, ...studentOptions]}
-            disabled={studentsLoading}
-          />
-        </Field>
-        <Field label="Filter by surah">
-          <Select
-            placeholder="All surahs"
-            value={filterSurahId}
-            onChange={(e) => setFilterSurahId(e.target.value)}
-            options={[{ label: 'All surahs', value: '' }, ...surahOptions]}
-            disabled={surahsLoading}
-          />
-        </Field>
-        <Field label="Filter by status">
-          <Select
-            placeholder="All statuses"
-            value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
-            options={[{ label: 'All statuses', value: '' }, ...SCHEDULE_STATUS_FILTER_OPTIONS]}
-          />
-        </Field>
+      <div className="flex flex-wrap gap-3">
+        <StatCard label="Total Students" value={summary.length} />
+        <StatCard label="Completed" value={totals.completed} />
+        <StatCard
+          label="Completion %"
+          value={totals.total > 0 ? `${Math.round((totals.completed / totals.total) * 10000) / 100}%` : '0%'}
+        />
+        <StatCard label="Overdue" value={totals.overdue} tone={totals.overdue > 0 ? 'red' : undefined} />
       </div>
 
-      <DataTable<HifdhSchedule>
-        columns={columns}
-        data={schedulesQuery.data ?? []}
-        isLoading={schedulesQuery.isLoading}
-      />
-
-      <Modal
-        open={Boolean(rescheduleTarget)}
-        title="Reschedule"
-        onClose={closeReschedule}
-        footer={
-          <>
-            <Button variant="outline" onClick={closeReschedule} disabled={rescheduleLoading}>
-              Cancel
-            </Button>
-            <Button onClick={submitReschedule} loading={rescheduleLoading}>
-              OK
-            </Button>
-          </>
-        }
-      >
-        <p className="text-sm text-text-muted">
-          This creates a new schedule row for the new date. The original row is kept for history
-          and will show as superseded once this is submitted.
-        </p>
-        <div className="mt-4">
-          <Field label="New date" required>
-            <Input type="date" value={rescheduleDate} onChange={(e) => setRescheduleDate(e.target.value)} />
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <Field label="Filter by student">
+            <Select
+              placeholder="All students"
+              value={filterStudentId}
+              onChange={(e) => setFilterStudentId(e.target.value)}
+              options={[{ label: 'All students', value: '' }, ...studentOptions]}
+              disabled={studentsLoading}
+            />
+          </Field>
+          <Field label="Filter by halqa">
+            <Select
+              placeholder="All halqas"
+              value={filterHalqaId}
+              onChange={(e) => setFilterHalqaId(e.target.value)}
+              options={[{ label: 'All halqas', value: '' }, ...halqaOptions]}
+              disabled={halqasQuery.isLoading}
+            />
           </Field>
         </div>
-      </Modal>
+        {canManage && selectedIds.length > 0 && (
+          <Button
+            variant="outline"
+            onClick={() => setRescheduleTargets(summary.filter((s) => selectedIds.includes(s.studentId)))}
+          >
+            Reschedule selected ({selectedIds.length})
+          </Button>
+        )}
+      </div>
+
+      <DataTable<StudentProgressSummary>
+        columns={columns}
+        data={summary}
+        isLoading={summaryQuery.isLoading}
+      />
+
+      <StudentScheduleModal
+        activeBranchId={activeBranchId}
+        student={scheduleTarget}
+        surahOptions={surahOptions}
+        surahsLoading={surahsLoading}
+        onClose={() => setScheduleTarget(null)}
+      />
+
+      <BulkRescheduleModal
+        activeBranchId={activeBranchId}
+        students={rescheduleTargets}
+        onClose={() => setRescheduleTargets(null)}
+        onSuccess={() => {
+          setSelectedIds([]);
+          refetchAll();
+        }}
+      />
     </>
+  );
+}
+
+/** Reschedules one or several students' whole remaining (not-yet-completed) schedule by a fixed date shift. */
+function BulkRescheduleModal({
+  activeBranchId,
+  students,
+  onClose,
+  onSuccess,
+}: {
+  activeBranchId: string | undefined;
+  students: StudentProgressSummary[] | null;
+  onClose: () => void;
+  onSuccess: () => void;
+}) {
+  const [fromDate, setFromDate] = useState<string>('');
+  const [newStartDate, setNewStartDate] = useState<string>('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const reset = () => {
+    setFromDate('');
+    setNewStartDate('');
+  };
+
+  const handleClose = () => {
+    reset();
+    onClose();
+  };
+
+  const submit = async () => {
+    if (!students || students.length === 0 || !newStartDate) {
+      toast.error('Choose a new start date');
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const { data } = await api.post<{ rescheduled: number; copied: number }>(
+        `/branches/${activeBranchId}/hifdh-schedules/bulk-reschedule`,
+        {
+          studentIds: students.map((s) => s.studentId),
+          newStartDate,
+          fromDate: fromDate || undefined,
+        },
+      );
+      toast.success(
+        `Rescheduled ${data.rescheduled} schedule row${data.rescheduled === 1 ? '' : 's'}` +
+          (data.copied > 0 ? `, carried over ${data.copied} completed row${data.copied === 1 ? '' : 's'}` : ''),
+      );
+      reset();
+      onClose();
+      onSuccess();
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Failed to reschedule'));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <Modal
+      open={Boolean(students)}
+      title={
+        students
+          ? students.length === 1
+            ? `Reschedule — ${students[0].studentName}`
+            : `Reschedule ${students.length} students`
+          : ''
+      }
+      onClose={handleClose}
+      footer={
+        <>
+          <Button variant="outline" onClick={handleClose} disabled={submitting}>
+            Cancel
+          </Button>
+          <Button onClick={submit} loading={submitting}>
+            OK
+          </Button>
+        </>
+      }
+    >
+      <p className="text-sm text-text-muted">
+        Shifts every not-yet-completed schedule row by the same number of days, so the gaps between
+        days are kept. Completed rows are carried over unchanged (same date and status) so their
+        history isn't lost. New rows are created either way — the originals are kept for history and
+        marked as superseded, and no longer count toward totals.
+      </p>
+      {students && students.length > 1 && (
+        <ul className="mt-3 max-h-24 list-disc overflow-y-auto pl-5 text-sm text-text-muted">
+          {students.map((s) => (
+            <li key={s.studentId}>{s.studentName}</li>
+          ))}
+        </ul>
+      )}
+      <div className="mt-4 flex flex-wrap gap-3">
+        <Field label="Only shift schedules from date (optional)">
+          <Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
+        </Field>
+        <Field label="New start date" required>
+          <Input type="date" value={newStartDate} onChange={(e) => setNewStartDate(e.target.value)} />
+        </Field>
+      </div>
+    </Modal>
   );
 }
 
 function ProgressSummaryTab({
   activeBranchId,
   hasPermission,
+  surahOptions,
+  surahsLoading,
 }: {
   activeBranchId: string | undefined;
   hasPermission: (key: string) => boolean;
+  surahOptions: SelectOption[];
+  surahsLoading: boolean;
 }) {
   const canView = hasPermission('academic.hifdh_progress.view');
 
@@ -604,10 +530,10 @@ function ProgressSummaryTab({
       cell: ({ row }) => (
         <div className="flex flex-wrap items-center gap-2">
           <Button size="sm" variant="outline" onClick={() => setScheduleTarget(row.original)}>
-            Day-wise Schedule
+            Schedule
           </Button>
           <Button size="sm" variant="outline" onClick={() => setProgressTarget(row.original)}>
-            Progress by Surah
+            Progress
           </Button>
         </div>
       ),
@@ -637,6 +563,8 @@ function ProgressSummaryTab({
       <StudentScheduleModal
         activeBranchId={activeBranchId}
         student={scheduleTarget}
+        surahOptions={surahOptions}
+        surahsLoading={surahsLoading}
         onClose={() => setScheduleTarget(null)}
       />
       <StudentSurahProgressModal
@@ -653,18 +581,49 @@ function ProgressSummaryTab({
 function StudentScheduleModal({
   activeBranchId,
   student,
+  surahOptions,
+  surahsLoading,
   onClose,
 }: {
   activeBranchId: string | undefined;
   student: StudentProgressSummary | null;
+  surahOptions: SelectOption[];
+  surahsLoading: boolean;
   onClose: () => void;
 }) {
+  const [filterSurahId, setFilterSurahId] = useState<string>('');
+  const [filterStatus, setFilterStatus] = useState<string>('');
+  const [filterFromDay, setFilterFromDay] = useState<string>('');
+  const [filterToDay, setFilterToDay] = useState<string>('');
+  const [filterFromDate, setFilterFromDate] = useState<string>('');
+  const [filterToDate, setFilterToDate] = useState<string>('');
+
+  const scheduleQueryKey = [
+    'hifdh-schedules',
+    activeBranchId,
+    student?.studentId,
+    filterSurahId,
+    filterStatus,
+    filterFromDay,
+    filterToDay,
+    filterFromDate,
+    filterToDate,
+  ];
+
   const scheduleQuery = useQuery({
-    queryKey: ['hifdh-schedules', activeBranchId, student?.studentId],
+    queryKey: scheduleQueryKey,
     queryFn: async () =>
       (
         await api.get<HifdhSchedule[]>(`/branches/${activeBranchId}/hifdh-schedules`, {
-          params: { studentId: student?.studentId },
+          params: {
+            studentId: student?.studentId,
+            surahId: filterSurahId || undefined,
+            status: filterStatus || undefined,
+            fromDay: filterFromDay || undefined,
+            toDay: filterToDay || undefined,
+            fromDate: filterFromDate || undefined,
+            toDate: filterToDate || undefined,
+          },
         })
       ).data,
     enabled: Boolean(activeBranchId && student),
@@ -672,17 +631,48 @@ function StudentScheduleModal({
 
   const columns: ColumnDef<HifdhSchedule, unknown>[] = [
     {
+      header: 'Day',
+      accessorKey: 'day',
+      cell: ({ row }) => row.original.day ?? '-',
+    },
+    {
       header: 'Surah',
-      cell: ({ row }) => `${row.original.surah.number}. ${row.original.surah.nameEnglish}`,
+      cell: ({ row }) =>
+        row.original.surah
+          ? `${row.original.surah.number}. ${row.original.surah.nameEnglish}`
+          : row.original.examName ?? '—',
     },
     {
       header: 'Ayahs',
-      cell: ({ row }) => `${row.original.fromAyah}-${row.original.toAyah}`,
+      cell: ({ row }) =>
+        row.original.fromAyah !== null && row.original.toAyah !== null
+          ? `${row.original.fromAyah}-${row.original.toAyah}`
+          : '—',
     },
     {
       header: 'Scheduled date',
-      cell: ({ row }) =>
-        row.original.scheduledDate ? new Date(row.original.scheduledDate).toLocaleDateString() : '-',
+      cell: ({ row }) => {
+        const record = row.original;
+        return (
+          <div className="flex items-center gap-1.5">
+            <span>{record.scheduledDate ? new Date(record.scheduledDate).toLocaleDateString() : '-'}</span>
+            {record.rescheduledFrom && (
+              <span
+                title={`Rescheduled from ${new Date(record.rescheduledFrom.scheduledDate).toLocaleDateString()}`}
+              >
+                <Badge tone="purple">rescheduled</Badge>
+              </span>
+            )}
+            {record.rescheduledTo && (
+              <span
+                title={`Superseded by a reschedule to ${new Date(record.rescheduledTo.scheduledDate).toLocaleDateString()}`}
+              >
+                <Badge tone="gray">superseded</Badge>
+              </span>
+            )}
+          </div>
+        );
+      },
     },
     {
       header: 'Status',
@@ -696,8 +686,65 @@ function StudentScheduleModal({
       title={student ? `Day-wise Schedule — ${student.studentName}` : ''}
       onClose={onClose}
       position="right"
-      width="w-1/2"
+      width="w-3/4"
     >
+      <div className="mb-3 flex flex-nowrap items-end gap-3 overflow-x-auto">
+        <div className="w-40 shrink-0">
+          <Field label="Filter by surah">
+            <Select
+              placeholder="All surahs"
+              value={filterSurahId}
+              onChange={(e) => setFilterSurahId(e.target.value)}
+              options={[{ label: 'All surahs', value: '' }, ...surahOptions]}
+              disabled={surahsLoading}
+            />
+          </Field>
+        </div>
+        <div className="w-36 shrink-0">
+          <Field label="Filter by status">
+            <Select
+              placeholder="All statuses"
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value)}
+              options={[{ label: 'All statuses', value: '' }, ...SCHEDULE_STATUS_FILTER_OPTIONS]}
+            />
+          </Field>
+        </div>
+        <div className="w-20 shrink-0">
+          <Field label="From day">
+            <Input
+              type="number"
+              min={1}
+              value={filterFromDay}
+              onChange={(e) => setFilterFromDay(e.target.value)}
+            />
+          </Field>
+        </div>
+        <div className="w-20 shrink-0">
+          <Field label="To day">
+            <Input
+              type="number"
+              min={1}
+              value={filterToDay}
+              onChange={(e) => setFilterToDay(e.target.value)}
+            />
+          </Field>
+        </div>
+        <div className="w-36 shrink-0">
+          <Field label="From date">
+            <Input
+              type="date"
+              value={filterFromDate}
+              onChange={(e) => setFilterFromDate(e.target.value)}
+            />
+          </Field>
+        </div>
+        <div className="w-36 shrink-0">
+          <Field label="To date">
+            <Input type="date" value={filterToDate} onChange={(e) => setFilterToDate(e.target.value)} />
+          </Field>
+        </div>
+      </div>
       <DataTable<HifdhSchedule>
         columns={columns}
         data={scheduleQuery.data ?? []}
@@ -734,8 +781,12 @@ function StudentSurahProgressModal({
   });
 
   const verifyMutation = useMutation({
-    mutationFn: async (id: string) =>
-      (await api.post(`/branches/${activeBranchId}/student-surah-progress/${id}/verify`)).data,
+    mutationFn: async (row: StudentSurahProgress) =>
+      (
+        await api.post(
+          `/branches/${activeBranchId}/student-surah-progress/${row.studentId}/${row.surahId}/verify`,
+        )
+      ).data,
     onSuccess: () => {
       toast.success('Verified');
       queryClient.invalidateQueries({ queryKey: ['student-surah-progress'] });
@@ -760,7 +811,7 @@ function StudentSurahProgressModal({
       header: 'Verified by',
       cell: ({ row }) =>
         row.original.verifiedBy
-          ? `${row.original.verifiedBy.user.firstName} ${row.original.verifiedBy.user.lastName}`
+          ? `${row.original.verifiedBy.firstName} ${row.original.verifiedBy.lastName ?? ''}`.trim()
           : '—',
     },
     {
@@ -771,7 +822,7 @@ function StudentSurahProgressModal({
           <Button
             size="sm"
             loading={verifyMutation.isPending}
-            onClick={() => verifyMutation.mutate(row.original.id)}
+            onClick={() => verifyMutation.mutate(row.original)}
           >
             Verify
           </Button>
@@ -785,7 +836,7 @@ function StudentSurahProgressModal({
       title={student ? `Progress by Surah — ${student.studentName}` : ''}
       onClose={onClose}
       position="right"
-      width="w-1/2"
+      width="w-3/4"
     >
       <DataTable<StudentSurahProgress>
         columns={columns}

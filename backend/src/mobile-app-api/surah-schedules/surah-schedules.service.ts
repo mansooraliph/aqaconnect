@@ -169,8 +169,12 @@ export class SurahSchedulesService {
         include: { surah: { select: { number: true, nameEnglish: true, nameArabic: true } } },
       });
 
-      const bySurah = new Map<number, typeof rowsWithSurah>();
-      for (const row of rowsWithSurah) {
+      // milestone rows (Exam/Preparation) carry no surah portion — excluded from per-surah grouping
+      const rowsWithSurahOnly = rowsWithSurah.filter(
+        (r): r is typeof r & { surah: NonNullable<(typeof r)['surah']> } => r.surah !== null,
+      );
+      const bySurah = new Map<number, typeof rowsWithSurahOnly>();
+      for (const row of rowsWithSurahOnly) {
         const list = bySurah.get(row.surah.number) ?? [];
         list.push(row);
         bySurah.set(row.surah.number, list);
@@ -404,9 +408,9 @@ function formatScheduleEntry(schedule: ScheduleRow, todayStr: string) {
     // never a separate "original vs rescheduled" pair to report here.
     scheduled_date: null,
     display_date: dateStr,
-    surah_number: schedule.surah.number,
-    surah_name_en: schedule.surah.nameEnglish,
-    surah_name_ar: schedule.surah.nameArabic,
+    surah_number: schedule.surah?.number ?? null,
+    surah_name_en: schedule.surah?.nameEnglish ?? schedule.examName,
+    surah_name_ar: schedule.surah?.nameArabic ?? schedule.examName,
     juz_number: null, // legacy column never existed — always null in production
     page_from: schedule.pageNumberFrom,
     page_to: schedule.pageNumberTo,

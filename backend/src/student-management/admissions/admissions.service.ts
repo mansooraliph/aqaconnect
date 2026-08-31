@@ -112,6 +112,13 @@ export class AdmissionsService {
           },
         });
         userId = user.id;
+
+        // Auto-assign the seeded "Student" role so the account is immediately
+        // usable on the mobile app, mirroring TeachersService's convention.
+        const studentRole = await tx.role.findUnique({ where: { name: 'Student' } });
+        if (studentRole) {
+          await tx.userRole.create({ data: { userId: user.id, roleId: studentRole.id } });
+        }
       }
 
       const student = await tx.student.create({
@@ -144,7 +151,7 @@ export class AdmissionsService {
     // Outside the transaction, matching legacy: a schedule-generation failure
     // must never roll back or block admission approval.
     if (dto.halqaId) {
-      await this.hifdh.generateInitialSchedulesForStudent(student.id, dto.halqaId, dto.hifdhStartDate);
+      await this.hifdh.generateInitialSchedulesForStudent(student.id, branchId, dto.halqaId, dto.hifdhStartDate);
     }
 
     // Fire-and-forget status email: skip silently if there's no email on
