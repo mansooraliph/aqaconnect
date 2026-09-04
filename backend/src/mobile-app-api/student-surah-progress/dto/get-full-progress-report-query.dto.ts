@@ -1,4 +1,5 @@
 import { IsArray, IsIn, IsOptional, IsString } from 'class-validator';
+import { ToArray } from '../../common/to-array.transform';
 
 export class GetFullProgressReportQueryDto {
   @IsString()
@@ -16,6 +17,7 @@ export class GetFullProgressReportQueryDto {
   student_id?: string;
 
   @IsOptional()
+  @ToArray()
   @IsArray()
   @IsIn(['New Lesson', 'Juzh Lesson', 'Old Lesson'], { each: true })
   types?: string[];

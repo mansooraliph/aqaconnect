@@ -66,6 +66,10 @@ import { MobileDashboardModule } from './mobile-app-api/dashboard/dashboard.modu
 import { LeavesModule as MobileLeavesModule } from './mobile-app-api/leaves/leaves.module';
 import { MobileAttendanceModule } from './mobile-app-api/attendance/attendance.module';
 import { MobileApiUsageModule } from './mobile-api-usage/mobile-api-usage.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { MobileNotificationsModule } from './mobile-app-api/notifications/notifications.module';
+import { AnnouncementsModule } from './communication/announcements/announcements.module';
+import { MobileAnnouncementsModule } from './mobile-app-api/announcements/announcements.module';
 
 @Module({
   imports: [
@@ -132,6 +136,10 @@ import { MobileApiUsageModule } from './mobile-api-usage/mobile-api-usage.module
     MobileLeavesModule,
     MobileAttendanceModule,
     MobileApiUsageModule,
+    NotificationsModule,
+    MobileNotificationsModule,
+    AnnouncementsModule,
+    MobileAnnouncementsModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: JwtAuthGuard }],

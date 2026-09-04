@@ -3,3 +3,6 @@ node_modules
 .env
 
 /generated/prisma
+
+# Firebase service-account private key — never commit
+/credentials/

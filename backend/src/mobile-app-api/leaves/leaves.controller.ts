@@ -1,4 +1,5 @@
 import { Body, Controller, Get, HttpException, Param, Post, Req, UseGuards, UseInterceptors, UsePipes } from '@nestjs/common';
+import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import { Request } from 'express';
 import { MobileLeavesService } from './leaves.service';
 import { ApplyLeaveDto } from './dto/apply-leave.dto';
@@ -46,7 +47,13 @@ export class LeavesController {
     return this.service.myLeaves(branchId, req.user.userId);
   }
 
+  // The client always sends multipart/form-data here (attachments under
+  // dynamic field names like attachments[0], attachments[1], ...), so
+  // AnyFilesInterceptor is needed just to get Multer to parse the text
+  // fields — attachments themselves are received and discarded, no file
+  // storage exists yet.
   @Post('leaves/apply-leave')
+  @UseInterceptors(AnyFilesInterceptor())
   async applyLeave(@Req() req: AuthedRequest, @Body() dto: ApplyLeaveDto) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     try {

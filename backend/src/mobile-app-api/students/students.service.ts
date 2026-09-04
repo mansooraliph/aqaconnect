@@ -727,8 +727,10 @@ export class MobileStudentsService {
 
     // 4. Surah-completed events, derived from the per-ayah progress ledger
     // (StudentSurahProgressEntry) — a surah counts as "completed" once every
-    // one of its ayah entries is VERIFIED; the event date is the latest of
-    // those verification timestamps.
+    // one of its ayah entries is at least COMPLETED (VERIFIED counts too, per
+    // the same COMPLETED-or-VERIFIED convention used by getFullProgressReport
+    // in student-surah-progress.service.ts); the event date is the latest of
+    // those completion/verification timestamps.
     const progressEntries = await this.prisma.studentSurahProgressEntry.findMany({
       where: { studentId, type: 'NEW_LESSON', surahId: { not: null } },
       include: { surah: { select: { nameEnglish: true } } },
@@ -739,7 +741,7 @@ export class MobileStudentsService {
       const at = e.verifiedAt ?? e.completedAt ?? e.updatedAt;
       const g = bySurah.get(e.surahId) ?? { surahName: e.surah.nameEnglish, total: 0, verified: 0, latestAt: at };
       g.total += 1;
-      if (e.status === 'VERIFIED') g.verified += 1;
+      if (e.status === 'COMPLETED' || e.status === 'VERIFIED') g.verified += 1;
       if (at > g.latestAt) g.latestAt = at;
       bySurah.set(e.surahId, g);
     }
@@ -755,7 +757,7 @@ export class MobileStudentsService {
             description: `Completed Surah: ${g.surahName}`,
             time: g.latestAt.toISOString(),
             surah_id: surahId,
-            ...(opts.includeIdAndType && { total_ayahs: g.total }),
+            total_ayahs: g.total,
           },
           `${studentId}:${surahId}`,
           'surah_progress',
@@ -843,14 +845,17 @@ export class MobileStudentsService {
     };
   }
 
-  async getStudentActivityReport(branchId: string, query: ActivityQueryDto) {
+  // `student_id` is guaranteed non-empty by the controller (resolved to the
+  // caller's own student for Student callers, required as an explicit query
+  // param otherwise — see StudentsController.resolveActivityReportStudentId).
+  async getStudentActivityReport(branchId: string, query: ActivityQueryDto & { student_id: string }) {
     return this.buildActivityTimeline(branchId, query.student_id, query, {
       includeIdAndType: false,
       includeExams: false,
     });
   }
 
-  async getStudentActivity(branchId: string, query: ActivityQueryDto) {
+  async getStudentActivity(branchId: string, query: ActivityQueryDto & { student_id: string }) {
     return this.buildActivityTimeline(branchId, query.student_id, query, {
       includeIdAndType: true,
       includeExams: true,

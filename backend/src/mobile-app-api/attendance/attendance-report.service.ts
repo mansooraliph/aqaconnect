@@ -34,12 +34,15 @@ export class AttendanceReportService {
   constructor(private readonly prisma: PrismaService) {}
 
   private enumerateDates(start: Date, end: Date, joiningDate: Date | null): Date[] {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const now = new Date();
+    // UTC-midnight, matching how `start`/`end`/`joiningDate` (all @db.Date columns
+    // or UTC-parsed query params) are represented — mixing in local-midnight here
+    // would shift the whole range by a day in any non-UTC server timezone.
+    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     const from = joiningDate && joiningDate > start ? joiningDate : start;
     const to = end > today ? today : end;
     const dates: Date[] = [];
-    for (const d = new Date(from); d <= to; d.setDate(d.getDate() + 1)) {
+    for (const d = new Date(from); d <= to; d.setUTCDate(d.getUTCDate() + 1)) {
       dates.push(new Date(d));
     }
     return dates;
@@ -99,7 +102,7 @@ export class AttendanceReportService {
       if (withDailyRows) {
         dailyReport.push({
           date: key,
-          day: date.toLocaleDateString('en-US', { weekday: 'long' }),
+          day: date.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' }),
           status,
           attendanceId: attendance?.id ?? null,
           clockInAt: attendance?.clockInAt ?? null,

@@ -1,8 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { createHash } from 'crypto';
 import type { Prisma } from '@prisma/client';
-import { ProgressEntryGrade, ProgressEntryStatus, ProgressEntryType } from '@prisma/client';
+import { NotificationType, ProgressEntryGrade, ProgressEntryStatus, ProgressEntryType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { NotificationsService } from '../../notifications/notifications.service';
 import { BulkMarkCompletedDto } from './dto/bulk-mark-completed.dto';
 import { BulkMarkSurahsCompletedDto } from './dto/bulk-mark-surahs-completed.dto';
 import { StoreOldLessonProgressDto } from './dto/store-old-lesson-progress.dto';
@@ -163,7 +164,32 @@ function serializeEntry(entry: EntryRow) {
 
 @Injectable()
 export class StudentSurahProgressService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
+
+  /** Notifies each affected student's linked login that their recitation/Hifdh progress was updated by a teacher. */
+  private async notifyProgressMarked(branchId: string, updatedCountByStudentId: Map<string, number>) {
+    if (updatedCountByStudentId.size === 0) {
+      return;
+    }
+    const students = await this.prisma.student.findMany({
+      where: { id: { in: [...updatedCountByStudentId.keys()] }, userId: { not: null } },
+      select: { id: true, userId: true },
+    });
+    await Promise.all(
+      students.map((student) => {
+        const count = updatedCountByStudentId.get(student.id) ?? 0;
+        return this.notifications.notifyUser(branchId, student.userId!, {
+          type: NotificationType.RECITATION_PROGRESS,
+          title: 'Recitation Progress Updated',
+          body: `${count} ayah(s) of your recitation were marked completed by your teacher.`,
+          data: { studentId: student.id },
+        });
+      }),
+    );
+  }
 
   private async requireActiveStudent(branchId: string, studentId: string) {
     const student = await this.prisma.student.findFirst({
@@ -535,6 +561,7 @@ export class StudentSurahProgressService {
     let updatedCount = 0;
     let skippedCount = 0;
     const errors: string[] = [];
+    const updatedCountByStudentId = new Map<string, number>();
 
     await this.prisma.$transaction(async (tx) => {
       for (const entry of entries) {
@@ -550,12 +577,15 @@ export class StudentSurahProgressService {
             },
           });
           updatedCount += 1;
+          updatedCountByStudentId.set(entry.studentId, (updatedCountByStudentId.get(entry.studentId) ?? 0) + 1);
         } else {
           skippedCount += 1;
           errors.push(`Ayah ${entry.fromAyah} is already ${STATUS_TO_LEGACY[entry.status]}`);
         }
       }
     });
+
+    await this.notifyProgressMarked(branchId, updatedCountByStudentId);
 
     let message = `${updatedCount} ayah(s) marked as completed successfully`;
     if (skippedCount > 0) {
@@ -659,6 +689,8 @@ export class StudentSurahProgressService {
         if (entry.surahId) entriesBySurah.set(entry.surahId, (entriesBySurah.get(entry.surahId) ?? 0) + 1);
       }
     });
+
+    await this.notifyProgressMarked(branchId, new Map([[dto.student_id, pending.length]]));
 
     const surahSummary = dto.surah_ids
       .map((surahId) => {

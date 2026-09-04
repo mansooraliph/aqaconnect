@@ -12,6 +12,7 @@ import {
   UseInterceptors,
   UsePipes,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { Request } from 'express';
 import { StudentSurahProgressService } from './student-surah-progress.service';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
@@ -116,7 +117,12 @@ export class StudentSurahProgressController {
   }
 
   // ── bulkMarkCompleted ────────────────────────────────────────────────
+  // The client only sends multipart/form-data when a remark file is
+  // attached (plain JSON otherwise); FileInterceptor must be present
+  // either way so Multer parses the text fields when it does. The file
+  // itself is received and discarded — no file storage exists yet.
   @Post('bulk-mark-completed')
+  @UseInterceptors(FileInterceptor('remark_file'))
   async bulkMarkCompleted(@Req() req: AuthedRequest, @Body() dto: BulkMarkCompletedDto) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     return this.handle(() => this.service.bulkMarkCompleted(branchId, req.user.userId, dto), 'Failed to mark ayahs as completed: ');
@@ -167,7 +173,10 @@ export class StudentSurahProgressController {
   }
 
   // ── storeOldLessonProgress ───────────────────────────────────────────
+  // The client always sends multipart/form-data here (a remark file is
+  // optional but the request shape isn't) — see bulkMarkCompleted above.
   @Post('store-old-lesson')
+  @UseInterceptors(FileInterceptor('remark_file'))
   async storeOldLessonProgress(@Req() req: AuthedRequest, @Body() dto: StoreOldLessonProgressDto) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     return this.handle(() => this.service.storeOldLessonProgress(branchId, req.user.userId, dto), 'Failed to save Old Lesson progress: ');
