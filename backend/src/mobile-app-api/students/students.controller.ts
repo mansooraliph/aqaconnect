@@ -1,7 +1,9 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   HttpCode,
   HttpException,
@@ -16,6 +18,7 @@ import {
   UsePipes,
 } from '@nestjs/common';
 import { Request } from 'express';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { MobileStudentsService } from './students.service';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
@@ -47,8 +50,13 @@ export class StudentsController {
     private readonly context: MobileContextService,
   ) {}
 
+  // The client sends this as multipart/form-data (optionally with an `image` file)
+  // rather than JSON — without an interceptor here, Nest's default body parser
+  // never reads the multipart body, so `dto` binds empty and every field fails
+  // validation as if missing, regardless of what was actually sent.
   @Post()
   @HttpCode(201)
+  @UseInterceptors(FileInterceptor('image'))
   async createStudent(@Req() req: AuthedRequest, @Body() dto: CreateStudentDto) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     return this.handle(async () => {
@@ -103,10 +111,30 @@ export class StudentsController {
   @Get('activity-report')
   async getStudentActivityReport(@Req() req: AuthedRequest, @Query() query: ActivityQueryDto) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
+    const studentId = await this.resolveActivityReportStudentId(req.user.userId, query.student_id);
     return this.handle(
-      () => this.service.getStudentActivityReport(branchId, query),
+      () => this.service.getStudentActivityReport(branchId, { ...query, student_id: studentId }),
       'Failed to generate student activity report',
     );
+  }
+
+  /**
+   * Self-service safety: a Student caller is always resolved to their own
+   * linked Student record, regardless of what (or whether any) student_id
+   * they passed — closing off cross-student data access. Teacher/Admin
+   * callers (who have no linked Student record) must supply student_id
+   * explicitly, since they're allowed to view any student in their branch.
+   */
+  private async resolveActivityReportStudentId(userId: string, requestedStudentId?: string): Promise<string> {
+    try {
+      return await this.context.resolveOwnStudentId(userId);
+    } catch (error) {
+      if (!(error instanceof ForbiddenException)) throw error;
+    }
+    if (!requestedStudentId) {
+      throw new BadRequestException('student_id is required');
+    }
+    return requestedStudentId;
   }
 
   @Get('academic-classes')
@@ -131,7 +159,11 @@ export class StudentsController {
   @Get('student-activity')
   async getStudentActivity(@Req() req: AuthedRequest, @Query() query: ActivityQueryDto) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
-    return this.handle(() => this.service.getStudentActivity(branchId, query), 'Failed to generate activity report');
+    const studentId = await this.resolveActivityReportStudentId(req.user.userId, query.student_id);
+    return this.handle(
+      () => this.service.getStudentActivity(branchId, { ...query, student_id: studentId }),
+      'Failed to generate activity report',
+    );
   }
 
   /** `errorPrefix: null` mirrors the two legacy handlers whose catch-all just echoes `$e->getMessage()` with no prefix. */

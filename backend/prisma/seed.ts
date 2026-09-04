@@ -29,6 +29,12 @@ const PERMISSIONS: { key: string; module: string; description: string }[] = [
   { key: 'mobile_api.hr_lookups.access', module: 'mobile_api', description: 'Mobile app: departments/designations lookups' },
   { key: 'mobile_api.attendance.access', module: 'mobile_api', description: 'Mobile app: attendance summaries/reports and clock-in approval review' },
   { key: 'mobile_api.leaves.access', module: 'mobile_api', description: 'Mobile app: leave types, apply/cancel/my-leaves, and approvals' },
+  { key: 'mobile_api.notifications.access', module: 'mobile_api', description: 'Mobile app: device-token registration and in-app notification inbox' },
+  { key: 'mobile_api.announcements.access', module: 'mobile_api', description: 'Mobile app: read-only branch announcements feed' },
+
+  // Communication
+  { key: 'communication.announcements.view', module: 'communication', description: 'View announcements' },
+  { key: 'communication.announcements.manage', module: 'communication', description: 'Create/delete announcements (fans out a notification to branch students)' },
 
   // Configuration (Phase 2.1)
   { key: 'configuration.academic_years.view', module: 'configuration', description: 'View academic years' },
@@ -165,7 +171,9 @@ const ROLES: {
       'system.mobile_api.view',
       'system.mobile_api.manage',
       ...PERMISSIONS.filter((p) =>
-        ['configuration', 'hr', 'student_management', 'fees', 'academic', 'mobile_api'].includes(p.module),
+        ['configuration', 'hr', 'student_management', 'fees', 'academic', 'mobile_api', 'communication'].includes(
+          p.module,
+        ),
       ).map((p) => p.key),
     ],
   },
@@ -234,6 +242,9 @@ const ROLES: {
       'mobile_api.student_leaves.access',
       'mobile_api.student_surah_progress.access',
       'mobile_api.surah_schedules.access',
+      'mobile_api.profile.access',
+      'mobile_api.notifications.access',
+      'mobile_api.announcements.access',
     ],
   },
 ];

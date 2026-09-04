@@ -78,6 +78,8 @@ model Branch {
   studentExams    StudentExam[]
   progressEntries StudentSurahProgressEntry[]
 
+  notifications Notification[]
+
   @@index([isActive])
 }
 
@@ -138,6 +140,9 @@ model User {
 
   attendancesReviewed  Attendance[]   @relation("AttendanceReviewedBy")
   announcementsCreated Announcement[] @relation("AnnouncementCreatedBy")
+
+  deviceTokens  DeviceToken[]
+  notifications Notification[]
 
   @@index([branchId])
 }
@@ -583,7 +588,10 @@ model Employee {
   designationId String?
   designation   Designation? @relation(fields: [designationId], references: [id])
   dateOfJoining DateTime?
+  dateOfBirth   DateTime?
   gender        Gender?
+  address       String?
+  qualification String?
   status        ActiveStatus @default(ACTIVE)
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
@@ -922,6 +930,8 @@ model Student {
   guardianName   String?
   guardianPhone  String?
   gender         Gender? // legacy Mobile App API: read off `users.gender` (student *is* a User there)
+  address        String?
+  qualification  String?
   joiningDate    DateTime?    @db.Date // legacy Mobile App API: student_details.joining_date
   hifdhStartDate DateTime?    @db.Date // legacy Mobile App API: student_details.hifdh_start_date (persisted there, only used transiently for schedule generation in the modern flow)
   admissionId    String?      @unique
@@ -1607,4 +1617,46 @@ model MobileApiRequestLog {
   @@index([createdAt])
   @@index([userId])
   @@index([path])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// NOTIFICATIONS (in-app inbox + push via FCM)
+// ═══════════════════════════════════════════════════════════════════════
+
+// A user may be signed in on several devices at once, so this is one row
+// per (user, device) rather than a single token column on User.
+model DeviceToken {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  platform  String? // "android" | "ios"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+enum NotificationType {
+  ANNOUNCEMENT
+  RECITATION_PROGRESS
+  GENERAL
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  branchId  String
+  branch    Branch           @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      NotificationType @default(GENERAL)
+  title     String
+  body      String
+  data      Json?
+  isRead    Boolean          @default(false)
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  @@index([userId, createdAt])
+  @@index([branchId])
 }

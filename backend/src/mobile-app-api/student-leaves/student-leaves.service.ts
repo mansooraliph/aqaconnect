@@ -45,6 +45,13 @@ function serializeLeave(leave: {
   approvedById: string | null;
   createdAt: Date;
   updatedAt: Date;
+  student?: {
+    id: string;
+    name: string;
+    gender: string | null;
+    status: string;
+    guardianPhone: string | null;
+  } | null;
 }) {
   return {
     id: leave.id,
@@ -59,6 +66,17 @@ function serializeLeave(leave: {
     approved_by: leave.approvedById,
     created_at: leave.createdAt.toISOString(),
     updated_at: leave.updatedAt.toISOString(),
+    ...(leave.student && {
+      user: {
+        id: leave.student.id,
+        name: leave.student.name,
+        email: '',
+        mobile: leave.student.guardianPhone ?? '',
+        image_url: null,
+        gender: leave.student.gender ?? '',
+        status: leave.student.status,
+      },
+    }),
   };
 }
 
@@ -229,6 +247,7 @@ export class MobileStudentLeavesService {
       this.prisma.studentLeave.count({ where }),
       this.prisma.studentLeave.findMany({
         where,
+        include: { student: true },
         orderBy: { leaveDate: 'desc' },
         take: perPage,
         skip: (page - 1) * perPage,

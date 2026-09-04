@@ -1372,7 +1372,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     key: 'profile',
     label: 'Profile',
     basePath: '/app/profile',
-    description: "The caller's own Employee/User profile. Legacy's task-completion stats (total_tasks, completed_percentage) are dropped — no Task module exists in aqa_v2.",
+    description: "The caller's own Employee/Student/User profile. Legacy's task-completion stats (total_tasks, completed_percentage) are dropped — no Task module exists in aqa_v2. Avatar upload is accepted but not persisted — no avatar storage exists yet, `image` is always null.",
     endpoints: [
       {
         method: 'GET',
@@ -1388,11 +1388,39 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     "phone_number": null,
     "image": null,
     "gender": null,
+    "address": null,
+    "qualification": null,
+    "date_of_birth": null,
     "department_id": null,
     "department": null,
     "designation_id": null,
     "designation": null,
     "joining_date": null
+  }
+}`,
+      },
+      {
+        method: 'POST',
+        path: '/app/edit-profile',
+        summary: "Update the caller's own profile (multipart/form-data — `image` is accepted but discarded)",
+        request: `name=Teacher One&email=teacher1@example.com&phone_number=9998887777&address=123 Main St&qualification=Ijazah in Hifs&gender=male&date_of_birth=1990-05-15&joining_date=2020-01-10`,
+        response: `{
+  "error": false,
+  "data": {
+    "id": "cmshvxysh0009dwmkan8qdg69",
+    "name": "Teacher One",
+    "email": "teacher1@example.com",
+    "phone_number": "9998887777",
+    "image": null,
+    "gender": "MALE",
+    "address": "123 Main St",
+    "qualification": "Ijazah in Hifs",
+    "date_of_birth": "1990-05-15T00:00:00.000Z",
+    "department_id": "cmtk17pn90001z3gyai3qaufk",
+    "department": "Academics",
+    "designation_id": "cmtk17pnl0003z3gy7ndu59vu",
+    "designation": "Quran Teacher",
+    "joining_date": "2020-01-10T00:00:00.000Z"
   }
 }`,
       },

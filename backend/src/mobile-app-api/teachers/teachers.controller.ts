@@ -12,6 +12,7 @@ import {
   UseInterceptors,
   UsePipes,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { Request } from 'express';
 import { TeachersService } from './teachers.service';
 import { StoreTeacherDto } from './dto/store-teacher.dto';
@@ -53,7 +54,12 @@ export class TeachersController {
     return Reply.dataOnly({ teacher });
   }
 
+  // The client only sends multipart/form-data when a photo is attached
+  // (plain JSON otherwise); FileInterceptor must be present either way so
+  // Multer parses the text fields when it does. The photo itself is
+  // received and discarded — no avatar storage exists yet.
   @Post('store')
+  @UseInterceptors(FileInterceptor('image'))
   async store(@Req() req: AuthedRequest, @Body() dto: StoreTeacherDto) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     try {
@@ -70,6 +76,7 @@ export class TeachersController {
   }
 
   @Patch('update/:id')
+  @UseInterceptors(FileInterceptor('image'))
   async update(@Req() req: AuthedRequest, @Param('id') id: string, @Body() dto: UpdateTeacherDto) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     try {
