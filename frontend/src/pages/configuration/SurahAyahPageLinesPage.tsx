@@ -271,6 +271,7 @@ export function SurahAyahPageLinesPage() {
           width="w-64"
           label="Filter by Surah"
           placeholder="All Surahs"
+          placeholderSelectable
           value={surahId}
           onChange={setSurahId}
           options={surahOptions}
@@ -279,6 +280,7 @@ export function SurahAyahPageLinesPage() {
           width="w-40"
           label="Filter by Juz"
           placeholder="All Juz"
+          placeholderSelectable
           value={juzNumber}
           onChange={setJuzNumber}
           options={juzOptions}

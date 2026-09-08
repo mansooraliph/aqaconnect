@@ -18,6 +18,8 @@ interface Props {
   label?: string;
   width?: string;
   disabled?: boolean;
+  /** Makes the placeholder a real, reselectable option (e.g. "All Surahs") instead of an unpickable prompt. */
+  placeholderSelectable?: boolean;
 }
 
 export function FilterSelect({
@@ -28,6 +30,7 @@ export function FilterSelect({
   label,
   width,
   disabled,
+  placeholderSelectable = false,
 }: Props) {
   return (
     <div className={cn('flex flex-col gap-1', width)}>
@@ -39,7 +42,7 @@ export function FilterSelect({
         className="h-10 w-full rounded-card border border-border bg-white px-3 text-sm text-text-primary focus:border-blue focus:outline-none focus:ring-1 focus:ring-blue disabled:bg-table-alt disabled:opacity-60"
       >
         {placeholder && (
-          <option value="" disabled>
+          <option value="" disabled={!placeholderSelectable}>
             {placeholder}
           </option>
         )}
