@@ -191,6 +191,8 @@ export function EmployeesPage() {
       if (editing) {
         await update.mutateAsync({
           id: editing.id,
+          // password is account-provisioning, not part of the Employee read-model
+          // (see create payload below for the same mismatch).
           payload: {
             employeeCode: values.employeeCode || undefined,
             departmentId: values.departmentId || null,
@@ -198,7 +200,7 @@ export function EmployeesPage() {
             dateOfJoining: values.dateOfJoining || null,
             status: values.status,
             password: values.password || undefined,
-          },
+          } as unknown as Partial<Employee>,
         });
         toast.success('Updated');
       } else {
