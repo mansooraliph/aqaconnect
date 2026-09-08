@@ -1,5 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import ExcelJS from 'exceljs';
+import { promises as fs } from 'fs';
+import * as path from 'path';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateSurahDto } from './dto/create-surah.dto';
 import { UpdateSurahDto } from './dto/update-surah.dto';
@@ -12,6 +14,13 @@ import type { PageLineImportRow } from './surah-ayah-page-lines.import';
 
 @Injectable()
 export class SurahsService {
+  // Fixed path so a re-import overwrites the previously stored workbook
+  // rather than accumulating versions; survives redeploys since it lives
+  // outside dist/.
+  private readonly importStorageDir = path.join(process.cwd(), 'storage', 'surah-ayah-page-lines');
+  private readonly importFilePath = path.join(this.importStorageDir, 'latest.xlsx');
+  private readonly importMetaPath = path.join(this.importStorageDir, 'latest.meta.json');
+
   constructor(private readonly prisma: PrismaService) {}
 
   // --- Surahs ---
@@ -231,6 +240,31 @@ export class SurahsService {
       await tx.surahAyahPageLine.createMany({ data });
       return { imported: rows.length };
     });
+  }
+
+  /**
+   * Persists the raw uploaded workbook (as-is, not the DB-derived export)
+   * so it can be downloaded later. Called only after a successful import,
+   * so a bad upload never clobbers the last good backup.
+   */
+  async saveImportedWorkbook(buffer: Buffer, originalName: string) {
+    await fs.mkdir(this.importStorageDir, { recursive: true });
+    await fs.writeFile(this.importFilePath, buffer);
+    await fs.writeFile(
+      this.importMetaPath,
+      JSON.stringify({ originalName, importedAt: new Date().toISOString() }),
+    );
+  }
+
+  /** Returns the last-imported workbook's raw bytes and original filename, or null if none was imported yet. */
+  async getImportedWorkbook(): Promise<{ buffer: Buffer; originalName: string } | null> {
+    try {
+      const buffer = await fs.readFile(this.importFilePath);
+      const meta = JSON.parse(await fs.readFile(this.importMetaPath, 'utf8')) as { originalName: string };
+      return { buffer, originalName: meta.originalName };
+    } catch {
+      return null;
+    }
   }
 
   /** Exports the full ayah <-> page/line mapping in the same column layout the import expects (round-trippable). */

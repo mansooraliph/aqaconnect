@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
-import { Download, Pencil, Plus, Trash2, Upload } from 'lucide-react';
+import { Download, FileDown, Pencil, Plus, Trash2, Upload } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { DataTable } from '../../components/ui/DataTable';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
@@ -138,6 +138,31 @@ export function SurahAyahPageLinesPage() {
     }
   };
 
+  // ---- Download the originally imported workbook (as uploaded, not the DB-derived export) ----
+  const [downloadingImport, setDownloadingImport] = useState(false);
+
+  const handleDownloadImportedFile = async () => {
+    setDownloadingImport(true);
+    try {
+      const response = await api.get('/surah-ayah-page-lines/import/file', { responseType: 'blob' });
+      const disposition = response.headers['content-disposition'] as string | undefined;
+      const filename = disposition?.match(/filename="(.+)"/)?.[1] ?? 'surah-ayah-page-lines-import.xlsx';
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      toast.error(status === 404 ? 'No file has been imported yet' : 'Failed to download imported file');
+    } finally {
+      setDownloadingImport(false);
+    }
+  };
+
   const openCreate = () => {
     setEditing(null);
     setModalOpen(true);
@@ -222,6 +247,10 @@ export function SurahAyahPageLinesPage() {
           <Button variant="outline" onClick={handleExport} loading={exporting}>
             <Download className="h-4 w-4" />
             Export
+          </Button>
+          <Button variant="outline" onClick={handleDownloadImportedFile} loading={downloadingImport}>
+            <FileDown className="h-4 w-4" />
+            Download imported file
           </Button>
           {canManage && (
             <>

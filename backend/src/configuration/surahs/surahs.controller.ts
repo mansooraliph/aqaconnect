@@ -6,6 +6,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  NotFoundException,
   Param,
   Patch,
   Post,
@@ -110,6 +111,20 @@ export class SurahAyahPageLinesController {
     res.send(buffer);
   }
 
+  @Get('import/file')
+  @RequirePermission('configuration.surahs.view')
+  async downloadImportedFile(@Res() res: Response) {
+    const file = await this.service.getImportedWorkbook();
+    if (!file) {
+      throw new NotFoundException('No file has been imported yet');
+    }
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="${file.originalName}"`,
+    });
+    res.send(file.buffer);
+  }
+
   @Get(':id')
   @RequirePermission('configuration.surahs.view')
   findOne(@Param('id') id: string) {
@@ -143,6 +158,8 @@ export class SurahAyahPageLinesController {
       throw new BadRequestException('file is required (multipart field name "file")');
     }
     const rows = await parseSurahAyahPageLineWorkbook(file.buffer);
-    return this.service.importPageLines(rows);
+    const result = await this.service.importPageLines(rows);
+    await this.service.saveImportedWorkbook(file.buffer, file.originalname);
+    return result;
   }
 }
