@@ -84,6 +84,8 @@ interface StudentSurahProgress {
   ayahsCompleted: number;
   status: HifdhStatus;
   verifiedBy: { firstName: string; lastName: string | null } | null;
+  completedAt: string | null;
+  markedBy: { firstName: string; lastName: string | null } | null;
   student: { name: string; studentCode: string };
   surah: { number: number; nameEnglish: string; totalAyahs: number };
 }
@@ -150,6 +152,19 @@ const SCHEDULE_STATUS_FILTER_OPTIONS = [
   { label: 'Needs review', value: 'NEEDS_REVIEW' },
   { label: 'Completed', value: 'COMPLETED' },
 ];
+
+const SCHEDULE_TYPE_FILTER_OPTIONS = [
+  { label: 'Hifdh', value: 'Hifdh' },
+  { label: 'Preparation', value: 'Preparation' },
+  { label: 'Exam', value: 'Exam' },
+];
+
+/** Tailwind bg class for a schedule row's type, or undefined for the default (Hifdh) look. */
+function scheduleTypeRowTone(scheduleType: string | null): string | undefined {
+  if (scheduleType === 'Exam') return 'bg-red/5';
+  if (scheduleType === 'Preparation') return 'bg-amber-50';
+  return undefined;
+}
 
 function StatCard({ label, value, tone }: { label: string; value: string | number; tone?: 'red' }) {
   return (
@@ -504,6 +519,7 @@ function StudentScheduleModal({
 
   const [filterSurahId, setFilterSurahId] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<string>('');
+  const [filterScheduleType, setFilterScheduleType] = useState<string>('');
   const [filterFromDay, setFilterFromDay] = useState<string>('');
   const [filterToDay, setFilterToDay] = useState<string>('');
   const [filterFromDate, setFilterFromDate] = useState<string>('');
@@ -515,6 +531,7 @@ function StudentScheduleModal({
     student?.studentId,
     filterSurahId,
     filterStatus,
+    filterScheduleType,
     filterFromDay,
     filterToDay,
     filterFromDate,
@@ -530,6 +547,7 @@ function StudentScheduleModal({
             studentId: student?.studentId,
             surahId: filterSurahId || undefined,
             status: filterStatus || undefined,
+            scheduleType: filterScheduleType || undefined,
             fromDay: filterFromDay || undefined,
             toDay: filterToDay || undefined,
             fromDate: filterFromDate || undefined,
@@ -661,6 +679,16 @@ function StudentScheduleModal({
             />
           </Field>
         </div>
+        <div className="w-36 shrink-0">
+          <Field label="Filter by type">
+            <Select
+              placeholder="All types"
+              value={filterScheduleType}
+              onChange={(e) => setFilterScheduleType(e.target.value)}
+              options={[{ label: 'All types', value: '' }, ...SCHEDULE_TYPE_FILTER_OPTIONS]}
+            />
+          </Field>
+        </div>
         <div className="w-20 shrink-0">
           <Field label="From day">
             <Input
@@ -712,7 +740,12 @@ function StudentScheduleModal({
           </Button>
         </div>
       )}
-      <DataTable<HifdhSchedule> columns={columns} data={rows} isLoading={scheduleQuery.isLoading} />
+      <DataTable<HifdhSchedule>
+        columns={columns}
+        data={rows}
+        isLoading={scheduleQuery.isLoading}
+        rowClassName={(row) => scheduleTypeRowTone(row.scheduleType)}
+      />
     </Modal>
   );
 }
@@ -771,6 +804,18 @@ function StudentSurahProgressModal({
     {
       header: 'Status',
       cell: ({ row }) => <StatusBadge status={row.original.status} />,
+    },
+    {
+      header: 'Completed at',
+      cell: ({ row }) =>
+        row.original.completedAt ? new Date(row.original.completedAt).toLocaleString() : '—',
+    },
+    {
+      header: 'Marked by',
+      cell: ({ row }) =>
+        row.original.markedBy
+          ? `${row.original.markedBy.firstName} ${row.original.markedBy.lastName ?? ''}`.trim()
+          : '—',
     },
     {
       header: 'Verified by',

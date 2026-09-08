@@ -56,7 +56,7 @@ function statusTone(status: number): 'green' | 'amber' | 'red' {
 export function MobileApiUsageHistoryPage() {
   const [tab, setTab] = useState<Tab>('logs');
   const [page, setPage] = useState(1);
-  const [limit, setLimit] = useState(25);
+  const [limit, setLimit] = useState(100);
   const [method, setMethod] = useState('');
   const [path, setPath] = useState('');
   const [username, setUsername] = useState('');

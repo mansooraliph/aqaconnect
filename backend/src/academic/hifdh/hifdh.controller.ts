@@ -24,8 +24,18 @@ export class HifdhSchedulesController {
     @Query('toDate') toDate?: string,
     @Query('fromDay') fromDay?: string,
     @Query('toDay') toDay?: string,
+    @Query('scheduleType') scheduleType?: string,
   ) {
-    return this.service.listSchedules(studentId, surahId, status, fromDate, toDate, fromDay, toDay);
+    return this.service.listSchedules(
+      studentId,
+      surahId,
+      status,
+      fromDate,
+      toDate,
+      fromDay,
+      toDay,
+      scheduleType,
+    );
   }
 
   @Get('progress-summary')

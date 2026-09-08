@@ -34,6 +34,7 @@ export class HifdhService {
     toDate?: string,
     fromDay?: string,
     toDay?: string,
+    scheduleType?: string,
   ) {
     return this.prisma.surahHifdhStudentSchedule.findMany({
       where: {
@@ -48,6 +49,7 @@ export class HifdhService {
         ...(studentId && { studentId }),
         ...(surahId && { surahId }),
         ...(status && { status: status as never }),
+        ...(scheduleType && { scheduleType }),
         ...((fromDate || toDate) && {
           scheduledDate: {
             ...(fromDate && { gte: new Date(fromDate) }),
@@ -618,6 +620,7 @@ export class HifdhService {
         student: { select: { id: true, name: true, studentCode: true } },
         surah: { select: { number: true, nameEnglish: true, totalAyahs: true } },
         verifiedBy: { select: { firstName: true, lastName: true } },
+        lastUpdatedBy: { select: { firstName: true, lastName: true } },
       },
     });
 
@@ -631,6 +634,8 @@ export class HifdhService {
       allVerified: boolean;
       latestVerifiedAt: Date | null;
       latestVerifiedBy: { firstName: string; lastName: string | null } | null;
+      latestCompletedAt: Date | null;
+      latestMarkedBy: { firstName: string; lastName: string | null } | null;
     }
 
     const groups = new Map<string, Group>();
@@ -647,6 +652,8 @@ export class HifdhService {
         allVerified: true,
         latestVerifiedAt: null,
         latestVerifiedBy: null,
+        latestCompletedAt: null,
+        latestMarkedBy: null,
       };
       g.total += 1;
       if (e.status === ProgressEntryStatus.COMPLETED || e.status === ProgressEntryStatus.VERIFIED) {
@@ -656,6 +663,10 @@ export class HifdhService {
       if (e.verifiedBy && (!g.latestVerifiedAt || (e.verifiedAt && e.verifiedAt > g.latestVerifiedAt))) {
         g.latestVerifiedAt = e.verifiedAt;
         g.latestVerifiedBy = e.verifiedBy;
+      }
+      if (e.completedAt && (!g.latestCompletedAt || e.completedAt > g.latestCompletedAt)) {
+        g.latestCompletedAt = e.completedAt;
+        g.latestMarkedBy = e.lastUpdatedBy;
       }
       groups.set(key, g);
     }
@@ -672,6 +683,8 @@ export class HifdhService {
             ? ('COMPLETED' as const)
             : ('IN_PROGRESS' as const),
       verifiedBy: g.latestVerifiedBy,
+      completedAt: g.latestCompletedAt,
+      markedBy: g.latestMarkedBy,
       student: g.student,
       surah: g.surah,
     }));

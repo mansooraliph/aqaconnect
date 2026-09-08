@@ -38,7 +38,7 @@ interface DataTableProps<T> {
   columns: ColumnDef<T, unknown>[];
   data: T[];
   isLoading?: boolean;
-  /** Omit for simple client-side pagination over `data` (default page size 20). */
+  /** Omit for simple client-side pagination over `data` (default page size 100). */
   pagination?: TablePagination | false;
   /** Initial rows-per-page for client-side pagination (i.e. when `pagination` is omitted). Default 20. */
   defaultPageSize?: number;
@@ -74,7 +74,7 @@ export function DataTable<T>({
   data,
   isLoading,
   pagination,
-  defaultPageSize = 20,
+  defaultPageSize = 100,
   onRowClick,
   emptyMessage = 'No results found',
   searchable,
@@ -236,7 +236,7 @@ export function DataTable<T>({
       </div>
 
       {effectivePagination && effectivePagination.total > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3 text-sm">
+        <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-t border-border bg-white px-4 py-3 text-sm">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             {showSelector && (
               <label className="flex items-center gap-2">
