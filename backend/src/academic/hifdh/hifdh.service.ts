@@ -64,16 +64,20 @@ export class HifdhService {
       include: {
         student: { select: { id: true, name: true, studentCode: true } },
         surah: { select: { number: true, nameEnglish: true } },
+        surahTarget: { select: { sortOrder: true } },
         teacher: { include: { user: { select: { firstName: true, lastName: true } } } },
         rescheduledFrom: true,
         rescheduledTo: true,
       },
       // scheduledDate alone doesn't uniquely order multi-row days (a sabaq +
-      // several sabqi/manzil rows can share one date) — day/createdAt as
-      // tiebreaks keep the list in the same sequence as the master target
-      // schedule/generation order instead of whatever order Postgres happens
-      // to return ties in (which can drift after an UPDATE rewrites a row).
-      orderBy: [{ scheduledDate: 'asc' }, { day: 'asc' }, { createdAt: 'asc' }],
+      // several sabqi/manzil rows can share one date) — day/surahTarget's own
+      // sortOrder as tiebreaks keep the list in the same sequence as the
+      // master target schedule, regardless of the order rows happened to be
+      // (re)created in. createdAt is NOT a safe tiebreak here: bulkReschedule
+      // creates a day's replacement rows in whatever order they were fetched
+      // (no within-day ordering), so createdAt drifts from the intended plan
+      // order after a reschedule.
+      orderBy: [{ scheduledDate: 'asc' }, { day: 'asc' }, { surahTarget: { sortOrder: 'asc' } }],
     });
   }
 
