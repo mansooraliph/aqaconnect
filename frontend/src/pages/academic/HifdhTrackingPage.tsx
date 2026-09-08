@@ -745,6 +745,7 @@ function StudentScheduleModal({
         data={rows}
         isLoading={scheduleQuery.isLoading}
         rowClassName={(row) => scheduleTypeRowTone(row.scheduleType)}
+        stickyFooter
       />
     </Modal>
   );

@@ -47,6 +47,15 @@ interface DataTableProps<T> {
   searchable?: boolean;
   /** Extra classes applied to a row's <tr>, e.g. a background tint for flagged rows. */
   rowClassName?: (row: T) => string | undefined;
+  /**
+   * Pins the pagination footer to the bottom of the table's nearest
+   * scrolling ancestor instead of scrolling away with the rows. Only makes
+   * sense when the table lives inside a fixed-height scroll container (a
+   * Modal/drawer body) — on a normal page (where the whole page scrolls)
+   * this would make the footer float mid-page instead of sitting after the
+   * last row, so it defaults to off.
+   */
+  stickyFooter?: boolean;
 }
 
 /** Build a page-number list with ellipsis, e.g. [1,'…',4,5,6,'…',12]. */
@@ -79,6 +88,7 @@ export function DataTable<T>({
   emptyMessage = 'No results found',
   searchable,
   rowClassName,
+  stickyFooter = false,
 }: DataTableProps<T>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
@@ -246,7 +256,12 @@ export function DataTable<T>({
       </div>
 
       {effectivePagination && effectivePagination.total > 0 && (
-        <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 rounded-b-card border-t border-border bg-white px-4 py-3 text-sm">
+        <div
+          className={cn(
+            'flex flex-wrap items-center justify-between gap-3 rounded-b-card border-t border-border bg-white px-4 py-3 text-sm',
+            stickyFooter && 'sticky bottom-0 z-10',
+          )}
+        >
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             {showSelector && (
               <label className="flex items-center gap-2">
