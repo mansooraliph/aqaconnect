@@ -473,10 +473,12 @@ export class HifdhService {
         });
         if (rows.length === 0) continue;
 
-        // A bulk reschedule starts a brand-new schedule generation for this
-        // student — every row it produces (shifted-pending or copied-
-        // completed) shares the same bumped scheduleNo, distinct from
-        // whatever generation they were previously part of.
+        // Only the pending rows actually start a new schedule generation —
+        // they're the ones being shifted to a new plan. Completed rows are
+        // just being copied forward (unchanged) so they stay visible after
+        // the old, now-superseded row is filtered out of listings; they
+        // keep the scheduleNo of the generation they were actually
+        // completed under, not the new one.
         const nextScheduleNo = Math.max(...rows.map((r) => r.scheduleNo)) + 1;
 
         const pendingRows = rows.filter((r) => r.status !== 'COMPLETED');
@@ -499,7 +501,7 @@ export class HifdhService {
 
         for (const row of completedRows) {
           await tx.surahHifdhStudentSchedule.create({
-            data: this.rescheduleRowData(row, row.scheduledDate, true, nextScheduleNo),
+            data: this.rescheduleRowData(row, row.scheduledDate, true, row.scheduleNo),
           });
           copied++;
         }
