@@ -732,12 +732,14 @@ function StudentSurahProgressModal({
   const queryClient = useQueryClient();
   const canVerify = hasPermission('academic.hifdh_progress.verify');
 
+  const [orderBy, setOrderBy] = useState<'schedule' | 'surah_number'>('schedule');
+
   const progressQuery = useQuery({
-    queryKey: ['student-surah-progress', activeBranchId, student?.studentId],
+    queryKey: ['student-surah-progress', activeBranchId, student?.studentId, orderBy],
     queryFn: async () =>
       (
         await api.get<StudentSurahProgress[]>(`/branches/${activeBranchId}/student-surah-progress`, {
-          params: { studentId: student?.studentId },
+          params: { studentId: student?.studentId, orderBy },
         })
       ).data,
     enabled: Boolean(activeBranchId && student),
@@ -801,6 +803,18 @@ function StudentSurahProgressModal({
       position="right"
       width="w-3/4"
     >
+      <div className="mb-3 w-48">
+        <Field label="Order by">
+          <Select
+            value={orderBy}
+            onChange={(e) => setOrderBy(e.target.value as 'schedule' | 'surah_number')}
+            options={[
+              { label: 'Schedule order', value: 'schedule' },
+              { label: 'Surah number', value: 'surah_number' },
+            ]}
+          />
+        </Field>
+      </div>
       <DataTable<StudentSurahProgress>
         columns={columns}
         data={progressQuery.data ?? []}

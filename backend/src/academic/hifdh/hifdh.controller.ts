@@ -91,8 +91,9 @@ export class StudentSurahProgressController {
     @Query('studentId') studentId?: string,
     @Query('surahId') surahId?: string,
     @Query('status') status?: string,
+    @Query('orderBy') orderBy?: 'schedule' | 'surah_number',
   ) {
-    return this.service.listProgress(studentId, surahId, status);
+    return this.service.listProgress(studentId, surahId, status, orderBy);
   }
 
   @Post(':studentId/:surahId/verify')

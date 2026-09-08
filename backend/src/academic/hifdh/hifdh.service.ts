@@ -599,7 +599,12 @@ export class HifdhService {
   // sync by construction rather than by keeping two stores updated in
   // lockstep.
 
-  async listProgress(studentId?: string, surahId?: string, status?: string) {
+  async listProgress(
+    studentId?: string,
+    surahId?: string,
+    status?: string,
+    orderBy: 'schedule' | 'surah_number' = 'schedule',
+  ) {
     const entries = await this.prisma.studentSurahProgressEntry.findMany({
       where: {
         type: 'NEW_LESSON',
@@ -670,8 +675,49 @@ export class HifdhService {
     }));
 
     const filtered = status ? rows.filter((r) => r.status === status) : rows;
-    filtered.sort((a, b) => a.surah.number - b.surah.number);
+
+    if (orderBy === 'schedule' && studentId) {
+      const scheduleRank = await this.surahScheduleOrderRank(studentId);
+      filtered.sort((a, b) => {
+        const ra = scheduleRank.get(a.surahId);
+        const rb = scheduleRank.get(b.surahId);
+        // Surahs with no schedule row yet (e.g. legacy progress data) sort
+        // after everything that does have one, by surah number among
+        // themselves.
+        if (ra === undefined && rb === undefined) return a.surah.number - b.surah.number;
+        if (ra === undefined) return 1;
+        if (rb === undefined) return -1;
+        return ra - rb;
+      });
+    } else {
+      filtered.sort((a, b) => a.surah.number - b.surah.number);
+    }
+
     return filtered;
+  }
+
+  /**
+   * Maps surahId -> the position it first appears in this student's own
+   * day-wise Hifdh schedule (day, then that day's plan sortOrder) — the
+   * "Schedule order" option in the Progress-by-Surah view, so a surah shows
+   * up in the same order the student is actually memorizing it in rather
+   * than canonical Quran (surah number) order.
+   */
+  private async surahScheduleOrderRank(studentId: string): Promise<Map<string, number>> {
+    const rows = await this.prisma.surahHifdhStudentSchedule.findMany({
+      where: { studentId, rescheduledTo: { none: {} }, surahId: { not: null } },
+      select: { surahId: true, day: true, surahTarget: { select: { sortOrder: true } } },
+      orderBy: [{ day: 'asc' }, { surahTarget: { sortOrder: 'asc' } }],
+    });
+    const rank = new Map<string, number>();
+    let i = 0;
+    for (const row of rows) {
+      if (row.surahId && !rank.has(row.surahId)) {
+        rank.set(row.surahId, i);
+        i += 1;
+      }
+    }
+    return rank;
   }
 
   /** Bulk-verifies every COMPLETED (student-done, awaiting-review) ayah entry for one student+surah. */
