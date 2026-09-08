@@ -298,7 +298,14 @@ export class HifdhService {
     });
   }
 
-  /** Student-side "I've done this portion" — moves it to NEEDS_REVIEW, awaiting teacher verification. */
+  /**
+   * Teacher/admin-side "this portion is done" — goes straight to COMPLETED
+   * (verified) in one step. Unlike the mobile app's student self-report flow
+   * (a separate endpoint that still lands on NEEDS_REVIEW for a teacher to
+   * review later), the actor calling this one already holds
+   * academic.hifdh_progress.mark, so there's no one else left to review it
+   * — a separate verify step would just be busywork.
+   */
   async markCompleted(id: string, userId?: string) {
     const schedule = await this.findScheduleOrThrow(id);
     if (schedule.status === 'COMPLETED') {
@@ -307,13 +314,20 @@ export class HifdhService {
     return this.prisma.$transaction(async (tx) => {
       const updated = await tx.surahHifdhStudentSchedule.update({
         where: { id },
-        data: { status: 'NEEDS_REVIEW', completedAt: new Date() },
+        data: { status: 'COMPLETED', completedAt: new Date() },
       });
-      await this.syncProgressEntries(tx, schedule, [ProgressEntryStatus.NOT_STARTED, ProgressEntryStatus.IN_PROGRESS], {
-        status: ProgressEntryStatus.COMPLETED,
-        completedAt: new Date(),
-        ...(userId && { lastUpdatedById: userId }),
-      });
+      await this.syncProgressEntries(
+        tx,
+        schedule,
+        [ProgressEntryStatus.NOT_STARTED, ProgressEntryStatus.IN_PROGRESS, ProgressEntryStatus.COMPLETED],
+        {
+          status: ProgressEntryStatus.VERIFIED,
+          completedAt: new Date(),
+          verifiedAt: new Date(),
+          verifiedById: userId,
+          ...(userId && { lastUpdatedById: userId }),
+        },
+      );
       return updated;
     });
   }
