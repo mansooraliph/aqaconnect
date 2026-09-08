@@ -49,7 +49,11 @@ export function BranchSettingsPage() {
 
   useEffect(() => {
     if (settingsQuery.data) {
-      setValues(settingsQuery.data as unknown as Record<string, unknown>);
+      // Only the editable fields — the GET response also carries id/branchId/
+      // createdAt/updatedAt, which UpdateBranchSettingsDto rejects
+      // (forbidNonWhitelisted) if they're echoed back on save.
+      const { displayName, currency, timezone, language, logoUrl, academicYearId } = settingsQuery.data;
+      setValues({ displayName, currency, timezone, language, logoUrl, academicYearId });
     }
   }, [settingsQuery.data]);
 
