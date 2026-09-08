@@ -111,7 +111,8 @@ export const MODULES: ModuleDef[] = [
     label: 'Academic',
     icon: BookOpen,
     items: [
-      { key: '/academic/lessons-progress', label: 'Lessons & Progress', permission: 'academic.lessons.view' },
+      { key: '/academic/lessons', label: 'Lessons', permission: 'academic.lessons.view' },
+      { key: '/academic/lessons-progress', label: 'Track Progress', permission: 'academic.lesson_progress.view' },
       { key: '/academic/halqas', label: 'Halqas', permission: 'academic.halqas.view' },
       { key: '/academic/hifdh-tracking', label: 'Hifdh Tracking', permission: 'academic.hifdh_schedules.view' },
       { key: '/academic/exams', label: 'Exams', permission: 'academic.exam_types.view' },

@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { StudentsService } from './students.service';
 import { CreateStudentDto } from './dto/create-student.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
+import { ResetStudentPasswordDto } from './dto/reset-student-password.dto';
 import { BulkActionDto } from '../../common/dto/bulk-action.dto';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
@@ -44,5 +45,17 @@ export class StudentsController {
   @RequirePermission('student_management.students.manage')
   bulkAction(@Param('branchId') branchId: string, @Body() dto: BulkActionDto) {
     return this.service.bulkAction(branchId, dto);
+  }
+
+  @Post(':id/reset-password')
+  @HttpCode(200)
+  @RequirePermission('student_management.students.manage')
+  async resetPassword(
+    @Param('branchId') branchId: string,
+    @Param('id') id: string,
+    @Body() dto: ResetStudentPasswordDto,
+  ) {
+    await this.service.resetPassword(branchId, id, dto);
+    return { success: true };
   }
 }

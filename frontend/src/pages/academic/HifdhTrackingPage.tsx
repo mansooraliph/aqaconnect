@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useAuthStore } from '../../store/auth';
@@ -43,6 +43,7 @@ interface HifdhSchedule {
   id: string;
   studentId: string;
   surahId: string | null;
+  scheduleNo: number;
   day: number | null;
   fromAyah: number | null;
   toAyah: number | null;
@@ -118,49 +119,22 @@ export function HifdhTrackingPage() {
     value: s.id,
   }));
 
-  const [tab, setTab] = useState<'schedules' | 'progress'>('schedules');
-
   return (
     <div className="flex flex-col gap-4">
       <PageHeader title="Hifdh Tracking" variant="plain" />
       <div className="flex gap-1 border-b border-border">
-        {(
-          [
-            { key: 'schedules', label: 'Schedules' },
-            { key: 'progress', label: 'Progress Summary' },
-          ] as const
-        ).map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => setTab(t.key)}
-            className={
-              tab === t.key
-                ? 'border-b-2 border-blue px-4 py-2 text-sm font-medium text-blue'
-                : 'border-b-2 border-transparent px-4 py-2 text-sm font-medium text-text-muted hover:text-text-primary'
-            }
-          >
-            {t.label}
-          </button>
-        ))}
+        <span className="border-b-2 border-blue px-4 py-2 text-sm font-medium text-blue">
+          Schedule and Progress
+        </span>
       </div>
-      {tab === 'schedules' ? (
-        <SchedulesTab
-          activeBranchId={activeBranchId}
-          hasPermission={hasPermission}
-          studentOptions={studentOptions}
-          studentsLoading={studentsQuery.isLoading}
-          surahOptions={surahOptions}
-          surahsLoading={surahsQuery.isLoading}
-        />
-      ) : (
-        <ProgressSummaryTab
-          activeBranchId={activeBranchId}
-          hasPermission={hasPermission}
-          surahOptions={surahOptions}
-          surahsLoading={surahsQuery.isLoading}
-        />
-      )}
+      <SchedulesTab
+        activeBranchId={activeBranchId}
+        hasPermission={hasPermission}
+        studentOptions={studentOptions}
+        studentsLoading={studentsQuery.isLoading}
+        surahOptions={surahOptions}
+        surahsLoading={surahsQuery.isLoading}
+      />
     </div>
   );
 }
@@ -249,8 +223,9 @@ function SchedulesTab({
     { total: 0, completed: 0, overdue: 0 },
   );
 
-  // ---- View schedule drawer ----
+  // ---- View schedule / progress drawers (mutually exclusive per kind) ----
   const [scheduleTarget, setScheduleTarget] = useState<StudentProgressSummary | null>(null);
+  const [progressTarget, setProgressTarget] = useState<StudentProgressSummary | null>(null);
 
   const columns: ColumnDef<StudentProgressSummary, unknown>[] = [
     {
@@ -263,9 +238,19 @@ function SchedulesTab({
         />
       ),
     },
-    { header: 'Student Name', accessorKey: 'studentName' },
-    { header: 'Student ID', accessorKey: 'studentCode' },
-    { header: 'Halqa', cell: ({ row }) => row.original.halqaName ?? '—' },
+    {
+      header: 'Student Name',
+      cell: ({ row }) => (
+        <div className="flex flex-col">
+          <span>{row.original.studentName}</span>
+          <span className="text-xs text-text-muted">{row.original.studentCode}</span>
+        </div>
+      ),
+    },
+    {
+      header: 'Halqa',
+      cell: ({ row }) => <span className="whitespace-nowrap">{row.original.halqaName ?? '—'}</span>,
+    },
     { header: 'Total Schedules', accessorKey: 'totalSchedules' },
     { header: 'Completed', accessorKey: 'completedSchedules' },
     {
@@ -286,11 +271,29 @@ function SchedulesTab({
       header: '',
       cell: ({ row }) => (
         <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" variant="outline" onClick={() => setScheduleTarget(row.original)}>
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-green text-green hover:bg-green/10"
+            onClick={() => setScheduleTarget(row.original)}
+          >
             Schedule
           </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-blue text-blue hover:bg-blue/10"
+            onClick={() => setProgressTarget(row.original)}
+          >
+            Progress
+          </Button>
           {canManage && (
-            <Button size="sm" variant="outline" onClick={() => setRescheduleTargets([row.original])}>
+            <Button
+              size="sm"
+              variant="outline"
+              className="border-amber text-amber hover:bg-amber/10"
+              onClick={() => setRescheduleTargets([row.original])}
+            >
               Reschedule
             </Button>
           )}
@@ -335,6 +338,7 @@ function SchedulesTab({
         {canManage && selectedIds.length > 0 && (
           <Button
             variant="outline"
+            className="border-amber text-amber hover:bg-amber/10"
             onClick={() => setRescheduleTargets(summary.filter((s) => selectedIds.includes(s.studentId)))}
           >
             Reschedule selected ({selectedIds.length})
@@ -353,7 +357,15 @@ function SchedulesTab({
         student={scheduleTarget}
         surahOptions={surahOptions}
         surahsLoading={surahsLoading}
+        hasPermission={hasPermission}
         onClose={() => setScheduleTarget(null)}
+      />
+
+      <StudentSurahProgressModal
+        activeBranchId={activeBranchId}
+        student={progressTarget}
+        hasPermission={hasPermission}
+        onClose={() => setProgressTarget(null)}
       />
 
       <BulkRescheduleModal
@@ -471,111 +483,6 @@ function BulkRescheduleModal({
   );
 }
 
-function ProgressSummaryTab({
-  activeBranchId,
-  hasPermission,
-  surahOptions,
-  surahsLoading,
-}: {
-  activeBranchId: string | undefined;
-  hasPermission: (key: string) => boolean;
-  surahOptions: SelectOption[];
-  surahsLoading: boolean;
-}) {
-  const canView = hasPermission('academic.hifdh_progress.view');
-
-  const halqasQuery = useBranchResource<HalqaOption>(activeBranchId, 'halqas').list;
-  const halqaOptions = (halqasQuery.data ?? []).map((h) => ({ label: h.name, value: h.id }));
-
-  const [filterHalqaId, setFilterHalqaId] = useState<string>('');
-
-  const summaryQuery = useQuery({
-    queryKey: ['hifdh-progress-summary', activeBranchId, filterHalqaId],
-    queryFn: async () =>
-      (
-        await api.get<StudentProgressSummary[]>(
-          `/branches/${activeBranchId}/hifdh-schedules/progress-summary`,
-          { params: { halqaId: filterHalqaId || undefined } },
-        )
-      ).data,
-    enabled: Boolean(activeBranchId && canView),
-  });
-
-  // Which student's detail modal is open, if any — schedule and progress
-  // modals are mutually exclusive so only one target is tracked per kind.
-  const [scheduleTarget, setScheduleTarget] = useState<StudentProgressSummary | null>(null);
-  const [progressTarget, setProgressTarget] = useState<StudentProgressSummary | null>(null);
-
-  const columns: ColumnDef<StudentProgressSummary, unknown>[] = [
-    { header: 'Student Name', accessorKey: 'studentName' },
-    { header: 'Student ID', accessorKey: 'studentCode' },
-    { header: 'Total Schedules', accessorKey: 'totalSchedules' },
-    { header: 'Completed', accessorKey: 'completedSchedules' },
-    {
-      header: 'Completion Percentage',
-      cell: ({ row }) => `${row.original.completionPercentage}%`,
-    },
-    {
-      header: 'Overdue Count',
-      cell: ({ row }) =>
-        row.original.overdueCount > 0 ? (
-          <Badge tone="red">{row.original.overdueCount}</Badge>
-        ) : (
-          row.original.overdueCount
-        ),
-    },
-    {
-      id: 'actions',
-      header: '',
-      cell: ({ row }) => (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" variant="outline" onClick={() => setScheduleTarget(row.original)}>
-            Schedule
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => setProgressTarget(row.original)}>
-            Progress
-          </Button>
-        </div>
-      ),
-    },
-  ];
-
-  return (
-    <>
-      <div className="flex flex-wrap items-end gap-3">
-        <Field label="Filter by halqa">
-          <Select
-            placeholder="All halqas"
-            value={filterHalqaId}
-            onChange={(e) => setFilterHalqaId(e.target.value)}
-            options={[{ label: 'All halqas', value: '' }, ...halqaOptions]}
-            disabled={halqasQuery.isLoading}
-          />
-        </Field>
-      </div>
-
-      <DataTable<StudentProgressSummary>
-        columns={columns}
-        data={summaryQuery.data ?? []}
-        isLoading={summaryQuery.isLoading}
-      />
-
-      <StudentScheduleModal
-        activeBranchId={activeBranchId}
-        student={scheduleTarget}
-        surahOptions={surahOptions}
-        surahsLoading={surahsLoading}
-        onClose={() => setScheduleTarget(null)}
-      />
-      <StudentSurahProgressModal
-        activeBranchId={activeBranchId}
-        student={progressTarget}
-        hasPermission={hasPermission}
-        onClose={() => setProgressTarget(null)}
-      />
-    </>
-  );
-}
 
 /** Right-side, half-width drawer listing one student's full day-wise Hifdh schedule. */
 function StudentScheduleModal({
@@ -583,14 +490,19 @@ function StudentScheduleModal({
   student,
   surahOptions,
   surahsLoading,
+  hasPermission,
   onClose,
 }: {
   activeBranchId: string | undefined;
   student: StudentProgressSummary | null;
   surahOptions: SelectOption[];
   surahsLoading: boolean;
+  hasPermission: (key: string) => boolean;
   onClose: () => void;
 }) {
+  const queryClient = useQueryClient();
+  const canMark = hasPermission('academic.hifdh_progress.mark');
+
   const [filterSurahId, setFilterSurahId] = useState<string>('');
   const [filterStatus, setFilterStatus] = useState<string>('');
   const [filterFromDay, setFilterFromDay] = useState<string>('');
@@ -629,7 +541,65 @@ function StudentScheduleModal({
     enabled: Boolean(activeBranchId && student),
   });
 
+  const rows = scheduleQuery.data ?? [];
+
+  // ---- Bulk mark progress ----
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkMarking, setBulkMarking] = useState(false);
+  const allSelected = rows.length > 0 && selectedIds.length === rows.length;
+
+  // This component stays mounted (the Modal just hides) between opens, so
+  // a stale selection from the previous student must be cleared explicitly.
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [student?.studentId]);
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((v) => v !== id) : [...prev, id]));
+  };
+
+  const bulkMark = async (action: 'mark-in-progress' | 'mark-completed') => {
+    if (selectedIds.length === 0) return;
+    setBulkMarking(true);
+    try {
+      const results = await Promise.allSettled(
+        selectedIds.map((id) => api.post(`/branches/${activeBranchId}/hifdh-schedules/${id}/${action}`)),
+      );
+      const failed = results.filter((r) => r.status === 'rejected').length;
+      const succeeded = results.length - failed;
+      if (succeeded > 0) toast.success(`Updated ${succeeded} schedule row${succeeded === 1 ? '' : 's'}`);
+      if (failed > 0) toast.error(`Failed to update ${failed} row${failed === 1 ? '' : 's'}`);
+      setSelectedIds([]);
+      queryClient.invalidateQueries({ queryKey: ['hifdh-schedules'] });
+      queryClient.invalidateQueries({ queryKey: ['hifdh-progress-summary'] });
+    } finally {
+      setBulkMarking(false);
+    }
+  };
+
   const columns: ColumnDef<HifdhSchedule, unknown>[] = [
+    ...(canMark
+      ? ([
+          {
+            id: 'select',
+            header: () => (
+              <Checkbox
+                checked={allSelected}
+                indeterminate={selectedIds.length > 0 && !allSelected}
+                onChange={(checked) => setSelectedIds(checked ? rows.map((r) => r.id) : [])}
+                aria-label="Select all"
+              />
+            ),
+            cell: ({ row }) => (
+              <Checkbox
+                checked={selectedIds.includes(row.original.id)}
+                onChange={() => toggleSelected(row.original.id)}
+                aria-label="Select row"
+              />
+            ),
+          } as ColumnDef<HifdhSchedule, unknown>,
+        ] as ColumnDef<HifdhSchedule, unknown>[])
+      : []),
     {
       header: 'Day',
       accessorKey: 'day',
@@ -652,26 +622,8 @@ function StudentScheduleModal({
     {
       header: 'Scheduled date',
       cell: ({ row }) => {
-        const record = row.original;
-        return (
-          <div className="flex items-center gap-1.5">
-            <span>{record.scheduledDate ? new Date(record.scheduledDate).toLocaleDateString() : '-'}</span>
-            {record.rescheduledFrom && (
-              <span
-                title={`Rescheduled from ${new Date(record.rescheduledFrom.scheduledDate).toLocaleDateString()}`}
-              >
-                <Badge tone="purple">rescheduled</Badge>
-              </span>
-            )}
-            {record.rescheduledTo && (
-              <span
-                title={`Superseded by a reschedule to ${new Date(record.rescheduledTo.scheduledDate).toLocaleDateString()}`}
-              >
-                <Badge tone="gray">superseded</Badge>
-              </span>
-            )}
-          </div>
-        );
+        const date = row.original.scheduledDate ? new Date(row.original.scheduledDate).toLocaleDateString() : '-';
+        return `${date} (${row.original.scheduleNo})`;
       },
     },
     {
@@ -745,11 +697,23 @@ function StudentScheduleModal({
           </Field>
         </div>
       </div>
-      <DataTable<HifdhSchedule>
-        columns={columns}
-        data={scheduleQuery.data ?? []}
-        isLoading={scheduleQuery.isLoading}
-      />
+      {canMark && selectedIds.length > 0 && (
+        <div className="mb-3 flex items-center gap-2">
+          <span className="text-sm text-text-muted">{selectedIds.length} selected</span>
+          <Button
+            size="sm"
+            variant="outline"
+            loading={bulkMarking}
+            onClick={() => bulkMark('mark-in-progress')}
+          >
+            Mark In Progress
+          </Button>
+          <Button size="sm" loading={bulkMarking} onClick={() => bulkMark('mark-completed')}>
+            Mark Completed
+          </Button>
+        </div>
+      )}
+      <DataTable<HifdhSchedule> columns={columns} data={rows} isLoading={scheduleQuery.isLoading} />
     </Modal>
   );
 }

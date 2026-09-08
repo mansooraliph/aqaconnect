@@ -4,6 +4,7 @@ import * as crypto from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateStudentDto } from './dto/create-student.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
+import { ResetStudentPasswordDto } from './dto/reset-student-password.dto';
 import { BulkActionDto } from '../../common/dto/bulk-action.dto';
 import { HifdhService } from '../../academic/hifdh/hifdh.service';
 
@@ -49,6 +50,26 @@ export class StudentsService {
       throw new NotFoundException('Student not found');
     }
     return record;
+  }
+
+  async resetPassword(branchId: string, id: string, dto: ResetStudentPasswordDto) {
+    const student = await this.prisma.student.findFirst({ where: { id, branchId } });
+    if (!student) {
+      throw new NotFoundException('Student not found');
+    }
+    if (!student.userId) {
+      throw new BadRequestException('This student has no login account to reset a password for');
+    }
+
+    const passwordHash = await bcrypt.hash(dto.password, SALT_ROUNDS);
+    await this.prisma.$transaction([
+      this.prisma.user.update({ where: { id: student.userId }, data: { passwordHash } }),
+      // Force re-login everywhere: a reset password shouldn't leave old sessions valid.
+      this.prisma.refreshToken.updateMany({
+        where: { userId: student.userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
   }
 
   /**
@@ -100,6 +121,10 @@ export class StudentsService {
           dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : undefined,
           guardianName: dto.guardianName,
           guardianPhone: dto.guardianPhone,
+          // Persisted regardless of Halqa assignment — generateInitialSchedulesForStudent
+          // below only consumes it transiently (requires halqaId), so without this the
+          // value would otherwise be silently dropped when no Halqa is picked yet.
+          hifdhStartDate: dto.hifdhStartDate ? new Date(dto.hifdhStartDate) : undefined,
         },
         include: this.includeClause(),
       });
@@ -141,6 +166,7 @@ export class StudentsService {
           dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : undefined,
           guardianName: dto.guardianName,
           guardianPhone: dto.guardianPhone,
+          hifdhStartDate: dto.hifdhStartDate ? new Date(dto.hifdhStartDate) : undefined,
           userId: user.id,
         },
         include: this.includeClause(),

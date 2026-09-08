@@ -37,6 +37,14 @@ export class HifdhService {
   ) {
     return this.prisma.surahHifdhStudentSchedule.findMany({
       where: {
+        // A row that's been rescheduled (rescheduledTo set) is superseded by
+        // its replacement — listing both would show the same day-slot twice.
+        // Single reschedule() refuses to touch COMPLETED rows, so those stay
+        // as the sole surviving row; bulkReschedule() copies COMPLETED rows
+        // forward too (same date/status) so their history isn't left behind
+        // on an otherwise-superseded old schedule — either way, only the
+        // latest (non-superseded) row for a given slot is shown here.
+        rescheduledTo: { none: {} },
         ...(studentId && { studentId }),
         ...(surahId && { surahId }),
         ...(status && { status: status as never }),
@@ -356,8 +364,11 @@ export class HifdhService {
     if (schedule.status === 'COMPLETED') {
       throw new ConflictException('A verified schedule cannot be rescheduled');
     }
+    // A single-row nudge (e.g. one missed day) doesn't start a new schedule
+    // generation — the replacement keeps the same scheduleNo as the row it
+    // replaces, unlike bulkReschedule() which bumps it.
     return this.prisma.surahHifdhStudentSchedule.create({
-      data: this.rescheduleRowData(schedule, new Date(dto.newDate), false),
+      data: this.rescheduleRowData(schedule, new Date(dto.newDate), false, schedule.scheduleNo),
     });
   }
 
@@ -372,6 +383,7 @@ export class HifdhService {
     schedule: Prisma.SurahHifdhStudentScheduleGetPayload<Record<string, never>>,
     scheduledDate: Date,
     preserveCompletion: boolean,
+    scheduleNo: number,
   ) {
     return {
       studentId: schedule.studentId,
@@ -392,6 +404,7 @@ export class HifdhService {
       difficultyLevel: schedule.difficultyLevel,
       priority: schedule.priority,
       scheduledDate,
+      scheduleNo,
       rescheduledFromId: schedule.id,
       ...(preserveCompletion
         ? {
@@ -442,6 +455,12 @@ export class HifdhService {
         });
         if (rows.length === 0) continue;
 
+        // A bulk reschedule starts a brand-new schedule generation for this
+        // student — every row it produces (shifted-pending or copied-
+        // completed) shares the same bumped scheduleNo, distinct from
+        // whatever generation they were previously part of.
+        const nextScheduleNo = Math.max(...rows.map((r) => r.scheduleNo)) + 1;
+
         const pendingRows = rows.filter((r) => r.status !== 'COMPLETED');
         const completedRows = rows.filter((r) => r.status === 'COMPLETED');
 
@@ -449,7 +468,12 @@ export class HifdhService {
           const deltaMs = new Date(newStartDate).getTime() - pendingRows[0].scheduledDate.getTime();
           for (const row of pendingRows) {
             await tx.surahHifdhStudentSchedule.create({
-              data: this.rescheduleRowData(row, new Date(row.scheduledDate.getTime() + deltaMs), false),
+              data: this.rescheduleRowData(
+                row,
+                new Date(row.scheduledDate.getTime() + deltaMs),
+                false,
+                nextScheduleNo,
+              ),
             });
             rescheduled++;
           }
@@ -457,7 +481,7 @@ export class HifdhService {
 
         for (const row of completedRows) {
           await tx.surahHifdhStudentSchedule.create({
-            data: this.rescheduleRowData(row, row.scheduledDate, true),
+            data: this.rescheduleRowData(row, row.scheduledDate, true, nextScheduleNo),
           });
           copied++;
         }

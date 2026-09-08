@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
-import { Copy, Pencil, Plus } from 'lucide-react';
+import { Copy, KeyRound, Pencil, Plus } from 'lucide-react';
 import { useAuthStore } from '../../store/auth';
 import { useBranchResource } from '../../hooks/useResource';
 import { api } from '../../lib/api';
@@ -64,7 +64,9 @@ const EMPTY_FORM: FormState = {
   guardianName: '',
   guardianPhone: '',
   status: 'ACTIVE',
-  createLogin: false,
+  // Every new student gets a login account — there's no longer an opt-out
+  // toggle in the form, this just keeps the create payload shape unchanged.
+  createLogin: true,
   username: '',
   password: '',
   email: '',
@@ -134,6 +136,38 @@ export function StudentsPage() {
     setForm((f) => ({ ...f, [name]: value }));
   };
 
+  // ---- Reset password ----
+  const [resetPasswordStudentId, setResetPasswordStudentId] = useState<string | null>(null);
+  const [resetPasswordValue, setResetPasswordValue] = useState('');
+  const [resetPasswordError, setResetPasswordError] = useState('');
+  const [resetPasswordSubmitting, setResetPasswordSubmitting] = useState(false);
+
+  const openResetPassword = (studentId: string) => {
+    setResetPasswordStudentId(studentId);
+    setResetPasswordValue('');
+    setResetPasswordError('');
+  };
+
+  const submitResetPassword = async () => {
+    if (!resetPasswordStudentId) return;
+    if (resetPasswordValue.length < 6) {
+      setResetPasswordError('Password must be at least 6 characters');
+      return;
+    }
+    setResetPasswordSubmitting(true);
+    try {
+      await api.post(`/branches/${activeBranchId}/students/${resetPasswordStudentId}/reset-password`, {
+        password: resetPasswordValue,
+      });
+      toast.success('Password reset');
+      setResetPasswordStudentId(null);
+    } catch {
+      toast.error('Failed to reset password');
+    } finally {
+      setResetPasswordSubmitting(false);
+    }
+  };
+
   const openCreate = () => {
     setEditing(null);
     setForm(EMPTY_FORM);
@@ -151,7 +185,7 @@ export function StudentsPage() {
       guardianName: record.guardianName ?? '',
       guardianPhone: record.guardianPhone ?? '',
       status: record.status,
-      createLogin: false,
+      createLogin: true,
       username: '',
       password: '',
       email: '',
@@ -172,10 +206,10 @@ export function StudentsPage() {
   const handleSubmit = async () => {
     const nextErrors: Record<string, string> = {};
     if (!form.name.trim()) nextErrors.name = 'Student name is required';
-    if (!editing && form.createLogin && !form.username.trim()) {
+    if (!editing && !form.username.trim()) {
       nextErrors.username = 'A username is required to create a login';
     }
-    if (!editing && form.createLogin && form.password && form.password.length < 6) {
+    if (!editing && form.password && form.password.length < 6) {
       nextErrors.password = 'Password must be at least 6 characters';
     }
     setErrors(nextErrors);
@@ -221,10 +255,10 @@ export function StudentsPage() {
           dateOfBirth: form.dateOfBirth || undefined,
           guardianName: form.guardianName || undefined,
           guardianPhone: form.guardianPhone || undefined,
-          createLogin: form.createLogin || undefined,
-          username: form.createLogin ? form.username : undefined,
-          password: form.createLogin && form.password ? form.password : undefined,
-          email: form.createLogin && form.email ? form.email : undefined,
+          createLogin: true,
+          username: form.username,
+          password: form.password || undefined,
+          email: form.email || undefined,
           halqaId: form.halqaId || undefined,
           hifdhStartDate: form.hifdhStartDate || undefined,
         } as unknown as Partial<Student>);
@@ -329,9 +363,21 @@ export function StudentsPage() {
           id: 'actions',
           header: '',
           cell: ({ row }) => (
-            <Button size="sm" variant="ghost" onClick={() => openEdit(row.original)}>
-              <Pencil className="h-4 w-4" />
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button size="sm" variant="ghost" onClick={() => openEdit(row.original)}>
+                <Pencil className="h-4 w-4" />
+              </Button>
+              {row.original.user && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  title="Reset password"
+                  onClick={() => openResetPassword(row.original.id)}
+                >
+                  <KeyRound className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
           ),
         },
       ]
@@ -442,34 +488,23 @@ export function StudentsPage() {
           </Field>
           {!editing && (
             <>
-              <label className="flex items-center gap-2">
-                <Checkbox
-                  checked={form.createLogin}
-                  onChange={(checked) => setField('createLogin', checked)}
+              <Field label="Username" required error={errors.username}>
+                <Input value={form.username} onChange={(e) => setField('username', e.target.value)} />
+              </Field>
+              <Field
+                label="Password"
+                hint="Leave blank to auto-generate a one-time password"
+                error={errors.password}
+              >
+                <Input
+                  type="password"
+                  value={form.password}
+                  onChange={(e) => setField('password', e.target.value)}
                 />
-                <span className="text-sm text-text-primary">Create login account</span>
-              </label>
-              {form.createLogin && (
-                <>
-                  <Field label="Username" required error={errors.username}>
-                    <Input value={form.username} onChange={(e) => setField('username', e.target.value)} />
-                  </Field>
-                  <Field
-                    label="Password"
-                    hint="Leave blank to auto-generate a one-time password"
-                    error={errors.password}
-                  >
-                    <Input
-                      type="password"
-                      value={form.password}
-                      onChange={(e) => setField('password', e.target.value)}
-                    />
-                  </Field>
-                  <Field label="Email (optional)">
-                    <Input value={form.email} onChange={(e) => setField('email', e.target.value)} />
-                  </Field>
-                </>
-              )}
+              </Field>
+              <Field label="Email (optional)">
+                <Input value={form.email} onChange={(e) => setField('email', e.target.value)} />
+              </Field>
             </>
           )}
           <Field
@@ -484,7 +519,7 @@ export function StudentsPage() {
               disabled={halqasQuery.isLoading}
             />
           </Field>
-          {!editing && form.halqaId && (
+          {!editing && (
             <Field label="Hifdh start date" hint="Defaults to today if left blank">
               <Input
                 type="date"
@@ -530,6 +565,34 @@ export function StudentsPage() {
           </Button>
         </div>
         {credentials?.note && <p className="text-sm text-text-muted">{credentials.note}</p>}
+      </Modal>
+
+      <Modal
+        open={Boolean(resetPasswordStudentId)}
+        title="Reset Password"
+        onClose={() => setResetPasswordStudentId(null)}
+        footer={
+          <>
+            <Button
+              variant="outline"
+              onClick={() => setResetPasswordStudentId(null)}
+              disabled={resetPasswordSubmitting}
+            >
+              Cancel
+            </Button>
+            <Button onClick={submitResetPassword} loading={resetPasswordSubmitting}>
+              Reset Password
+            </Button>
+          </>
+        }
+      >
+        <Field label="New password" required error={resetPasswordError}>
+          <Input
+            type="password"
+            value={resetPasswordValue}
+            onChange={(e) => setResetPasswordValue(e.target.value)}
+          />
+        </Field>
       </Modal>
 
       <ConfirmModal

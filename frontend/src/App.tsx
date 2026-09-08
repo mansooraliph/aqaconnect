@@ -30,6 +30,7 @@ import { StudentLeavesPage } from './pages/student-management/StudentLeavesPage'
 import { FeeTypesPage } from './pages/fees/FeeTypesPage';
 import { FeeStructuresPage } from './pages/fees/FeeStructuresPage';
 import { StudentFeeLedgerPage } from './pages/fees/StudentFeeLedgerPage';
+import { LessonsPage } from './pages/academic/LessonsPage';
 import { LessonsProgressPage } from './pages/academic/LessonsProgressPage';
 import { HalqasPage } from './pages/academic/HalqasPage';
 import { HifdhTrackingPage } from './pages/academic/HifdhTrackingPage';
@@ -85,6 +86,7 @@ function App() {
           <Route path="/fees/fee-structures" element={<FeeStructuresPage />} />
           <Route path="/fees/student-ledger" element={<StudentFeeLedgerPage />} />
 
+          <Route path="/academic/lessons" element={<LessonsPage />} />
           <Route path="/academic/lessons-progress" element={<LessonsProgressPage />} />
           <Route path="/academic/halqas" element={<HalqasPage />} />
           <Route path="/academic/hifdh-tracking" element={<HifdhTrackingPage />} />
