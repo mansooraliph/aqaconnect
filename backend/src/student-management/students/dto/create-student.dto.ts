@@ -1,9 +1,12 @@
 import { IsBoolean, IsDateString, IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class CreateStudentDto {
+  // Auto-generated server-side (STU001, STU002, ...) when omitted — see
+  // StudentsService.nextStudentCode.
+  @IsOptional()
   @IsString()
   @MinLength(1)
-  studentCode: string;
+  studentCode?: string;
 
   @IsString()
   @MinLength(1)
@@ -39,6 +42,14 @@ export class CreateStudentDto {
   @IsOptional()
   @IsString()
   username?: string;
+
+  // Optional when createLogin is true — if omitted, a one-time password is
+  // still auto-generated and returned in the response (see
+  // StudentsService.create), matching the pre-existing behavior.
+  @IsOptional()
+  @IsString()
+  @MinLength(6)
+  password?: string;
 
   // When provided, auto-generates this student's initial Hifdh schedule from
   // the HIFDH-stage SurahTargetSchedule rows, matching legacy's

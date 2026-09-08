@@ -26,6 +26,13 @@ interface AcademicYear {
   name: string;
 }
 
+interface LeaveType {
+  id: string;
+  name: string;
+  status: 'ACTIVE' | 'INACTIVE';
+  defaultDays: number | null;
+}
+
 type LeaveStatus = 'PENDING' | 'PRE_APPROVED' | 'APPROVED' | 'REJECTED' | 'CANCELLED';
 
 interface Leave {
@@ -49,6 +56,7 @@ interface LeaveQuota {
   id: string;
   employeeId: string;
   leaveType: string;
+  leaveTypeId: string | null;
   academicYearId: string | null;
   totalDays: number;
   usedDays: number;
@@ -349,13 +357,22 @@ function LeaveQuotasTab({
     value: y.id,
   }));
 
+  const leaveTypesQuery = useQuery({
+    queryKey: ['leave-types', activeBranchId],
+    queryFn: async () => (await api.get<LeaveType[]>(`/branches/${activeBranchId}/leave-types`)).data,
+    enabled: Boolean(activeBranchId),
+  });
+  const leaveTypeOptions = (leaveTypesQuery.data ?? [])
+    .filter((lt) => lt.status === 'ACTIVE')
+    .map((lt) => ({ label: lt.name, value: lt.id }));
+
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<LeaveQuota | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const createFields: FieldDef[] = [
     { name: 'employeeId', label: 'Employee', type: 'select', required: true, options: employeeOptions },
-    { name: 'leaveType', label: 'Leave type', type: 'text', required: true },
+    { name: 'leaveTypeId', label: 'Leave type', type: 'select', required: true, options: leaveTypeOptions },
     { name: 'academicYearId', label: 'Academic year', type: 'select', options: academicYearOptions },
     { name: 'totalDays', label: 'Total days', type: 'number', required: true },
   ];
@@ -382,7 +399,12 @@ function LeaveQuotasTab({
         await update.mutateAsync({ id: editing.id, payload: values });
         toast.success('Updated');
       } else {
-        await create.mutateAsync(values);
+        // CreateLeaveQuotaDto still wants a `leaveType` name string (the
+        // legacy free-text field) alongside the new leaveTypeId FK — derive
+        // it from the selected leave type rather than showing two fields.
+        const leaveTypeId = values.leaveTypeId as string;
+        const leaveType = leaveTypesQuery.data?.find((lt) => lt.id === leaveTypeId);
+        await create.mutateAsync({ ...values, leaveType: leaveType?.name ?? '' });
         toast.success('Created');
       }
       setModalOpen(false);
@@ -390,6 +412,40 @@ function LeaveQuotasTab({
       toast.error('Something went wrong');
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  // ---- Bulk-assign to all employees ----
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkSubmitting, setBulkSubmitting] = useState(false);
+
+  const bulkFields: FieldDef[] = [
+    { name: 'leaveTypeId', label: 'Leave type', type: 'select', required: true, options: leaveTypeOptions },
+    { name: 'academicYearId', label: 'Academic year', type: 'select', options: academicYearOptions },
+    {
+      name: 'totalDays',
+      label: 'Total days (overrides the leave type’s default)',
+      type: 'number',
+    },
+  ];
+
+  const handleBulkAssign = async (values: Record<string, unknown>) => {
+    setBulkSubmitting(true);
+    try {
+      const { data } = await api.post<{ created: number; skipped: number }>(
+        `/branches/${activeBranchId}/leave-quotas/bulk-assign`,
+        values,
+      );
+      toast.success(`Assigned to ${data.created} employee(s), ${data.skipped} already had a quota`);
+      setBulkOpen(false);
+      list.refetch();
+    } catch (err) {
+      const message =
+        (err as { response?: { data?: { message?: string } } })?.response?.data?.message ??
+        'Failed to bulk-assign';
+      toast.error(Array.isArray(message) ? message.join(', ') : message);
+    } finally {
+      setBulkSubmitting(false);
     }
   };
 
@@ -424,12 +480,17 @@ function LeaveQuotasTab({
 
   return (
     <>
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
         {canManage && (
-          <Button onClick={openCreate}>
-            <Plus size={16} />
-            Add
-          </Button>
+          <>
+            <Button variant="outline" onClick={() => setBulkOpen(true)}>
+              Assign to all employees
+            </Button>
+            <Button onClick={openCreate}>
+              <Plus size={16} />
+              Add
+            </Button>
+          </>
         )}
       </div>
       <p className="text-sm text-text-muted">
@@ -449,6 +510,16 @@ function LeaveQuotasTab({
         confirmLoading={submitting}
         onCancel={() => setModalOpen(false)}
         onSubmit={handleSubmit}
+        position="right"
+      />
+      <CrudFormModal
+        open={bulkOpen}
+        title="Assign Leave Quota to All Employees"
+        fields={bulkFields}
+        confirmLoading={bulkSubmitting}
+        onCancel={() => setBulkOpen(false)}
+        onSubmit={handleBulkAssign}
+        position="right"
       />
     </>
   );

@@ -20,6 +20,8 @@ interface CrudPageProps<T extends { id: string }> {
   canManage: boolean;
   /** Hides the header "Add" button/modal-create flow for screens where records are only created via import (e.g. Surahs). */
   hideAddButton?: boolean;
+  /** Add/edit form position: 'center' (default) or 'right' (full-height drawer). */
+  formPosition?: 'center' | 'right';
 }
 
 /**
@@ -40,6 +42,7 @@ export function CrudPage<T extends { id: string }>({
   extraActions,
   canManage,
   hideAddButton = false,
+  formPosition = 'center',
 }: CrudPageProps<T>) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<T | null>(null);
@@ -115,6 +118,7 @@ export function CrudPage<T extends { id: string }>({
         confirmLoading={submitting}
         onCancel={() => setModalOpen(false)}
         onSubmit={handleSubmit}
+        position={formPosition}
       />
     </div>
   );

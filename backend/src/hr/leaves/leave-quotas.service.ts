@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateLeaveQuotaDto } from './dto/create-leave-quota.dto';
 import { UpdateLeaveQuotaDto } from './dto/update-leave-quota.dto';
+import { BulkAssignLeaveQuotaDto } from './dto/bulk-assign-leave-quota.dto';
 
 @Injectable()
 export class LeaveQuotasService {
@@ -50,6 +51,7 @@ export class LeaveQuotasService {
       data: {
         employeeId: dto.employeeId,
         leaveType: dto.leaveType,
+        leaveTypeId: dto.leaveTypeId,
         academicYearId: dto.academicYearId,
         totalDays: dto.totalDays,
       },
@@ -65,5 +67,60 @@ export class LeaveQuotasService {
         ...(dto.usedDays !== undefined && { usedDays: dto.usedDays }),
       },
     });
+  }
+
+  /**
+   * Creates a LeaveQuota for every active employee in the branch who doesn't
+   * already have one for this leaveType + academicYearId — never overwrites
+   * an existing (possibly customized) quota. `totalDays` falls back to the
+   * LeaveType's own `defaultDays`; if neither is set, the request is rejected
+   * rather than silently assigning a 0-day quota.
+   */
+  async bulkAssign(branchId: string, dto: BulkAssignLeaveQuotaDto) {
+    const leaveType = await this.prisma.leaveType.findFirst({
+      where: { id: dto.leaveTypeId, branchId },
+    });
+    if (!leaveType) {
+      throw new BadRequestException('leaveTypeId must belong to this branch');
+    }
+
+    const totalDays = dto.totalDays ?? (leaveType.defaultDays ? Number(leaveType.defaultDays) : undefined);
+    if (totalDays === undefined) {
+      throw new BadRequestException(
+        'This leave type has no defaultDays configured — pass totalDays explicitly',
+      );
+    }
+
+    const employees = await this.prisma.employee.findMany({
+      where: { branchId, status: 'ACTIVE' },
+      select: { id: true },
+    });
+
+    const existing = await this.prisma.leaveQuota.findMany({
+      where: {
+        employeeId: { in: employees.map((e) => e.id) },
+        leaveTypeId: dto.leaveTypeId,
+        academicYearId: dto.academicYearId ?? null,
+      },
+      select: { employeeId: true },
+    });
+    const existingEmployeeIds = new Set(existing.map((q) => q.employeeId));
+
+    const toCreate = employees.filter((e) => !existingEmployeeIds.has(e.id));
+    if (toCreate.length === 0) {
+      return { created: 0, skipped: employees.length };
+    }
+
+    await this.prisma.leaveQuota.createMany({
+      data: toCreate.map((e) => ({
+        employeeId: e.id,
+        leaveType: leaveType.name,
+        leaveTypeId: leaveType.id,
+        academicYearId: dto.academicYearId,
+        totalDays,
+      })),
+    });
+
+    return { created: toCreate.length, skipped: existingEmployeeIds.size };
   }
 }

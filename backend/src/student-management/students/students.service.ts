@@ -58,12 +58,26 @@ export class StudentsService {
    * explicitly requested, with an auto-generated password, mirroring
    * AdmissionsService.approve's pattern for consistency.
    */
+  private async nextStudentCode(branchId: string): Promise<string> {
+    const students = await this.prisma.student.findMany({
+      where: { branchId },
+      select: { studentCode: true },
+    });
+    const maxNumber = students.reduce((max, s) => {
+      const match = /^STU(\d+)$/i.exec(s.studentCode);
+      return match ? Math.max(max, Number(match[1])) : max;
+    }, 0);
+    return `STU${String(maxNumber + 1).padStart(3, '0')}`;
+  }
+
   async create(branchId: string, dto: CreateStudentDto) {
+    const studentCode = dto.studentCode ?? (await this.nextStudentCode(branchId));
+
     const existingCode = await this.prisma.student.findFirst({
-      where: { branchId, studentCode: dto.studentCode },
+      where: { branchId, studentCode },
     });
     if (existingCode) {
-      throw new ConflictException(`A student with code ${dto.studentCode} already exists in this branch`);
+      throw new ConflictException(`A student with code ${studentCode} already exists in this branch`);
     }
 
     if (dto.createLogin && !dto.username) {
@@ -81,7 +95,7 @@ export class StudentsService {
       const student = await this.prisma.student.create({
         data: {
           branchId,
-          studentCode: dto.studentCode,
+          studentCode,
           name: dto.name,
           dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : undefined,
           guardianName: dto.guardianName,
@@ -101,8 +115,11 @@ export class StudentsService {
     const [userFirstName, ...userLastNameParts] = dto.name.trim().split(/\s+/);
     const userLastName = userLastNameParts.join(' ') || userFirstName;
 
-    const { student, temporaryPassword } = await this.prisma.$transaction(async (tx) => {
-      const temporaryPassword = crypto.randomBytes(9).toString('base64url');
+    // A client-supplied password is used as-is; otherwise one is generated
+    // and returned to the caller as before.
+    const temporaryPassword = dto.password ?? crypto.randomBytes(9).toString('base64url');
+
+    const { student } = await this.prisma.$transaction(async (tx) => {
       const passwordHash = await bcrypt.hash(temporaryPassword, SALT_ROUNDS);
       const user = await tx.user.create({
         data: {
@@ -119,7 +136,7 @@ export class StudentsService {
       const student = await tx.student.create({
         data: {
           branchId,
-          studentCode: dto.studentCode,
+          studentCode,
           name: dto.name,
           dateOfBirth: dto.dateOfBirth ? new Date(dto.dateOfBirth) : undefined,
           guardianName: dto.guardianName,
@@ -136,7 +153,7 @@ export class StudentsService {
         await tx.userRole.create({ data: { userId: user.id, roleId: studentRole.id } });
       }
 
-      return { student, temporaryPassword };
+      return { student };
     });
 
     // Outside the transaction, matching legacy: a schedule-generation failure
@@ -148,7 +165,9 @@ export class StudentsService {
     return {
       student,
       temporaryPassword,
-      note: 'Share this one-time password with the student/guardian out-of-band. It is not stored or recoverable.',
+      note: dto.password
+        ? 'Login created with the password you provided.'
+        : 'Share this one-time password with the student/guardian out-of-band. It is not stored or recoverable.',
     };
   }
 

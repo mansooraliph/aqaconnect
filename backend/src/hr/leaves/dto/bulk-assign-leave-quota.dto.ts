@@ -1,23 +1,17 @@
 import { IsNumber, IsOptional, IsString, Min, MinLength } from 'class-validator';
 
-export class CreateLeaveQuotaDto {
+export class BulkAssignLeaveQuotaDto {
   @IsString()
   @MinLength(1)
-  employeeId: string;
-
-  @IsString()
-  @MinLength(1)
-  leaveType: string;
+  leaveTypeId: string;
 
   @IsOptional()
   @IsString()
   academicYearId?: string;
 
+  /** Overrides the LeaveType's own defaultDays for this run. Required if the LeaveType has no defaultDays set. */
   @IsOptional()
-  @IsString()
-  leaveTypeId?: string;
-
   @IsNumber()
   @Min(0)
-  totalDays: number;
+  totalDays?: number;
 }

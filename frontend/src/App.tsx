@@ -18,6 +18,7 @@ import { DepartmentsDesignationsPage } from './pages/hr/DepartmentsDesignationsP
 import { EmployeesPage } from './pages/hr/EmployeesPage';
 import { TeachersPage } from './pages/hr/TeachersPage';
 import { LeavesPage } from './pages/hr/LeavesPage';
+import { LeaveTypesPage } from './pages/hr/LeaveTypesPage';
 import { AttendancePage } from './pages/hr/AttendancePage';
 import { HolidaysPage } from './pages/hr/HolidaysPage';
 import { RecognitionPage } from './pages/hr/RecognitionPage';
@@ -69,6 +70,7 @@ function App() {
           <Route path="/hr/employees" element={<EmployeesPage />} />
           <Route path="/hr/teachers" element={<TeachersPage />} />
           <Route path="/hr/leaves" element={<LeavesPage />} />
+          <Route path="/hr/leave-types" element={<LeaveTypesPage />} />
           <Route path="/hr/attendance" element={<AttendancePage />} />
           <Route path="/hr/holidays" element={<HolidaysPage />} />
           <Route path="/hr/recognition" element={<RecognitionPage />} />

@@ -78,6 +78,7 @@ export const MODULES: ModuleDef[] = [
       { key: '/hr/employees', label: 'Employees', permission: 'hr.employees.view' },
       { key: '/hr/teachers', label: 'Teachers', permission: 'hr.teachers.view' },
       { key: '/hr/leaves', label: 'Leaves & Quotas', permission: 'hr.leaves.view' },
+      { key: '/hr/leave-types', label: 'Leave Types', permission: 'hr.leave_types.view' },
       { key: '/hr/attendance', label: 'Attendance', permission: 'hr.attendance.view' },
       { key: '/hr/holidays', label: 'Holidays', permission: 'hr.holidays.view' },
       { key: '/hr/recognition', label: 'Appreciations & Awards', permission: 'hr.appreciations.view' },

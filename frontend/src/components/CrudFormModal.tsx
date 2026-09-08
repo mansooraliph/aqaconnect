@@ -28,6 +28,8 @@ interface CrudFormModalProps {
   confirmLoading?: boolean;
   onCancel: () => void;
   onSubmit: (values: Record<string, unknown>) => void;
+  /** 'center' (default) or 'right' (full-height drawer). */
+  position?: 'center' | 'right';
 }
 
 function emptyValueFor(field: FieldDef): unknown {
@@ -45,6 +47,7 @@ export function CrudFormModal({
   confirmLoading,
   onCancel,
   onSubmit,
+  position = 'center',
 }: CrudFormModalProps) {
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -101,6 +104,7 @@ export function CrudFormModal({
       open={open}
       title={title}
       onClose={onCancel}
+      position={position}
       footer={
         <>
           <Button variant="outline" onClick={onCancel} disabled={confirmLoading}>

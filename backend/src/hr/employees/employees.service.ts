@@ -167,6 +167,26 @@ export class EmployeesService {
         }
       }
 
+      // Auto-provision this branch's default leave quotas (Casual Leave,
+      // etc. — whichever LeaveTypes have a configured defaultDays) so a new
+      // employee doesn't start with zero leave balance. Scoped to the
+      // branch's current academic year when one is set.
+      const activeLeaveTypes = await tx.leaveType.findMany({
+        where: { branchId, status: 'ACTIVE', defaultDays: { not: null } },
+      });
+      if (activeLeaveTypes.length > 0) {
+        const branchSettings = await tx.branchSettings.findUnique({ where: { branchId } });
+        await tx.leaveQuota.createMany({
+          data: activeLeaveTypes.map((lt) => ({
+            employeeId: created.id,
+            leaveType: lt.name,
+            leaveTypeId: lt.id,
+            academicYearId: branchSettings?.academicYearId ?? undefined,
+            totalDays: lt.defaultDays!,
+          })),
+        });
+      }
+
       return created;
     });
 

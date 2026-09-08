@@ -658,13 +658,17 @@ model Designation {
 // new mobile-app-api endpoints (#17 leaves/types, #21 my-leaves breakdown)
 // get real ids/names to key off.
 model LeaveType {
-  id        String       @id @default(cuid())
-  branchId  String
-  branch    Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  name      String
-  status    ActiveStatus @default(ACTIVE)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+  id          String        @id @default(cuid())
+  branchId    String
+  branch      Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  name        String
+  status      ActiveStatus  @default(ACTIVE)
+  // Annual quota (in days) auto-applied to a new employee's LeaveQuota on
+  // creation, and used as the default when bulk-assigning quotas to
+  // existing employees. Null = not auto-assigned.
+  defaultDays Decimal?      @db.Decimal(5, 2)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 
   leaves      Leave[]
   leaveQuotas LeaveQuota[]

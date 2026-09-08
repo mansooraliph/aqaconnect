@@ -26,6 +26,7 @@ import { DesignationsModule } from './hr/designations/designations.module';
 import { EmployeesModule } from './hr/employees/employees.module';
 import { TeachersModule } from './hr/teachers/teachers.module';
 import { LeavesModule } from './hr/leaves/leaves.module';
+import { LeaveTypesModule } from './hr/leave-types/leave-types.module';
 import { AttendanceModule } from './hr/attendance/attendance.module';
 import { HolidaysModule } from './hr/holidays/holidays.module';
 import { AppreciationsModule } from './hr/appreciations/appreciations.module';
@@ -96,6 +97,7 @@ import { MobileAnnouncementsModule } from './mobile-app-api/announcements/announ
     EmployeesModule,
     TeachersModule,
     LeavesModule,
+    LeaveTypesModule,
     AttendanceModule,
     HolidaysModule,
     AppreciationsModule,

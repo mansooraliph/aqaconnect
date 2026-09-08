@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@ne
 import { LeaveQuotasService } from './leave-quotas.service';
 import { CreateLeaveQuotaDto } from './dto/create-leave-quota.dto';
 import { UpdateLeaveQuotaDto } from './dto/update-leave-quota.dto';
+import { BulkAssignLeaveQuotaDto } from './dto/bulk-assign-leave-quota.dto';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { BranchScopeGuard } from '../../common/guards/branch-scope.guard';
@@ -21,6 +22,12 @@ export class LeaveQuotasController {
   @RequirePermission('hr.leave_quotas.manage')
   create(@Param('branchId') branchId: string, @Body() dto: CreateLeaveQuotaDto) {
     return this.service.create(branchId, dto);
+  }
+
+  @Post('bulk-assign')
+  @RequirePermission('hr.leave_quotas.manage')
+  bulkAssign(@Param('branchId') branchId: string, @Body() dto: BulkAssignLeaveQuotaDto) {
+    return this.service.bulkAssign(branchId, dto);
   }
 
   @Patch(':id')

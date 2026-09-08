@@ -74,6 +74,8 @@ const PERMISSIONS: { key: string; module: string; description: string }[] = [
   { key: 'hr.leaves.approve', module: 'hr', description: 'Approve/reject leave requests' },
   { key: 'hr.leave_quotas.view', module: 'hr', description: 'View leave quotas' },
   { key: 'hr.leave_quotas.manage', module: 'hr', description: 'Manage leave quotas' },
+  { key: 'hr.leave_types.view', module: 'hr', description: 'View leave types' },
+  { key: 'hr.leave_types.manage', module: 'hr', description: 'Manage leave types' },
   { key: 'hr.attendance.view', module: 'hr', description: 'View attendance records' },
   { key: 'hr.attendance.manage', module: 'hr', description: 'Mark/edit attendance' },
   { key: 'hr.holidays.view', module: 'hr', description: 'View holidays' },

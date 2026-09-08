@@ -49,6 +49,7 @@ interface FormState {
   status: 'ACTIVE' | 'INACTIVE';
   createLogin: boolean;
   username: string;
+  password: string;
   email: string;
   // Assigning a Halqa at creation auto-generates the student's initial Hifdh
   // schedule from the HIFDH-stage Target Schedule rows (see HifdhService).
@@ -65,6 +66,7 @@ const EMPTY_FORM: FormState = {
   status: 'ACTIVE',
   createLogin: false,
   username: '',
+  password: '',
   email: '',
   halqaId: '',
   hifdhStartDate: '',
@@ -151,6 +153,7 @@ export function StudentsPage() {
       status: record.status,
       createLogin: false,
       username: '',
+      password: '',
       email: '',
       halqaId: currentHalqaId,
       hifdhStartDate: '',
@@ -168,10 +171,12 @@ export function StudentsPage() {
 
   const handleSubmit = async () => {
     const nextErrors: Record<string, string> = {};
-    if (!editing && !form.studentCode.trim()) nextErrors.studentCode = 'Student code is required';
     if (!form.name.trim()) nextErrors.name = 'Student name is required';
     if (!editing && form.createLogin && !form.username.trim()) {
       nextErrors.username = 'A username is required to create a login';
+    }
+    if (!editing && form.createLogin && form.password && form.password.length < 6) {
+      nextErrors.password = 'Password must be at least 6 characters';
     }
     setErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
@@ -211,13 +216,14 @@ export function StudentsPage() {
         // read-model, so this doesn't fit useBranchResource's
         // Partial<Student> typing.
         const data = await create.mutateAsync({
-          studentCode: form.studentCode,
+          studentCode: form.studentCode.trim() || undefined,
           name: form.name,
           dateOfBirth: form.dateOfBirth || undefined,
           guardianName: form.guardianName || undefined,
           guardianPhone: form.guardianPhone || undefined,
           createLogin: form.createLogin || undefined,
           username: form.createLogin ? form.username : undefined,
+          password: form.createLogin && form.password ? form.password : undefined,
           email: form.createLogin && form.email ? form.email : undefined,
           halqaId: form.halqaId || undefined,
           hifdhStartDate: form.hifdhStartDate || undefined,
@@ -405,7 +411,7 @@ export function StudentsPage() {
               <Input value={form.studentCode} readOnly disabled />
             </Field>
           ) : (
-            <Field label="Student code" required error={errors.studentCode}>
+            <Field label="Student code" hint="Leave blank to auto-generate" error={errors.studentCode}>
               <Input
                 value={form.studentCode}
                 onChange={(e) => setField('studentCode', e.target.value)}
@@ -447,6 +453,17 @@ export function StudentsPage() {
                 <>
                   <Field label="Username" required error={errors.username}>
                     <Input value={form.username} onChange={(e) => setField('username', e.target.value)} />
+                  </Field>
+                  <Field
+                    label="Password"
+                    hint="Leave blank to auto-generate a one-time password"
+                    error={errors.password}
+                  >
+                    <Input
+                      type="password"
+                      value={form.password}
+                      onChange={(e) => setField('password', e.target.value)}
+                    />
                   </Field>
                   <Field label="Email (optional)">
                     <Input value={form.email} onChange={(e) => setField('email', e.target.value)} />
