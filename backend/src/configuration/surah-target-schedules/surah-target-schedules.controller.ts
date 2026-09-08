@@ -6,14 +6,17 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  NotFoundException,
   Param,
   Patch,
   Post,
+  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { SurahTargetSchedulesService } from './surah-target-schedules.service';
 import { CreateSurahTargetScheduleDto } from './dto/create-surah-target-schedule.dto';
 import { UpdateSurahTargetScheduleDto } from './dto/update-surah-target-schedule.dto';
@@ -46,7 +49,23 @@ export class SurahTargetSchedulesController {
       throw new BadRequestException('file is required (multipart field name "file")');
     }
     const rows = await parseSurahTargetScheduleWorkbook(file.buffer);
-    return this.service.importRows(rows);
+    const result = await this.service.importRows(rows);
+    await this.service.saveImportedWorkbook(file.buffer, file.originalname);
+    return result;
+  }
+
+  @Get('import/file')
+  @RequirePermission('configuration.target_schedules.view')
+  async downloadImportedFile(@Res() res: Response) {
+    const file = await this.service.getImportedWorkbook();
+    if (!file) {
+      throw new NotFoundException('No file has been imported yet');
+    }
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': `attachment; filename="${file.originalName}"`,
+    });
+    res.send(file.buffer);
   }
 
   @Get(':id')

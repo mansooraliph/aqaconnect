@@ -40,6 +40,8 @@ interface DataTableProps<T> {
   isLoading?: boolean;
   /** Omit for simple client-side pagination over `data` (default page size 20). */
   pagination?: TablePagination | false;
+  /** Initial rows-per-page for client-side pagination (i.e. when `pagination` is omitted). Default 20. */
+  defaultPageSize?: number;
   onRowClick?: (row: T) => void;
   emptyMessage?: string;
   searchable?: boolean;
@@ -72,6 +74,7 @@ export function DataTable<T>({
   data,
   isLoading,
   pagination,
+  defaultPageSize = 20,
   onRowClick,
   emptyMessage = 'No results found',
   searchable,
@@ -80,7 +83,7 @@ export function DataTable<T>({
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
   const [localPage, setLocalPage] = useState(1);
-  const [localLimit, setLocalLimit] = useState(20);
+  const [localLimit, setLocalLimit] = useState(defaultPageSize);
 
   const isLocal = pagination === undefined;
 

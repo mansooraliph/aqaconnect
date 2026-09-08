@@ -286,7 +286,7 @@ export function SurahAyahPageLinesPage() {
           options={juzOptions}
         />
       </div>
-      <DataTable<PageLineRow> columns={columns} data={linesQuery.data ?? []} isLoading={linesQuery.isLoading} />
+      <DataTable<PageLineRow> columns={columns} data={linesQuery.data ?? []} isLoading={linesQuery.isLoading} defaultPageSize={100} />
       <CrudFormModal
         open={modalOpen}
         title={editing ? 'Edit Page Line' : 'Add Page Line'}

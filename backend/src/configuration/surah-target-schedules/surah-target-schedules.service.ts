@@ -1,4 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { promises as fs } from 'fs';
+import * as path from 'path';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateSurahTargetScheduleDto } from './dto/create-surah-target-schedule.dto';
 import { UpdateSurahTargetScheduleDto } from './dto/update-surah-target-schedule.dto';
@@ -6,7 +8,39 @@ import type { ImportRow } from './surah-target-schedules.import';
 
 @Injectable()
 export class SurahTargetSchedulesService {
+  // Fixed path so a re-import overwrites the previously stored workbook
+  // rather than accumulating versions; survives redeploys since it lives
+  // outside dist/.
+  private readonly importStorageDir = path.join(process.cwd(), 'storage', 'surah-target-schedules');
+  private readonly importFilePath = path.join(this.importStorageDir, 'latest.xlsx');
+  private readonly importMetaPath = path.join(this.importStorageDir, 'latest.meta.json');
+
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Persists the raw uploaded workbook (as-is) so it can be downloaded
+   * later. Called only after a successful import, so a bad upload never
+   * clobbers the last good backup.
+   */
+  async saveImportedWorkbook(buffer: Buffer, originalName: string) {
+    await fs.mkdir(this.importStorageDir, { recursive: true });
+    await fs.writeFile(this.importFilePath, buffer);
+    await fs.writeFile(
+      this.importMetaPath,
+      JSON.stringify({ originalName, importedAt: new Date().toISOString() }),
+    );
+  }
+
+  /** Returns the last-imported workbook's raw bytes and original filename, or null if none was imported yet. */
+  async getImportedWorkbook(): Promise<{ buffer: Buffer; originalName: string } | null> {
+    try {
+      const buffer = await fs.readFile(this.importFilePath);
+      const meta = JSON.parse(await fs.readFile(this.importMetaPath, 'utf8')) as { originalName: string };
+      return { buffer, originalName: meta.originalName };
+    } catch {
+      return null;
+    }
+  }
 
   /** Flat list of every day-row in the single master schedule, in import/insertion order. */
   list() {

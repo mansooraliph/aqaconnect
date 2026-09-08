@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
-import { Loader2, Plus, Trash2, Upload } from 'lucide-react';
+import { FileDown, Loader2, Plus, Trash2, Upload } from 'lucide-react';
 import { Button } from '../../components/ui/Button';
 import { DataTable } from '../../components/ui/DataTable';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
@@ -147,6 +147,31 @@ export function TargetSchedulesPage() {
       toast.error(Array.isArray(message) ? message.join(', ') : message);
     } finally {
       setImporting(false);
+    }
+  };
+
+  // ---- Download the originally imported workbook (as uploaded) ----
+  const [downloadingImport, setDownloadingImport] = useState(false);
+
+  const handleDownloadImportedFile = async () => {
+    setDownloadingImport(true);
+    try {
+      const response = await api.get('/surah-target-schedules/import/file', { responseType: 'blob' });
+      const disposition = response.headers['content-disposition'] as string | undefined;
+      const filename = disposition?.match(/filename="(.+)"/)?.[1] ?? 'target-schedule-import.xlsx';
+      const url = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response?.status;
+      toast.error(status === 404 ? 'No file has been imported yet' : 'Failed to download imported file');
+    } finally {
+      setDownloadingImport(false);
     }
   };
 
@@ -382,24 +407,31 @@ export function TargetSchedulesPage() {
             schedules. Edit any cell directly.
           </p>
         </div>
-        {canManage && (
-          <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={() => setImportOpen(true)}>
-              <Upload className="h-4 w-4" />
-              Import
-            </Button>
-            <Button onClick={() => setModalOpen(true)}>
-              <Plus className="h-4 w-4" />
-              Add
-            </Button>
-          </div>
-        )}
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={handleDownloadImportedFile} loading={downloadingImport}>
+            <FileDown className="h-4 w-4" />
+            Download imported file
+          </Button>
+          {canManage && (
+            <>
+              <Button variant="outline" onClick={() => setImportOpen(true)}>
+                <Upload className="h-4 w-4" />
+                Import
+              </Button>
+              <Button onClick={() => setModalOpen(true)}>
+                <Plus className="h-4 w-4" />
+                Add
+              </Button>
+            </>
+          )}
+        </div>
       </div>
       <div className="flex flex-wrap items-end gap-3">
         <FilterSelect
           width="w-56"
           label="Surah"
           placeholder="All Surahs"
+          placeholderSelectable
           value={filterSurahId}
           onChange={setFilterSurahId}
           options={surahOptions}
@@ -408,12 +440,13 @@ export function TargetSchedulesPage() {
           width="w-40"
           label="Type"
           placeholder="All types"
+          placeholderSelectable
           value={filterType}
           onChange={setFilterType}
           options={typeOptions}
         />
       </div>
-      <DataTable<TargetScheduleRow> columns={columns} data={rows} isLoading={list.isLoading} />
+      <DataTable<TargetScheduleRow> columns={columns} data={rows} isLoading={list.isLoading} defaultPageSize={100} />
       <CrudFormModal
         open={modalOpen}
         title="Add Target Schedule Row"
