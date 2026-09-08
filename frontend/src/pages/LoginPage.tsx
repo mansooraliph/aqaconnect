@@ -58,7 +58,7 @@ export function LoginPage() {
     <div className="flex min-h-screen items-center justify-center bg-bg-page">
       <div className="w-full max-w-[380px] rounded-card border border-border bg-white p-8 shadow-sm">
         <h1 className="mb-6 text-center text-xl font-bold text-text-primary">
-          Academic Management Portal
+          AQA Management Portal
         </h1>
         {error && (
           <div className="mb-4 rounded-card border border-red/30 bg-red/10 px-3 py-2 text-sm text-red">
