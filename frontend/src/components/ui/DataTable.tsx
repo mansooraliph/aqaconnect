@@ -47,15 +47,6 @@ interface DataTableProps<T> {
   searchable?: boolean;
   /** Extra classes applied to a row's <tr>, e.g. a background tint for flagged rows. */
   rowClassName?: (row: T) => string | undefined;
-  /**
-   * Pins the pagination footer to the bottom of the table's nearest
-   * scrolling ancestor instead of scrolling away with the rows. Only makes
-   * sense when the table lives inside a fixed-height scroll container (a
-   * Modal/drawer body) — on a normal page (where the whole page scrolls)
-   * this would make the footer float mid-page instead of sitting after the
-   * last row, so it defaults to off.
-   */
-  stickyFooter?: boolean;
 }
 
 /** Build a page-number list with ellipsis, e.g. [1,'…',4,5,6,'…',12]. */
@@ -88,7 +79,6 @@ export function DataTable<T>({
   emptyMessage = 'No results found',
   searchable,
   rowClassName,
-  stickyFooter = false,
 }: DataTableProps<T>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = useState('');
@@ -148,17 +138,8 @@ export function DataTable<T>({
       : baseOptions;
 
   return (
-    <div className="rounded-card border border-border bg-white">
-      {/*
-        This inner wrapper (not the outer one) owns overflow-hidden, so it
-        only clips the header/rows — the outer div stays overflow-visible.
-        A sticky pagination footer needs every ancestor up to the real
-        scroll container (e.g. a Modal's overflow-y-auto body) to have
-        overflow:visible; putting overflow-hidden here instead of on the
-        outer div was silently breaking that for tables inside modals.
-      */}
-      <div className="overflow-hidden rounded-t-card">
-        {searchable && (
+    <div className="overflow-hidden rounded-card border border-border bg-white">
+      {searchable && (
         <div className="border-b border-border p-3">
           <div className="relative max-w-xs">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-faint" />
@@ -253,15 +234,9 @@ export function DataTable<T>({
           </tbody>
         </table>
       </div>
-      </div>
 
       {effectivePagination && effectivePagination.total > 0 && (
-        <div
-          className={cn(
-            'flex flex-wrap items-center justify-between gap-3 rounded-b-card border-t border-border bg-white px-4 py-3 text-sm',
-            stickyFooter && 'sticky bottom-0 z-10',
-          )}
-        >
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3 text-sm">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             {showSelector && (
               <label className="flex items-center gap-2">

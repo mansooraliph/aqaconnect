@@ -560,6 +560,21 @@ function StudentScheduleModal({
 
   const rows = scheduleQuery.data ?? [];
 
+  // ---- Pagination (rendered via Modal's footer slot, not DataTable's own
+  // footer, so it's a true sibling outside the scrollable body — never
+  // overlapping rows the way a sticky-inside-scroll footer would) ----
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(100);
+
+  useEffect(() => {
+    setPage(1);
+  }, [student?.studentId, filterSurahId, filterStatus, filterScheduleType, filterFromDay, filterToDay, filterFromDate, filterToDate]);
+
+  const totalPages = Math.max(1, Math.ceil(rows.length / limit));
+  const pagedRows = rows.slice((page - 1) * limit, page * limit);
+  const pageFrom = rows.length === 0 ? 0 : (page - 1) * limit + 1;
+  const pageTo = Math.min(page * limit, rows.length);
+
   // ---- Bulk mark progress ----
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkMarking, setBulkMarking] = useState(false);
@@ -649,6 +664,54 @@ function StudentScheduleModal({
     },
   ];
 
+  // Rendered via Modal's `footer` slot — a true sibling of the scrollable
+  // body, not something layered on top of it, so it can never end up
+  // overlapping rows the way a sticky-inside-scroll footer did.
+  const paginationFooter = rows.length > 0 && (
+    <div className="flex w-full flex-wrap items-center justify-between gap-3 text-sm">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <label className="flex items-center gap-2">
+          <span className="whitespace-nowrap text-[13px] text-text-muted">Rows per page:</span>
+          <select
+            value={limit}
+            onChange={(e) => {
+              setLimit(Number(e.target.value));
+              setPage(1);
+            }}
+            className="h-8 w-[72px] rounded-card border border-border bg-white px-2 text-[13px] text-text-primary focus:border-blue focus:outline-none focus:ring-1 focus:ring-blue"
+          >
+            {[10, 20, 50, 100].map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span className="whitespace-nowrap text-[13px] text-text-muted">
+          Showing {pageFrom}-{pageTo} of {rows.length}
+        </span>
+      </div>
+      <div className="flex items-center gap-3">
+        <span className="hidden whitespace-nowrap text-[13px] text-text-muted sm:inline">
+          Page {page} of {totalPages}
+        </span>
+        <div className="flex items-center gap-1">
+          <Button size="sm" variant="ghost" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+            Prev
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={page >= totalPages}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            Next
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <Modal
       open={Boolean(student)}
@@ -656,6 +719,7 @@ function StudentScheduleModal({
       onClose={onClose}
       position="right"
       width="w-3/4"
+      footer={paginationFooter || undefined}
     >
       <div className="mb-3 flex flex-nowrap items-end gap-3 overflow-x-auto">
         <div className="w-40 shrink-0">
@@ -742,10 +806,10 @@ function StudentScheduleModal({
       )}
       <DataTable<HifdhSchedule>
         columns={columns}
-        data={rows}
+        data={pagedRows}
         isLoading={scheduleQuery.isLoading}
         rowClassName={(row) => scheduleTypeRowTone(row.scheduleType)}
-        stickyFooter
+        pagination={false}
       />
     </Modal>
   );
