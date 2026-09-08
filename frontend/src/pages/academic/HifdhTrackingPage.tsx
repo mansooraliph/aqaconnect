@@ -393,13 +393,15 @@ function BulkRescheduleModal({
   onClose: () => void;
   onSuccess: () => void;
 }) {
+  const todayStr = () => new Date().toISOString().slice(0, 10);
+
   const [fromDate, setFromDate] = useState<string>('');
-  const [newStartDate, setNewStartDate] = useState<string>('');
+  const [newStartDate, setNewStartDate] = useState<string>(todayStr());
   const [submitting, setSubmitting] = useState(false);
 
   const reset = () => {
     setFromDate('');
-    setNewStartDate('');
+    setNewStartDate(todayStr());
   };
 
   const handleClose = () => {
@@ -408,17 +410,14 @@ function BulkRescheduleModal({
   };
 
   const submit = async () => {
-    if (!students || students.length === 0 || !newStartDate) {
-      toast.error('Choose a new start date');
-      return;
-    }
+    if (!students || students.length === 0) return;
     setSubmitting(true);
     try {
       const { data } = await api.post<{ rescheduled: number; copied: number }>(
         `/branches/${activeBranchId}/hifdh-schedules/bulk-reschedule`,
         {
           studentIds: students.map((s) => s.studentId),
-          newStartDate,
+          newStartDate: newStartDate || todayStr(),
           fromDate: fromDate || undefined,
         },
       );
@@ -475,7 +474,7 @@ function BulkRescheduleModal({
         <Field label="Only shift schedules from date (optional)">
           <Input type="date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} />
         </Field>
-        <Field label="New start date" required>
+        <Field label="New start date" hint="Defaults to today if left blank">
           <Input type="date" value={newStartDate} onChange={(e) => setNewStartDate(e.target.value)} />
         </Field>
       </div>
