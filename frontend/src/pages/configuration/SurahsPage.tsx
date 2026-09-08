@@ -111,6 +111,7 @@ export function SurahsPage() {
         columns={columns}
         fields={FIELDS}
         canManage={hasPermission('configuration.surahs.manage')}
+        hideAddButton
         onCreate={(values) => create.mutateAsync(values)}
         onUpdate={(id, values) => update.mutateAsync({ id, payload: values })}
         extraActions={

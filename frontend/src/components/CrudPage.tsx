@@ -18,6 +18,8 @@ interface CrudPageProps<T extends { id: string }> {
   onUpdate: (id: string, values: Record<string, unknown>) => Promise<unknown>;
   extraActions?: React.ReactNode;
   canManage: boolean;
+  /** Hides the header "Add" button/modal-create flow for screens where records are only created via import (e.g. Surahs). */
+  hideAddButton?: boolean;
 }
 
 /**
@@ -37,6 +39,7 @@ export function CrudPage<T extends { id: string }>({
   onUpdate,
   extraActions,
   canManage,
+  hideAddButton = false,
 }: CrudPageProps<T>) {
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<T | null>(null);
@@ -92,7 +95,7 @@ export function CrudPage<T extends { id: string }>({
         actions={
           <>
             {extraActions}
-            {canManage && (
+            {canManage && !hideAddButton && (
               <Button onClick={openCreate}>
                 <Plus className="h-4 w-4" />
                 Add
