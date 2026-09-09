@@ -71,6 +71,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { MobileNotificationsModule } from './mobile-app-api/notifications/notifications.module';
 import { AnnouncementsModule } from './communication/announcements/announcements.module';
 import { MobileAnnouncementsModule } from './mobile-app-api/announcements/announcements.module';
+import { LegalModule } from './legal/legal.module';
 
 @Module({
   imports: [
@@ -142,6 +143,7 @@ import { MobileAnnouncementsModule } from './mobile-app-api/announcements/announ
     MobileNotificationsModule,
     AnnouncementsModule,
     MobileAnnouncementsModule,
+    LegalModule,
   ],
   controllers: [AppController],
   providers: [AppService, { provide: APP_GUARD, useClass: JwtAuthGuard }],
