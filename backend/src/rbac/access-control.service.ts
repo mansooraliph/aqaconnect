@@ -66,68 +66,52 @@ export class AccessControlService {
    * catalog is always present, `false` unless mapped to a granted aqa_v2
    * permission key below.
    *
-   * Modules with no aqa_v2 equivalent (`admin_halqa`, `attendance_punch`,
-   * and the `apply_for_ot` action) are always `false` — there is nothing in
-   * aqa_v2 to derive them from.
+   * Modules with no aqa_v2 equivalent (`admin_halqa`, `attendance_punch`)
+   * are always `false` — there is nothing in aqa_v2 to derive them from.
    * `own_type` strings are static per-module placeholders copied from the
    * legacy system's own defaults, not derived from any aqa_v2 data — aqa_v2
    * has no equivalent "own vs all" scoping concept to compute them from.
+   *
+   * teachers/students/lessons/hifdh/halqa/admin_halqa only expose `view`;
+   * leaves only exposes `create`/`edit` — the other legacy CRUD actions for
+   * these modules were dropped by request, not derived from aqa_v2 data.
    */
   buildLegacyPermissions(granted: Set<string>): Record<string, Record<string, boolean | string>> {
     const has = (key: string) => granted.has(key);
 
     return {
       teachers: {
-        create: has('hr.teachers.manage'),
         view: has('hr.teachers.view'),
         own_type: 'all',
-        edit: has('hr.teachers.manage'),
-        delete: has('hr.teachers.manage'),
       },
       students: {
-        create: has('student_management.students.manage'),
         view: has('student_management.students.view'),
-        edit: has('student_management.students.manage'),
-        delete: has('student_management.students.manage'),
-        assign: has('student_management.students.manage'),
         own_type: 'all',
       },
       attendance: {
         attendance_summary: has('hr.attendance.view'),
         leaves: has('hr.leaves.view'),
-        apply_for_ot: false,
         leave_approval: has('hr.leaves.approve'),
         attendance_approval: has('hr.attendance.manage'),
       },
       attendance_punch: { Normal: false, Photo: false, Face: false, QR: false },
       leaves: {
         create: has('hr.leaves.apply'),
-        view: has('hr.leaves.view'),
-        own_type: 'own',
         edit: has('hr.leaves.approve'),
-        delete: false,
+        own_type: 'own',
       },
       halqa: {
-        create: has('academic.halqas.manage'),
         view: has('academic.halqas.view'),
-        edit: has('academic.halqas.manage'),
-        delete: has('academic.halqas.manage'),
         own_type: 'all',
       },
-      admin_halqa: { view: false, own_type: 'all', create: false, edit: false, delete: false },
+      admin_halqa: { view: false, own_type: 'all' },
       lessons: {
-        create: has('academic.lessons.manage'),
         view: has('academic.lessons.view'),
-        edit: has('academic.lessons.manage'),
-        delete: has('academic.lessons.manage'),
         own_type: 'all',
       },
       hifdh: {
         view: has('academic.hifdh_schedules.view') || has('academic.hifdh_progress.view'),
         own_type: 'all',
-        create: has('academic.hifdh_schedules.manage'),
-        edit: has('academic.hifdh_progress.mark'),
-        delete: false,
       },
     };
   }
