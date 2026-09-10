@@ -61,43 +61,54 @@ export class AccessControlService {
 
   /**
    * Builds the exact legacy source system's per-module permission shape
-   * (module -> { action: boolean, own_type?: string }), for clients that
-   * still expect that structure. Every module and action from the legacy
-   * catalog is always present, `false` unless mapped to a granted aqa_v2
-   * permission key below.
+   * (module -> { action: boolean, own_type?: string } | boolean), for
+   * clients that still expect that structure.
    *
-   * Modules with no aqa_v2 equivalent (`admin_halqa`, `attendance_punch`)
-   * are always `false` — there is nothing in aqa_v2 to derive them from.
-   * `own_type` strings are static per-module placeholders copied from the
-   * legacy system's own defaults, not derived from any aqa_v2 data — aqa_v2
-   * has no equivalent "own vs all" scoping concept to compute them from.
+   * Wired from the `mobile_api.*.access` keys — the same permission set
+   * managed on the "Mobile App API > Permissions" admin screen
+   * (RbacController.listMobilePermissions / updateMobilePermissions) —
+   * rather than the general RBAC keys, so toggling a role's mobile module
+   * access there is the one place that controls what this block reports.
    *
-   * teachers/students/lessons/hifdh/halqa/admin_halqa are flattened to a
-   * plain boolean (their only surviving action, `view`) rather than an
-   * object; leaves only exposes `create`. The other legacy CRUD actions for
-   * these modules were dropped by request, not derived from aqa_v2 data.
+   * Every `mobile_api.*.access` module is represented here, including ones
+   * with no legacy-named counterpart (academic_classes, student_leaves,
+   * student_surah_progress, surah_schedules, dashboard, profile,
+   * hr_lookups, notifications, announcements) — added so nothing grantable
+   * on that admin screen is silently missing from this response.
+   *
+   * `admin_halqa` and `attendance_punch` have no `mobile_api.*` equivalent
+   * and stay hardcoded `false` — nothing to derive them from.
    */
   buildLegacyPermissions(granted: Set<string>): Record<string, Record<string, boolean | string> | boolean> {
     const has = (key: string) => granted.has(key);
 
     return {
-      teachers: has('hr.teachers.view'),
-      students: has('student_management.students.view'),
+      teachers: has('mobile_api.teachers.access'),
+      students: has('mobile_api.students.access'),
       attendance: {
-        attendance_summary: has('hr.attendance.view'),
-        leaves: has('hr.leaves.view'),
-        leave_approval: has('hr.leaves.approve'),
-        attendance_approval: has('hr.attendance.manage'),
+        attendance_summary: has('mobile_api.attendance.access'),
+        leaves: has('mobile_api.leaves.access'),
+        leave_approval: has('mobile_api.leaves.access'),
+        attendance_approval: has('mobile_api.attendance.access'),
       },
       attendance_punch: { Normal: false, Photo: false, Face: false, QR: false },
       leaves: {
-        create: has('hr.leaves.apply'),
+        create: has('mobile_api.leaves.access'),
         own_type: 'own',
       },
-      halqa: has('academic.halqas.view'),
+      halqa: has('mobile_api.halqas.access'),
       admin_halqa: false,
-      lessons: has('academic.lessons.view'),
-      hifdh: has('academic.hifdh_schedules.view') || has('academic.hifdh_progress.view'),
+      lessons: has('mobile_api.lesson_content.access'),
+      hifdh: has('mobile_api.surah_schedules.access') || has('mobile_api.student_surah_progress.access'),
+      academic_classes: has('mobile_api.academic_classes.access'),
+      student_leaves: has('mobile_api.student_leaves.access'),
+      student_surah_progress: has('mobile_api.student_surah_progress.access'),
+      surah_schedules: has('mobile_api.surah_schedules.access'),
+      dashboard: has('mobile_api.dashboard.access'),
+      profile: has('mobile_api.profile.access'),
+      hr_lookups: has('mobile_api.hr_lookups.access'),
+      notifications: has('mobile_api.notifications.access'),
+      announcements: has('mobile_api.announcements.access'),
     };
   }
 }

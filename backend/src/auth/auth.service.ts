@@ -105,8 +105,6 @@ export class AuthService {
       image: null, // placeholder: no avatar storage yet
       position: employee?.designation?.name ?? null,
       userType: employee?.employeeType ?? null,
-      no_of_task: 0, // placeholder: task tracking not implemented yet
-      percentage: 0, // placeholder: task tracking not implemented yet
       branchId: user.branchId,
       isGlobal: accessContext.isGlobal,
       roles: accessContext.roles,
@@ -169,8 +167,6 @@ export class AuthService {
       image: null, // placeholder: no avatar storage yet
       position: employee?.designation?.name ?? null,
       userType: employee?.employeeType ?? null,
-      no_of_task: 0, // placeholder: task tracking not implemented yet
-      percentage: 0, // placeholder: task tracking not implemented yet
       branchId: user.branchId,
       isGlobal: accessContext.isGlobal,
       roles: accessContext.roles,
