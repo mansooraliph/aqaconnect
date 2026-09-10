@@ -56,6 +56,7 @@ export class HalqasController {
   }
 
   @Post('store')
+  @RequirePermission('mobile_api.halqas.create')
   async store(@Req() req: AuthedRequest, @Body() dto: StoreHalqaDto) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     try {

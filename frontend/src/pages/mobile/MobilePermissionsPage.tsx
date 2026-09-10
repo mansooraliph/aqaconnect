@@ -41,7 +41,8 @@ const TAB_LABELS: Record<AppTab, string> = {
   other: 'Other',
 };
 
-const TAB_ORDER: AppTab[] = ['dashboard', 'schedules', 'lessons', 'halqa', 'attendance', 'profile', 'other'];
+/** 'other' is intentionally excluded — those permissions aren't tied to a specific app tab and aren't editable here. */
+const TAB_ORDER: AppTab[] = ['dashboard', 'schedules', 'lessons', 'halqa', 'attendance', 'profile'];
 
 /** apiCatalog module keys use dashes (e.g. "student-leaves"); permission keys use underscores. */
 function derivePermissionKey(catalogKey: string): string {
@@ -60,18 +61,35 @@ export function MobilePermissionsPage() {
     enabled: canView,
   });
 
+  const ADMIN_ROLE_NAMES = ['Super Admin', 'Branch Admin', 'Management'];
+
+  const sortedRoles = useMemo(() => {
+    const roles = data?.roles ?? [];
+    const admin = ADMIN_ROLE_NAMES.map((name) => roles.find((r) => r.name === name)).filter(
+      (r): r is MobileRole => !!r,
+    );
+    const staff = roles.filter((r) => !ADMIN_ROLE_NAMES.includes(r.name));
+    return { admin, staff };
+  }, [data?.roles]);
+
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<AppTab>('dashboard');
 
   const modules = useMemo(
     () =>
-      MOBILE_API_CATALOG.filter((m) => !['auth', 'profile', 'surah-schedules'].includes(m.key)).map((m) => ({
-        key: m.key,
-        label: m.label,
-        tab: m.tab ?? ('other' as AppTab),
-        permissionKey: m.permissionKey ?? derivePermissionKey(m.key),
-      })),
+      MOBILE_API_CATALOG.filter(
+        (m) => !['auth', 'profile', 'surah-schedules'].includes(m.key) && m.tab && m.tab !== 'other',
+      )
+        .map((m) => ({
+          key: m.key,
+          label: m.label,
+          tab: m.tab as AppTab,
+          section: m.section,
+          order: m.order ?? 0,
+          permissionKey: m.permissionKey ?? derivePermissionKey(m.key),
+        }))
+        .sort((a, b) => a.order - b.order),
     [],
   );
 
@@ -162,29 +180,42 @@ export function MobilePermissionsPage() {
                 </td>
               </tr>
             )}
-            {data?.roles.map((role) => {
-              const grantedCount = modules.filter((m) => role.grantedKeys.includes(m.permissionKey)).length;
-              return (
-                <tr key={role.id} className="border-b border-border last:border-0">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-text-primary">{role.name}</span>
-                      <Badge tone={role.scope === 'GLOBAL' ? 'purple' : 'blue'}>{role.scope}</Badge>
-                    </div>
+            {([
+              ['Admin Roles', sortedRoles.admin],
+              ['Other Staff Roles', sortedRoles.staff],
+            ] as const).flatMap(([heading, roles]) => {
+              if (roles.length === 0) return [];
+              return [
+                <tr key={`heading-${heading}`}>
+                  <td colSpan={canManage ? 3 : 2} className="bg-table-alt px-4 py-2 text-xs font-semibold uppercase tracking-wide text-text-faint">
+                    {heading}
                   </td>
-                  <td className="px-4 py-3 text-text-muted">
-                    {grantedCount} of {modules.length}
-                  </td>
-                  {canManage && (
-                    <td className="px-4 py-3 text-right">
-                      <Button size="sm" variant="outline" onClick={() => openEditor(role)}>
-                        <Pencil className="h-3.5 w-3.5" />
-                        Edit
-                      </Button>
-                    </td>
-                  )}
-                </tr>
-              );
+                </tr>,
+                ...roles.map((role) => {
+                  const grantedCount = modules.filter((m) => role.grantedKeys.includes(m.permissionKey)).length;
+                  return (
+                    <tr key={role.id} className="border-b border-border last:border-0">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-text-primary">{role.name}</span>
+                          <Badge tone={role.scope === 'GLOBAL' ? 'purple' : 'blue'}>{role.scope}</Badge>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-text-muted">
+                        {grantedCount} of {modules.length}
+                      </td>
+                      {canManage && (
+                        <td className="px-4 py-3 text-right">
+                          <Button size="sm" variant="outline" onClick={() => openEditor(role)}>
+                            <Pencil className="h-3.5 w-3.5" />
+                            Edit
+                          </Button>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                }),
+              ];
             })}
           </tbody>
         </table>
@@ -235,19 +266,31 @@ export function MobilePermissionsPage() {
             </div>
 
             <div className="flex flex-col gap-1">
-              {(modulesByTab.get(activeTab) ?? []).map((m) => (
-                <label
-                  key={m.key}
-                  className="flex items-center justify-between gap-3 rounded-card px-2 py-2 hover:bg-table-alt"
-                >
-                  <span className="text-sm text-text-primary">{m.label}</span>
-                  <Checkbox
-                    checked={draft.has(m.permissionKey)}
-                    onChange={() => toggle(m.permissionKey)}
-                    disabled={!canManage}
-                  />
-                </label>
-              ))}
+              {(() => {
+                const items = modulesByTab.get(activeTab) ?? [];
+                let lastSection: string | undefined;
+                return items.map((m) => {
+                  const showHeading = m.section && m.section !== lastSection;
+                  lastSection = m.section;
+                  return (
+                    <div key={m.key}>
+                      {showHeading && (
+                        <p className="mt-3 px-2 pb-1 text-xs font-semibold uppercase tracking-wide text-text-faint first:mt-0">
+                          {m.section}
+                        </p>
+                      )}
+                      <label className="flex items-center justify-between gap-3 rounded-card px-2 py-2 hover:bg-table-alt">
+                        <span className="text-sm text-text-primary">{m.label}</span>
+                        <Checkbox
+                          checked={draft.has(m.permissionKey)}
+                          onChange={() => toggle(m.permissionKey)}
+                          disabled={!canManage}
+                        />
+                      </label>
+                    </div>
+                  );
+                });
+              })()}
             </div>
           </div>
         )}

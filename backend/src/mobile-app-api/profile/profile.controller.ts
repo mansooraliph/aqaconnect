@@ -41,6 +41,7 @@ export class ProfileController {
   // just 2xx) for this call — Nest's default 201 for POST would read as a
   // failure to it.
   @Post('edit-profile')
+  @RequirePermission('mobile_api.profile.edit')
   @HttpCode(HttpStatus.OK)
   @UseInterceptors(FileInterceptor('image'))
   async edit(@Req() req: AuthedRequest, @Body() dto: EditProfileDto) {

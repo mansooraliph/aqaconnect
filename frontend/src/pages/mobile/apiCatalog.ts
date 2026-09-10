@@ -26,6 +26,10 @@ export interface ApiModule {
    * Falls back to the derived `mobile_api.{key with _}.access` when absent.
    */
   permissionKey?: string;
+  /** Sub-heading to group this module under within its tab in the role-edit modal (e.g. "Quick Actions", "Manage"). Omit for an ungrouped/standalone item. */
+  section?: string;
+  /** Explicit sort position within its tab (and section) in the role-edit modal. Lower first; ties keep catalog order. Defaults to 0. */
+  order?: number;
 }
 
 export const MOBILE_API_CATALOG: ApiModule[] = [
@@ -140,6 +144,8 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     key: 'academic-classes',
     label: 'Classes',
     tab: 'dashboard',
+    section: 'Manage',
+    order: 6,
     basePath: '/app/academic/classes',
     description: 'Create/update academic classes from the mobile app. Response mirrors the legacy Eloquent model dump verbatim, including the added_by/last_updated_by audit relation.',
     endpoints: [
@@ -198,6 +204,8 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     key: 'teachers',
     label: 'Teachers',
     tab: 'dashboard',
+    section: 'Manage',
+    order: 5,
     basePath: '/app/teachers',
     description: 'Teacher account CRUD. Responses use the "Record saved/updated/deleted successfully." wording and status/message envelope verbatim from the legacy controller.',
     endpoints: [
@@ -327,10 +335,10 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   },
   {
     key: 'halqas',
-    label: 'Halqas',
+    label: 'Halqa List',
     tab: 'halqa',
     basePath: '/app/halqas',
-    description: 'Halqa (study circle) CRUD, roster, and student assignment. Dates use legacy\'s d-m-Y / d-m-Y H:i string formats, not ISO.',
+    description: 'Halqa (study circle) list/roster, update/delete, and student assignment — adding a new Halqa is a separate permission (Add Halqa, below). Dates use legacy\'s d-m-Y / d-m-Y H:i string formats, not ISO.',
     endpoints: [
       {
         method: 'GET',
@@ -527,6 +535,15 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     ],
   },
   {
+    key: 'halqas-create',
+    label: 'Add Halqa',
+    tab: 'halqa',
+    basePath: '/app/halqas/store',
+    description: 'Add-Halqa button, split from Halqa List above so creating new Halqas can be granted independently of general Halqa management.',
+    permissionKey: 'mobile_api.halqas.create',
+    endpoints: [],
+  },
+  {
     key: 'admin-halqa',
     label: 'Admin Halqa',
     tab: 'halqa',
@@ -668,6 +685,8 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     key: 'students',
     label: 'Students',
     tab: 'dashboard',
+    section: 'Manage',
+    order: 4,
     basePath: '/app/students',
     description: 'Student profile CRUD, academic reference lookups, and per-student exam records. Fields with no equivalent data in this schema (mother_name, image_url, custom_fields, roll_no, etc.) are present in the response shape but always null, matching legacy\'s field names exactly.',
     endpoints: [
@@ -961,6 +980,8 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     key: 'students-activity',
     label: 'Manage Students Activity',
     tab: 'dashboard',
+    section: 'Quick Actions',
+    order: 2,
     basePath: '/app/students',
     description:
       "Dashboard Quick Action gating the student-activity and activity-report endpoints " +
@@ -972,6 +993,8 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     key: 'students-reports',
     label: 'Student Reports',
     tab: 'dashboard',
+    section: 'Quick Actions',
+    order: 3,
     basePath: '/app/students',
     description: "Dashboard Quick Action gating the admission-year-reports endpoint.",
     permissionKey: 'mobile_api.students.reports.access',
@@ -981,6 +1004,8 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     key: 'student-surah-progress',
     label: "Today's Progress",
     tab: 'dashboard',
+    section: 'Quick Actions',
+    order: 1,
     basePath: '/app/student-surah-progress',
     description: 'Per-ayah-range Surah memorization progress ledger (New/Juzh/Old Lesson types, grading, verification, Juzuh/page-range tracking) — separate from the Surah Schedules module below. Legacy field names (badge classes, added_by/last_updated_by/verified_by, remark_file_url) are all present verbatim.',
     endpoints: [
@@ -1495,9 +1520,19 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     ],
   },
   {
+    key: 'profile-edit',
+    label: 'Edit Profile',
+    tab: 'profile',
+    basePath: '/app/edit-profile',
+    description: 'Edit own profile — split from viewing the Profile module above so edit access can be granted independently.',
+    permissionKey: 'mobile_api.profile.edit',
+    endpoints: [],
+  },
+  {
     key: 'dashboard',
     label: 'Summary Card',
     tab: 'dashboard',
+    order: 0,
     basePath: '/app/teacher-dashboard',
     description: "Summary counts for the caller's own Halqas/students, plus a branch announcements feed (a new Announcement model — no admin CRUD UI yet, rows are seeded/managed directly). Also gates /app/admin-dashboard (branch-wide teacher/student/Halqa/attendance/progress summary for admin roles). Unlike legacy, the response shape is consistent even when the teacher has no Halqas (user/announcements are always present).",
     endpoints: [

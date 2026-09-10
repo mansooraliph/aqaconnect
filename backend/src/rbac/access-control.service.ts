@@ -102,6 +102,9 @@ export class AccessControlService {
       announcements: has('mobile_api.announcements.access'),
       attendance: {
         hasAny: has('mobile_api.tab_attendance.access'),
+        // Not implemented yet — no mobile mark-your-own-attendance flow
+        // exists in aqa_v2. Always false until that's built.
+        mark_attendance: false,
         attendance_summary: has('mobile_api.attendance.access'),
         leave_approval: has('mobile_api.leaves.approve'),
         attendance_approval: has('mobile_api.attendance.approve'),

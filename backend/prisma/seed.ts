@@ -18,7 +18,8 @@ const PERMISSIONS: { key: string; module: string; description: string }[] = [
   // Mobile App API — per-module access for the real /app/* endpoints the mobile client calls.
   { key: 'mobile_api.academic_classes.access', module: 'mobile_api', description: 'Mobile app: create/update academic classes' },
   { key: 'mobile_api.teachers.access', module: 'mobile_api', description: 'Mobile app: teacher account CRUD' },
-  { key: 'mobile_api.halqas.access', module: 'mobile_api', description: 'Mobile app: Halqa CRUD, roster, student assignment' },
+  { key: 'mobile_api.halqas.access', module: 'mobile_api', description: 'Mobile app: view Halqa list/roster, update/delete/assign students' },
+  { key: 'mobile_api.halqas.create', module: 'mobile_api', description: 'Mobile app: add a new Halqa' },
   { key: 'mobile_api.admin_halqa.access', module: 'mobile_api', description: 'Mobile app: Admin Halqa tab (cross-branch/all-Halqa admin view)' },
   { key: 'mobile_api.students.access', module: 'mobile_api', description: 'Mobile app: student profile CRUD and exam records' },
   { key: 'mobile_api.students.activity.access', module: 'mobile_api', description: 'Mobile app: Manage Students Activity dashboard shortcut (student-activity, activity-report)' },
@@ -28,7 +29,8 @@ const PERMISSIONS: { key: string; module: string; description: string }[] = [
   { key: 'mobile_api.student_surah_progress.access', module: 'mobile_api', description: 'Mobile app: per-ayah Surah progress ledger' },
   { key: 'mobile_api.surah_schedules.access', module: 'mobile_api', description: "Mobile app: a student's Hifdh schedule/progress summary" },
   { key: 'mobile_api.dashboard.access', module: 'mobile_api', description: "Mobile app: teacher dashboard summary" },
-  { key: 'mobile_api.profile.access', module: 'mobile_api', description: 'Mobile app: own profile' },
+  { key: 'mobile_api.profile.access', module: 'mobile_api', description: 'Mobile app: view own profile' },
+  { key: 'mobile_api.profile.edit', module: 'mobile_api', description: 'Mobile app: edit own profile' },
   { key: 'mobile_api.lesson_content.access', module: 'mobile_api', description: 'Mobile app: lesson stages/sub-stages/lessons (read-only content)' },
   { key: 'mobile_api.hr_lookups.access', module: 'mobile_api', description: 'Mobile app: departments/designations lookups' },
   { key: 'mobile_api.tab_attendance.access', module: 'mobile_api', description: 'Mobile app: master switch for the Attendance tab itself (My Attendance/My Leaves always show once granted)' },
@@ -161,7 +163,7 @@ const ROLES: {
   {
     name: 'Management',
     scope: RoleScope.GLOBAL,
-    description: 'Cross-branch read + reporting; no RBAC/branch CRUD by default',
+    description: 'Cross-branch read + reporting; no RBAC/branch CRUD by default. Treated as "admin" for the mobile app (full mobile_api.* grant), same as Branch Admin/Super Admin.',
     permissionKeys: [
       'system.branches.view',
       'system.users.view',
@@ -171,6 +173,7 @@ const ROLES: {
           ['configuration', 'hr', 'student_management', 'fees', 'academic', 'devices'].includes(p.module) &&
           p.key.endsWith('.view'),
       ).map((p) => p.key),
+      ...PERMISSIONS.filter((p) => p.module === 'mobile_api').map((p) => p.key),
     ],
   },
   {
@@ -239,6 +242,7 @@ const ROLES: {
       'academic.exam_results.enter',
       'academic.dashboard.view',
       'mobile_api.halqas.access',
+      'mobile_api.halqas.create',
       'mobile_api.students.access',
       'mobile_api.students.activity.access',
       'mobile_api.students.reports.access',
@@ -248,6 +252,7 @@ const ROLES: {
       'mobile_api.surah_schedules.access',
       'mobile_api.dashboard.access',
       'mobile_api.profile.access',
+      'mobile_api.profile.edit',
       'mobile_api.lesson_content.access',
       'mobile_api.tab_attendance.access',
       'mobile_api.attendance.access',
@@ -269,6 +274,7 @@ const ROLES: {
       'mobile_api.student_surah_progress.access',
       'mobile_api.surah_schedules.access',
       'mobile_api.profile.access',
+      'mobile_api.profile.edit',
       'mobile_api.notifications.access',
       'mobile_api.announcements.access',
       'mobile_api.tab_attendance.access',
