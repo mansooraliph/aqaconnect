@@ -9,7 +9,7 @@ export interface ApiEndpoint {
 }
 
 /** Groups a module under one of the mobile app's own tabs, for the RBAC role-edit modal's sub-tab layout. */
-export type AppTab = 'dashboard' | 'schedules' | 'lessons' | 'halqa' | 'attendance' | 'profile' | 'other';
+export type AppTab = 'dashboard' | 'schedules' | 'lessons' | 'halqa' | 'hifdh' | 'attendance' | 'profile' | 'other';
 
 export interface ApiModule {
   key: string;
@@ -350,6 +350,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     key: 'halqas',
     label: 'Halqa List',
     tab: 'halqa',
+    tiers: ['admin', 'teacher'],
     basePath: '/app/halqas',
     description: 'Halqa (study circle) list/roster, update/delete, and student assignment — adding a new Halqa is a separate permission (Add Halqa, below). Dates use legacy\'s d-m-Y / d-m-Y H:i string formats, not ISO.',
     endpoints: [
@@ -555,6 +556,16 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     basePath: '/app/halqas/store',
     description: 'Add-Halqa button, split from Halqa List above so creating new Halqas can be granted independently of general Halqa management.',
     permissionKey: 'mobile_api.halqas.create',
+    endpoints: [],
+  },
+  {
+    key: 'hifdh',
+    label: 'Hifdh',
+    tab: 'hifdh',
+    tiers: ['student'],
+    basePath: '/app/surah-schedules',
+    description: "Student's Hifdh tab (replaces the Halqa tab for the Student role) — same permission as Surah Schedules / My Schedule.",
+    permissionKey: 'mobile_api.surah_schedules.access',
     endpoints: [],
   },
   {

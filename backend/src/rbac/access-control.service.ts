@@ -103,6 +103,9 @@ export class AccessControlService {
         halqa_list: has('mobile_api.halqas.access'),
         add_halqa: has('mobile_api.halqas.create'),
       },
+      hifdh: {
+        hifdh: has('mobile_api.surah_schedules.access'),
+      },
       attendance: {
         mark_attendance: false,
         employee_attendance: has('mobile_api.attendance.access'),

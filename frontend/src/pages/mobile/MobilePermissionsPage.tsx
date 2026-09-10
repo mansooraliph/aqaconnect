@@ -36,13 +36,14 @@ const TAB_LABELS: Record<AppTab, string> = {
   schedules: 'Schedules',
   lessons: 'Lessons',
   halqa: 'Halqa',
+  hifdh: 'Hifdh',
   attendance: 'Attendance',
   profile: 'Profile',
   other: 'Other',
 };
 
 /** 'other' is intentionally excluded — those permissions aren't tied to a specific app tab and aren't editable here. */
-const TAB_ORDER: AppTab[] = ['dashboard', 'schedules', 'lessons', 'halqa', 'attendance', 'profile'];
+const TAB_ORDER: AppTab[] = ['dashboard', 'schedules', 'lessons', 'halqa', 'hifdh', 'attendance', 'profile'];
 
 /** apiCatalog module keys use dashes (e.g. "student-leaves"); permission keys use underscores. */
 function derivePermissionKey(catalogKey: string): string {
