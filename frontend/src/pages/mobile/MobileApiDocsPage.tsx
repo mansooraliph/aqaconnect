@@ -185,30 +185,25 @@ export function MobileApiDocsPage() {
         />
       </div>
 
-      <div className="flex flex-col gap-2">
-        {DOCS_GROUP_ORDER.filter((group) => modulesByGroup.get(group)?.length).map((group) => (
-          <div key={group} className="flex flex-wrap items-center gap-1 border-b border-border pb-2">
-            <span className="mr-2 text-xs font-semibold uppercase tracking-wide text-text-faint">{group}</span>
-            {(modulesByGroup.get(group) ?? []).map((mod) => {
-              const isActive = mod.key === activeKey;
-              return (
-                <button
-                  key={mod.key}
-                  onClick={() => setActiveKey(mod.key)}
-                  className={cn(
-                    'flex items-center gap-2 rounded-card px-3 py-1.5 text-sm font-medium transition-colors',
-                    isActive
-                      ? 'bg-blue text-white'
-                      : 'bg-table-alt text-text-muted hover:text-text-primary',
-                  )}
-                >
-                  {mod.label}
-                  <Badge tone={isActive ? 'purple' : 'gray'}>{mod.endpoints.length}</Badge>
-                </button>
-              );
-            })}
-          </div>
-        ))}
+      <div className="flex flex-wrap items-center gap-1 border-b border-border pb-2">
+        {DOCS_GROUP_ORDER.flatMap((group) => modulesByGroup.get(group) ?? []).map((mod) => {
+          const isActive = mod.key === activeKey;
+          return (
+            <button
+              key={mod.key}
+              onClick={() => setActiveKey(mod.key)}
+              className={cn(
+                'flex items-center gap-2 rounded-card px-3 py-1.5 text-sm font-medium transition-colors',
+                isActive
+                  ? 'bg-blue text-white'
+                  : 'bg-table-alt text-text-muted hover:text-text-primary',
+              )}
+            >
+              {mod.label}
+              <Badge tone={isActive ? 'purple' : 'gray'}>{mod.endpoints.length}</Badge>
+            </button>
+          );
+        })}
       </div>
 
       {activeModule && (

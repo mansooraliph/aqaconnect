@@ -13,6 +13,10 @@ export interface FieldDef {
   type: FieldType;
   required?: boolean;
   options?: { label: string; value: string | number }[];
+  /** Shown as a disabled first option for 'select' fields (e.g. "Unassigned")
+   * so an unset value can't visually land on whichever real option happens
+   * to be first in the list. */
+  placeholder?: string;
   /** Only shown/submitted when editing an existing record (e.g. a `status`
    * field whose Create DTO doesn't accept it — new records default server-side). */
   editOnly?: boolean;
@@ -157,6 +161,7 @@ export function CrudFormModal({
               {field.type === 'select' && (
                 <Select
                   options={field.options ?? []}
+                  placeholder={field.placeholder}
                   value={values[field.name] as string | number | undefined ?? ''}
                   onChange={(e) => setField(field.name, e.target.value)}
                 />

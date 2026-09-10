@@ -361,7 +361,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   },
   {
     key: 'halqas',
-    label: 'Halqa List',
+    label: 'Halqa',
     docsGroup: 'Halqa & Teachers',
     tab: 'halqa',
     tiers: ['admin', 'teacher'],
@@ -1450,14 +1450,27 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     ],
   },
   {
-    key: 'lesson-stages',
-    label: 'Lesson Stages',
+    key: 'lessons',
+    label: 'Lessons',
     docsGroup: 'Academic',
     tab: 'lessons',
-    basePath: '/app/lesson-stages',
-    description: 'Read-only curriculum reference content (stages + their sub-stages) for the mobile lesson browser. Not branch-scoped — shared config, same as the admin Configuration module. Gated by the same permission as Lessons below (both live under LessonContentController).',
+    basePath: '/app/lessons',
+    description: "Read-only lesson list (filterable by stage/sub-stage — branch-scoped, wraps the same LessonsService the admin Academic module uses; legacy's two separate query-param routes, stage_id and sub_stage_id, are the same endpoint here) plus the curriculum reference content (stages + their ordered sub-stages) for the mobile lesson browser. Stages aren't branch-scoped — shared config, same as the admin Configuration module. Both live under LessonContentController, gated by the same permission.",
     permissionKey: 'mobile_api.lesson_content.access',
     endpoints: [
+      {
+        method: 'GET',
+        path: '/app/lessons',
+        summary: 'List lessons (filters: stage_id, sub_stage_id)',
+        legacyNumbers: [36, 37],
+        request: `?stage_id=cmropdpt40002r1x2fphvgel2`,
+        response: `{
+  "status": "success",
+  "data": [
+    { "id": "cmlesson001abcxyz45", "branchId": "cmronw3bh000ug78u36n8enm1", "lessonStageId": "cmropdpt40002r1x2fphvgel2", "lessonSubStageId": null, "title": "Noorani Qaida - Lesson 1", "description": null, "sortOrder": 0, "status": "ACTIVE" }
+  ]
+}`,
+      },
       {
         method: 'GET',
         path: '/app/lesson-stages',
@@ -1493,30 +1506,6 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     "subStages": [],
     "_count": { "lessons": 0 }
   }
-}`,
-      },
-    ],
-  },
-  {
-    key: 'lessons',
-    label: 'Lessons',
-    docsGroup: 'Academic',
-    tab: 'lessons',
-    basePath: '/app/lessons',
-    description: "Read-only lesson list, filterable by stage/sub-stage — branch-scoped, wraps the same LessonsService the admin Academic module uses. Legacy's two separate query-param routes (stage_id, sub_stage_id) are the same endpoint here.",
-    permissionKey: 'mobile_api.lesson_content.access',
-    endpoints: [
-      {
-        method: 'GET',
-        path: '/app/lessons',
-        summary: 'List lessons (filters: stage_id, sub_stage_id)',
-        legacyNumbers: [36, 37],
-        request: `?stage_id=cmropdpt40002r1x2fphvgel2`,
-        response: `{
-  "status": "success",
-  "data": [
-    { "id": "cmlesson001abcxyz45", "branchId": "cmronw3bh000ug78u36n8enm1", "lessonStageId": "cmropdpt40002r1x2fphvgel2", "lessonSubStageId": null, "title": "Noorani Qaida - Lesson 1", "description": null, "sortOrder": 0, "status": "ACTIVE" }
-  ]
 }`,
       },
     ],

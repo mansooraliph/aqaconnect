@@ -112,12 +112,24 @@ export function HalqasPage() {
 
   const createFields: FieldDef[] = [
     { name: 'name', label: 'Name', type: 'text', required: true },
-    { name: 'teacherId', label: 'Teacher', type: 'select', options: teacherOptions },
+    {
+      name: 'teacherId',
+      label: 'Teacher',
+      type: 'select',
+      options: teacherOptions,
+      placeholder: 'Unassigned',
+    },
   ];
 
   const editFields: FieldDef[] = [
     { name: 'name', label: 'Name', type: 'text', required: true },
-    { name: 'teacherId', label: 'Teacher', type: 'select', options: teacherOptions },
+    {
+      name: 'teacherId',
+      label: 'Teacher',
+      type: 'select',
+      options: teacherOptions,
+      placeholder: 'Unassigned',
+    },
     {
       name: 'status',
       label: 'Status',
