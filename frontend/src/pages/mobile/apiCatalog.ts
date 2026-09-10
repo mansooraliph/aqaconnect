@@ -546,7 +546,6 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'admin-halqa',
     label: 'Admin Halqa',
-    tab: 'halqa',
     basePath: '/app/halqas',
     description:
       "Gates the mobile app's Admin Halqa tab (the Admin role's cross-Halqa admin view) — not a separate " +
