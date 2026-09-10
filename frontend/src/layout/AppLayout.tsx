@@ -12,6 +12,7 @@ import {
   DollarSign,
   BookOpen,
   Smartphone,
+  Fingerprint,
   ChevronLeft,
   LogOut,
   ChevronDown,
@@ -127,6 +128,16 @@ export const MODULES: ModuleDef[] = [
       { key: '/mobile/permissions', label: 'Permissions', permission: 'system.mobile_api.view' },
       { key: '/mobile/api-docs', label: 'API Documentation', permission: 'system.mobile_api.view' },
       { key: '/mobile/usage-history', label: 'Usage History', permission: 'system.mobile_api.view' },
+    ],
+  },
+  {
+    key: 'devices',
+    label: 'Devices',
+    icon: Fingerprint,
+    items: [
+      { key: '/devices/biometric-devices', label: 'Biometric Devices', permission: 'devices.biometric_devices.view' },
+      { key: '/devices/biometric-enrollments', label: 'Enrollments', permission: 'devices.biometric_devices.view' },
+      { key: '/devices/biometric-transactions', label: 'Attendance Punches', permission: 'devices.biometric_devices.view' },
     ],
   },
 ];

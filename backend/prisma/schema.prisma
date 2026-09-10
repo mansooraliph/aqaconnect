@@ -80,6 +80,10 @@ model Branch {
 
   notifications Notification[]
 
+  biometricDevices      BiometricDevice[]
+  biometricEnrollments  BiometricEnrollment[]
+  biometricTransactions BiometricTransaction[]
+
   @@index([isActive])
 }
 
@@ -87,19 +91,22 @@ model Branch {
 // still have a home branchId (their "primary office") purely for record
 // purposes — it does not restrict their query scope.
 model BranchSettings {
-  id             String        @id @default(cuid())
-  branchId       String        @unique
-  branch         Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
-  displayName    String?
-  currency       String        @default("INR") // old app hardcoded Rupee; now explicit
-  timezone       String        @default("Asia/Kolkata")
-  language       String        @default("en")
-  logoUrl        String?
+  id                String        @id @default(cuid())
+  branchId          String        @unique
+  branch            Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  displayName       String?
+  currency          String        @default("INR") // old app hardcoded Rupee; now explicit
+  timezone          String        @default("Asia/Kolkata")
+  language          String        @default("en")
+  logoUrl           String?
   // Added in Phase 2.1 now that AcademicYear exists (deferred from Phase 2.0).
-  academicYearId String?
-  academicYear   AcademicYear? @relation(fields: [academicYearId], references: [id])
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  academicYearId    String?
+  academicYear      AcademicYear? @relation(fields: [academicYearId], references: [id])
+  // Biometric device PIN prefixes per user type, e.g. {"STUDENT":"S","TEACHER":"T","STAFF":"E"}.
+  // Null entry = no prefix for that type. See common/biometric/user-code.util.ts.
+  biometricPrefixes Json?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 
   @@index([academicYearId])
 }
@@ -603,6 +610,9 @@ model Employee {
   awards         Award[]        @relation("AwardRecipient")
   teacherProfile Teacher?
 
+  biometricEnrollments  BiometricEnrollment[]
+  biometricTransactions BiometricTransaction[]
+
   @@unique([branchId, employeeCode])
   @@index([branchId])
   @@index([departmentId])
@@ -658,17 +668,17 @@ model Designation {
 // new mobile-app-api endpoints (#17 leaves/types, #21 my-leaves breakdown)
 // get real ids/names to key off.
 model LeaveType {
-  id          String        @id @default(cuid())
+  id          String       @id @default(cuid())
   branchId    String
-  branch      Branch        @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  branch      Branch       @relation(fields: [branchId], references: [id], onDelete: Cascade)
   name        String
-  status      ActiveStatus  @default(ACTIVE)
+  status      ActiveStatus @default(ACTIVE)
   // Annual quota (in days) auto-applied to a new employee's LeaveQuota on
   // creation, and used as the default when bulk-assigning quotas to
   // existing employees. Null = not auto-assigned.
-  defaultDays Decimal?      @db.Decimal(5, 2)
-  createdAt   DateTime      @default(now())
-  updatedAt   DateTime      @updatedAt
+  defaultDays Decimal?     @db.Decimal(5, 2)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
 
   leaves      Leave[]
   leaveQuotas LeaveQuota[]
@@ -956,6 +966,9 @@ model Student {
   attendances      Attendance[]
   studentExams     StudentExam[]
   progressEntries  StudentSurahProgressEntry[]
+
+  biometricEnrollments  BiometricEnrollment[]
+  biometricTransactions BiometricTransaction[]
 
   @@unique([branchId, studentCode])
   @@index([branchId, status])
@@ -1663,4 +1676,181 @@ model Notification {
 
   @@index([userId, createdAt])
   @@index([branchId])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// BIOMETRIC DEVICES (ZKTeco/ESSL "iclock" push protocol)
+// ═══════════════════════════════════════════════════════════════════════
+
+enum BiometricUserType {
+  STUDENT
+  TEACHER
+  STAFF
+}
+
+enum BiometricEnrollmentStatus {
+  PENDING
+  ENROLLED
+}
+
+enum BiometricTemplateType {
+  FP
+  FACE
+  PALM
+  USERPIC
+  BIOPHOTO
+}
+
+// A push-protocol biometric terminal (ZKTeco "iclock" / ESSL). Devices
+// self-register (by serial number) the moment they first contact the server,
+// before being assigned to any one branch — branchId starts out null.
+model BiometricDevice {
+  id                  String    @id @default(cuid())
+  sn                  String    @unique
+  alias               String?
+  deviceType          String    @default("iclock")
+  deviceModel         String?
+  ipAddress           String?
+  fwVer               String?
+  pushVer             String?
+  state               String? // '0' offline, '1' online
+  terminalTz          Int? // device timezone offset, minutes
+  userCount           Int?
+  fpCount             Int?
+  faceCount           Int?
+  palmCount           Int?
+  transactionCount    Int?
+  pushTime            String?
+  transferTime        String?
+  transferInterval    Int?
+  isAttendance        Int?
+  area                String?
+  areaId              Int?
+  branchId            String? // null = unassigned, sitting in the device pool
+  branch              Branch?   @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  assignedAt          DateTime?
+  assignedByUserId    String?
+  isApproved          Boolean   @default(false)
+  approvedByUserId    String?
+  approvedAt          DateTime?
+  deactivatedByUserId String?
+  deactivatedAt       DateTime?
+  deactivationReason  String?
+  lastSyncAt          DateTime?
+  lastActivity        String? // ISO string; last heartbeat (getrequest/cdata poll)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  @@index([branchId])
+  @@index([isApproved])
+}
+
+// A command queued for a device, polled via GET /iclock/getrequest. `seq` is
+// the short numeric id sent to the device as `C:<seq>:<command>` — a 36-char
+// cuid would overflow the device's per-command buffer on long commands.
+model BiometricDeviceCommand {
+  id               String   @id @default(cuid())
+  seq              Int      @default(autoincrement())
+  sn               String
+  branchId         String?
+  command          String   @db.Text
+  status           Int      @default(0) // 0 pending, 1 success, 2 error
+  deviceReturnCode Int?
+  createdByUserId  String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([seq])
+  @@index([sn])
+  @@index([branchId])
+  @@index([status])
+  @@index([sn, status])
+}
+
+// Raw device <-> server traffic audit, for debugging push-protocol issues.
+// Written fire-and-forget, never awaited on the device response path.
+model BiometricDeviceLog {
+  id        String   @id @default(cuid())
+  sn        String?
+  url       String
+  method    String
+  tableName String?
+  data      String?  @db.Text // truncated to ~10kb
+  createdAt DateTime @default(now())
+
+  @@index([sn])
+  @@index([sn, createdAt])
+}
+
+// A biometric template (fingerprint/face/palm/photo) received from a device.
+// Unique per (branch, user, type, index) so a given finger/slot stores one
+// template, refreshed on re-enrollment.
+model BiometricEnrollment {
+  id         String                     @id @default(cuid())
+  branchId   String
+  branch     Branch                     @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  userCode   String // device PIN
+  studentId  String?
+  student    Student?                   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  employeeId String?
+  employee   Employee?                  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  userType   BiometricUserType?
+  name       String? // display name captured at enrollment time
+  status     BiometricEnrollmentStatus?
+  deviceSn   String?
+  type       BiometricTemplateType
+  fId        String?
+  faceId     String?
+  index      String                     @default("0") // finger/slot index
+  tmp        String?                    @db.Text // template payload
+  image      String?                    @db.Text
+  no         String?
+  valid      String?
+  size       String?
+  format     String?
+  typeRaw    String?
+  majorVer   String?
+  minorVer   String?
+  duress     String?
+  createdAt  DateTime                   @default(now())
+  updatedAt  DateTime                   @updatedAt
+
+  @@unique([branchId, userCode, type, index])
+  @@index([branchId])
+  @@index([branchId, userCode, type])
+}
+
+// An attendance punch received from a biometric device. userCode (device
+// PIN) is resolved to a student/employee when possible; the unique index
+// prevents the same punch being ingested twice.
+model BiometricTransaction {
+  id                String             @id @default(cuid())
+  branchId          String
+  branch            Branch             @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  deviceSn          String
+  userCode          String
+  studentId         String?
+  student           Student?           @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  employeeId        String?
+  employee          Employee?          @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  userType          BiometricUserType?
+  actualPunchTime   DateTime // raw time reported by the device
+  punchTime         DateTime // adjusted time (shift logic); defaults to actual
+  punchState        Int                @default(0) // 0 check-in, 1 check-out
+  punchStateDisplay String             @default("Check In")
+  area              String?
+  areaId            Int?
+  terminalSn        String?
+  uploadTime        DateTime?
+  source            String             @default("Device")
+  remarks           String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  @@unique([deviceSn, actualPunchTime, userCode])
+  @@index([branchId])
+  @@index([deviceSn])
+  @@index([branchId, punchTime])
+  @@index([studentId, punchTime])
+  @@index([employeeId, punchTime])
 }
