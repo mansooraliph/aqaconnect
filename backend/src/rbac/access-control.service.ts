@@ -72,22 +72,17 @@ export class AccessControlService {
    * legacy system's own defaults, not derived from any aqa_v2 data — aqa_v2
    * has no equivalent "own vs all" scoping concept to compute them from.
    *
-   * teachers/students/lessons/hifdh/halqa/admin_halqa only expose `view`;
-   * leaves only exposes `create` — the other legacy CRUD actions for these
-   * modules were dropped by request, not derived from aqa_v2 data.
+   * teachers/students/lessons/hifdh/halqa/admin_halqa are flattened to a
+   * plain boolean (their only surviving action, `view`) rather than an
+   * object; leaves only exposes `create`. The other legacy CRUD actions for
+   * these modules were dropped by request, not derived from aqa_v2 data.
    */
-  buildLegacyPermissions(granted: Set<string>): Record<string, Record<string, boolean | string>> {
+  buildLegacyPermissions(granted: Set<string>): Record<string, Record<string, boolean | string> | boolean> {
     const has = (key: string) => granted.has(key);
 
     return {
-      teachers: {
-        view: has('hr.teachers.view'),
-        own_type: 'all',
-      },
-      students: {
-        view: has('student_management.students.view'),
-        own_type: 'all',
-      },
+      teachers: has('hr.teachers.view'),
+      students: has('student_management.students.view'),
       attendance: {
         attendance_summary: has('hr.attendance.view'),
         leaves: has('hr.leaves.view'),
@@ -99,19 +94,10 @@ export class AccessControlService {
         create: has('hr.leaves.apply'),
         own_type: 'own',
       },
-      halqa: {
-        view: has('academic.halqas.view'),
-        own_type: 'all',
-      },
-      admin_halqa: { view: false, own_type: 'all' },
-      lessons: {
-        view: has('academic.lessons.view'),
-        own_type: 'all',
-      },
-      hifdh: {
-        view: has('academic.hifdh_schedules.view') || has('academic.hifdh_progress.view'),
-        own_type: 'all',
-      },
+      halqa: has('academic.halqas.view'),
+      admin_halqa: false,
+      lessons: has('academic.lessons.view'),
+      hifdh: has('academic.hifdh_schedules.view') || has('academic.hifdh_progress.view'),
     };
   }
 }
