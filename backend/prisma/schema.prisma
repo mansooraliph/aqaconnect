@@ -197,8 +197,8 @@ model UserRole {
   branch    Branch?  @relation(fields: [branchId], references: [id])
   createdAt DateTime @default(now())
 
-  @@unique([userId, roleId, branchId])
-  @@index([userId])
+  // One role per user: enforced at the DB level, not just app logic.
+  @@unique([userId])
   @@index([branchId])
   @@index([roleId])
 }

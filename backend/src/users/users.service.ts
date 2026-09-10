@@ -113,22 +113,13 @@ export class UsersService {
     ]);
   }
 
+  /** A user has exactly one role: assigning a new one replaces whatever they had. */
   async assignRole(userId: string, dto: AssignRoleDto) {
     await this.findOne(userId);
-    // Not a plain `upsert` by compound key: Prisma's generated compound-unique
-    // input type requires a non-null branchId even though the column is
-    // nullable (NULL branchId = a GLOBAL-role grant) — same class of
-    // NULL-in-unique-constraint caveat already flagged in the schema review.
-    const branchId = dto.branchId ?? null;
-    const existing = await this.prisma.userRole.findFirst({
-      where: { userId, roleId: dto.roleId, branchId },
-      include: { role: true },
-    });
-    if (existing) {
-      return existing;
-    }
-    return this.prisma.userRole.create({
-      data: { userId, roleId: dto.roleId, branchId: dto.branchId },
+    return this.prisma.userRole.upsert({
+      where: { userId },
+      create: { userId, roleId: dto.roleId, branchId: dto.branchId },
+      update: { roleId: dto.roleId, branchId: dto.branchId },
       include: { role: true },
     });
   }

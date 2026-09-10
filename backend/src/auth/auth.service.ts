@@ -101,6 +101,7 @@ export class AuthService {
       name: [user.firstName, user.lastName].filter(Boolean).join(' '),
       image: null, // placeholder: no avatar storage yet
       position: employee?.designation?.name ?? null,
+      employeeType: employee?.employeeType ?? null,
       no_of_task: 0, // placeholder: task tracking not implemented yet
       percentage: 0, // placeholder: task tracking not implemented yet
       branchId: user.branchId,
@@ -164,6 +165,7 @@ export class AuthService {
       name: [user.firstName, user.lastName].filter(Boolean).join(' '),
       image: null, // placeholder: no avatar storage yet
       position: employee?.designation?.name ?? null,
+      employeeType: employee?.employeeType ?? null,
       no_of_task: 0, // placeholder: task tracking not implemented yet
       percentage: 0, // placeholder: task tracking not implemented yet
       branchId: user.branchId,
