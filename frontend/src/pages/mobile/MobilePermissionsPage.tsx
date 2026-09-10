@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Pencil } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { cn } from '@/lib/utils/cn';
 import { useAuthStore } from '../../store/auth';
 import { api } from '../../lib/api';
 import { PageHeader } from '../../components/ui/PageHeader';
@@ -9,7 +10,7 @@ import { Checkbox } from '../../components/ui/Checkbox';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { toast } from '../../components/ui/toast';
-import { MOBILE_API_CATALOG } from './apiCatalog';
+import { MOBILE_API_CATALOG, type AppTab } from './apiCatalog';
 
 interface MobilePermission {
   id: string;
@@ -30,8 +31,20 @@ interface MobilePermissionsResponse {
   roles: MobileRole[];
 }
 
+const TAB_LABELS: Record<AppTab, string> = {
+  dashboard: 'Dashboard',
+  schedules: 'Schedules',
+  lessons: 'Lessons',
+  halqa: 'Halqa',
+  attendance: 'Attendance',
+  profile: 'Profile',
+  other: 'Other',
+};
+
+const TAB_ORDER: AppTab[] = ['dashboard', 'schedules', 'lessons', 'halqa', 'attendance', 'profile', 'other'];
+
 /** apiCatalog module keys use dashes (e.g. "student-leaves"); permission keys use underscores. */
-function permissionKeyFor(catalogKey: string): string {
+function derivePermissionKey(catalogKey: string): string {
   return `mobile_api.${catalogKey.replace(/-/g, '_')}.access`;
 }
 
@@ -49,22 +62,34 @@ export function MobilePermissionsPage() {
 
   const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Set<string>>(new Set());
+  const [activeTab, setActiveTab] = useState<AppTab>('dashboard');
 
   const modules = useMemo(
     () =>
       MOBILE_API_CATALOG.filter((m) => m.key !== 'auth').map((m) => ({
         key: m.key,
         label: m.label,
-        permissionKey: permissionKeyFor(m.key),
+        tab: m.tab ?? ('other' as AppTab),
+        permissionKey: m.permissionKey ?? derivePermissionKey(m.key),
       })),
     [],
   );
+
+  const modulesByTab = useMemo(() => {
+    const grouped = new Map<AppTab, typeof modules>();
+    for (const tab of TAB_ORDER) grouped.set(tab, []);
+    for (const m of modules) grouped.get(m.tab)!.push(m);
+    return grouped;
+  }, [modules]);
+
+  const visibleTabs = TAB_ORDER.filter((tab) => (modulesByTab.get(tab)?.length ?? 0) > 0);
 
   const editingRole = data?.roles.find((r) => r.id === editingRoleId) ?? null;
 
   const openEditor = (role: MobileRole) => {
     setEditingRoleId(role.id);
     setDraft(new Set(role.grantedKeys));
+    setActiveTab(visibleTabs[0] ?? 'dashboard');
   };
 
   const closeEditor = () => {
@@ -118,7 +143,7 @@ export function MobilePermissionsPage() {
           <thead>
             <tr className="border-b border-border bg-table-alt">
               <th className="px-4 py-3 text-left font-semibold text-text-primary">Role</th>
-              <th className="px-4 py-3 text-left font-semibold text-text-primary">Modules granted</th>
+              <th className="px-4 py-3 text-left font-semibold text-text-primary">Permissions granted</th>
               {canManage && <th className="px-4 py-3 text-right font-semibold text-text-primary">Actions</th>}
             </tr>
           </thead>
@@ -170,7 +195,7 @@ export function MobilePermissionsPage() {
         title={editingRole ? `Edit permissions — ${editingRole.name}` : ''}
         onClose={closeEditor}
         position="right"
-        width="max-w-md"
+        width="max-w-lg"
         footer={
           <>
             <Button variant="outline" onClick={closeEditor} disabled={saveMutation.isPending}>
@@ -183,20 +208,47 @@ export function MobilePermissionsPage() {
         }
       >
         {editingRole && (
-          <div className="flex flex-col gap-1">
-            {modules.map((m) => (
-              <label
-                key={m.key}
-                className="flex items-center justify-between gap-3 rounded-card px-2 py-2 hover:bg-table-alt"
-              >
-                <span className="text-sm text-text-primary">{m.label}</span>
-                <Checkbox
-                  checked={draft.has(m.permissionKey)}
-                  onChange={() => toggle(m.permissionKey)}
-                  disabled={!canManage}
-                />
-              </label>
-            ))}
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-wrap gap-1 border-b border-border pb-3">
+              {visibleTabs.map((tab) => {
+                const tabModules = modulesByTab.get(tab) ?? [];
+                const grantedInTab = tabModules.filter((m) => draft.has(m.permissionKey)).length;
+                return (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => setActiveTab(tab)}
+                    className={cn(
+                      'rounded-card px-3 py-1.5 text-sm font-medium transition-colors',
+                      activeTab === tab
+                        ? 'bg-blue text-white'
+                        : 'bg-table-alt text-text-muted hover:text-text-primary',
+                    )}
+                  >
+                    {TAB_LABELS[tab]}
+                    <span className="ml-1.5 text-xs opacity-80">
+                      ({grantedInTab}/{tabModules.length})
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="flex flex-col gap-1">
+              {(modulesByTab.get(activeTab) ?? []).map((m) => (
+                <label
+                  key={m.key}
+                  className="flex items-center justify-between gap-3 rounded-card px-2 py-2 hover:bg-table-alt"
+                >
+                  <span className="text-sm text-text-primary">{m.label}</span>
+                  <Checkbox
+                    checked={draft.has(m.permissionKey)}
+                    onChange={() => toggle(m.permissionKey)}
+                    disabled={!canManage}
+                  />
+                </label>
+              ))}
+            </div>
           </div>
         )}
       </Modal>

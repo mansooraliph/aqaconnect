@@ -51,9 +51,15 @@ function requireDateRange(startDate?: string, endDate?: string): { start: Date; 
   return { start: parseDdMmYyyy(startDate, 'start_date'), end: parseDdMmYyyy(endDate, 'end_date') };
 }
 
+/**
+ * Class-level gate is the Attendance tab's master switch — holding it is
+ * enough to see "My Attendance"/"My Leaves". The view/approve endpoints
+ * below narrow further with their own @RequirePermission, overriding this
+ * default (PermissionsGuard uses getAllAndOverride: method wins over class).
+ */
 @Controller('app')
 @UseGuards(PermissionsGuard)
-@RequirePermission('mobile_api.attendance.access')
+@RequirePermission('mobile_api.tab_attendance.access')
 @UseInterceptors(MobileApiLoggingInterceptor)
 @UsePipes(new MobileValidationPipe())
 export class AttendanceController {
@@ -77,6 +83,7 @@ export class AttendanceController {
   }
 
   @Get('employees-attendance-summery')
+  @RequirePermission('mobile_api.attendance.access')
   async employeesAttendanceSummary(
     @Req() req: AuthedRequest,
     @Query('start_date') startDate?: string,
@@ -89,6 +96,7 @@ export class AttendanceController {
   }
 
   @Get('attendance/employee/:employeeId/report')
+  @RequirePermission('mobile_api.attendance.access')
   async employeeReport(
     @Req() req: AuthedRequest,
     @Param('employeeId') employeeId: string,
@@ -102,6 +110,7 @@ export class AttendanceController {
   }
 
   @Get('attendance/not-approved')
+  @RequirePermission('mobile_api.attendance.approve')
   async notApproved(@Req() req: AuthedRequest) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     const data = await this.service.listNotApproved(branchId);
@@ -109,6 +118,7 @@ export class AttendanceController {
   }
 
   @Get('attendance/approved')
+  @RequirePermission('mobile_api.attendance.approve')
   async approved(@Req() req: AuthedRequest) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     const data = await this.service.listApproved(branchId);
@@ -116,6 +126,7 @@ export class AttendanceController {
   }
 
   @Post('attendance/approve/:id')
+  @RequirePermission('mobile_api.attendance.approve')
   async approve(@Req() req: AuthedRequest, @Param('id') id: string) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     await this.service.approve(branchId, id, req.user.userId);
@@ -123,6 +134,7 @@ export class AttendanceController {
   }
 
   @Post('attendance/reject/:id')
+  @RequirePermission('mobile_api.attendance.approve')
   async reject(@Req() req: AuthedRequest, @Param('id') id: string, @Body() dto: RejectAttendanceDto) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     await this.service.reject(branchId, id, req.user.userId, dto.rejection_reason);

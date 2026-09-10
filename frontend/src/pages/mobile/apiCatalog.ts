@@ -8,12 +8,24 @@ export interface ApiEndpoint {
   legacyNumbers?: number[];
 }
 
+/** Groups a module under one of the mobile app's own tabs, for the RBAC role-edit modal's sub-tab layout. */
+export type AppTab = 'dashboard' | 'schedules' | 'lessons' | 'halqa' | 'attendance' | 'profile' | 'other';
+
 export interface ApiModule {
   key: string;
   label: string;
   basePath: string;
   description: string;
   endpoints: ApiEndpoint[];
+  /** Which mobile app tab this module's permission belongs under, for the role-edit modal. Defaults to 'other'. */
+  tab?: AppTab;
+  /**
+   * Explicit backend permission key, for modules whose key doesn't fit the
+   * `mobile_api.{key}.access` convention (e.g. *.approve permissions, or a
+   * catalog key that doesn't match its real permission's module segment).
+   * Falls back to the derived `mobile_api.{key with _}.access` when absent.
+   */
+  permissionKey?: string;
 }
 
 export const MOBILE_API_CATALOG: ApiModule[] = [
@@ -184,6 +196,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'teachers',
     label: 'Teachers',
+    tab: 'dashboard',
     basePath: '/app/teachers',
     description: 'Teacher account CRUD. Responses use the "Record saved/updated/deleted successfully." wording and status/message envelope verbatim from the legacy controller.',
     endpoints: [
@@ -314,6 +327,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'halqas',
     label: 'Halqas',
+    tab: 'halqa',
     basePath: '/app/halqas',
     description: 'Halqa (study circle) CRUD, roster, and student assignment. Dates use legacy\'s d-m-Y / d-m-Y H:i string formats, not ISO.',
     endpoints: [
@@ -514,6 +528,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'admin-halqa',
     label: 'Admin Halqa',
+    tab: 'halqa',
     basePath: '/app/halqas',
     description:
       "Gates the mobile app's Admin Halqa tab (the Admin role's cross-Halqa admin view) — not a separate " +
@@ -525,6 +540,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'student-leaves',
     label: 'Student Leaves',
+    tab: 'attendance',
     basePath: '/app/student_leave',
     description: "Student leave requests. Note: this module's responses never use a status wrapper — just plain { message, ... }. leave_type is validated as 'home'|'hostal' (legacy's own spelling, preserved verbatim).",
     endpoints: [
@@ -636,10 +652,23 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     ],
   },
   {
+    key: 'student-leaves-approve',
+    label: 'Student Leave Approvals',
+    tab: 'attendance',
+    basePath: '/app/student_leave',
+    description:
+      'Approve/reject student leave requests — a distinct permission from Student Leaves above (which covers ' +
+      'apply/view). The app UI shows this option unconditionally once the Attendance tab is open; the server ' +
+      'still enforces this permission on the leave-approval endpoint.',
+    permissionKey: 'mobile_api.student_leaves.approve',
+    endpoints: [],
+  },
+  {
     key: 'students',
     label: 'Students',
+    tab: 'dashboard',
     basePath: '/app/students',
-    description: 'Student profile CRUD, activity reports, academic reference lookups, and per-student exam records. Fields with no equivalent data in this schema (mother_name, image_url, custom_fields, roll_no, etc.) are present in the response shape but always null, matching legacy\'s field names exactly.',
+    description: 'Student profile CRUD, academic reference lookups, and per-student exam records. Fields with no equivalent data in this schema (mother_name, image_url, custom_fields, roll_no, etc.) are present in the response shape but always null, matching legacy\'s field names exactly.',
     endpoints: [
       {
         method: 'POST',
@@ -928,8 +957,29 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     ],
   },
   {
+    key: 'students-activity',
+    label: 'Manage Students Activity',
+    tab: 'dashboard',
+    basePath: '/app/students',
+    description:
+      "Dashboard Quick Action gating the student-activity and activity-report endpoints " +
+      "(a distinct permission from the Students module above, which covers profile CRUD).",
+    permissionKey: 'mobile_api.students.activity.access',
+    endpoints: [],
+  },
+  {
+    key: 'students-reports',
+    label: 'Student Reports',
+    tab: 'dashboard',
+    basePath: '/app/students',
+    description: "Dashboard Quick Action gating the admission-year-reports endpoint.",
+    permissionKey: 'mobile_api.students.reports.access',
+    endpoints: [],
+  },
+  {
     key: 'student-surah-progress',
     label: 'Student Surah Progress',
+    tab: 'dashboard',
     basePath: '/app/student-surah-progress',
     description: 'Per-ayah-range Surah memorization progress ledger (New/Juzh/Old Lesson types, grading, verification, Juzuh/page-range tracking) — separate from the Surah Schedules module below. Legacy field names (badge classes, added_by/last_updated_by/verified_by, remark_file_url) are all present verbatim.',
     endpoints: [
@@ -1247,6 +1297,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'surah-schedules',
     label: 'Surah Schedules',
+    tab: 'schedules',
     basePath: '/app/surah-schedules',
     description: "A student's Hifdh (memorization) schedule and progress summary. Legacy reads a non-existent `quality_assessment` column (always null in production) — replicated verbatim, not fixed.",
     endpoints: [
@@ -1294,8 +1345,10 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'lesson-stages',
     label: 'Lesson Stages',
+    tab: 'lessons',
     basePath: '/app/lesson-stages',
-    description: 'Read-only curriculum reference content (stages + their sub-stages) for the mobile lesson browser. Not branch-scoped — shared config, same as the admin Configuration module.',
+    description: 'Read-only curriculum reference content (stages + their sub-stages) for the mobile lesson browser. Not branch-scoped — shared config, same as the admin Configuration module. Gated by the same permission as Lessons below (both live under LessonContentController).',
+    permissionKey: 'mobile_api.lesson_content.access',
     endpoints: [
       {
         method: 'GET',
@@ -1339,8 +1392,10 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'lessons',
     label: 'Lessons',
+    tab: 'lessons',
     basePath: '/app/lessons',
     description: "Read-only lesson list, filterable by stage/sub-stage — branch-scoped, wraps the same LessonsService the admin Academic module uses. Legacy's two separate query-param routes (stage_id, sub_stage_id) are the same endpoint here.",
+    permissionKey: 'mobile_api.lesson_content.access',
     endpoints: [
       {
         method: 'GET',
@@ -1382,6 +1437,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'profile',
     label: 'Profile',
+    tab: 'profile',
     basePath: '/app/profile',
     description: "The caller's own Employee/Student/User profile. Legacy's task-completion stats (total_tasks, completed_percentage) are dropped — no Task module exists in aqa_v2. Avatar upload is accepted but not persisted — no avatar storage exists yet, `image` is always null.",
     endpoints: [
@@ -1439,9 +1495,10 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   },
   {
     key: 'dashboard',
-    label: 'Teacher Dashboard',
+    label: 'Dashboard',
+    tab: 'dashboard',
     basePath: '/app/teacher-dashboard',
-    description: "Summary counts for the caller's own Halqas/students, plus a branch announcements feed (a new Announcement model — no admin CRUD UI yet, rows are seeded/managed directly). Unlike legacy, the response shape is consistent even when the teacher has no Halqas (user/announcements are always present).",
+    description: "Summary counts for the caller's own Halqas/students, plus a branch announcements feed (a new Announcement model — no admin CRUD UI yet, rows are seeded/managed directly). Also gates /app/admin-dashboard (branch-wide teacher/student/Halqa/attendance/progress summary for admin roles). Unlike legacy, the response shape is consistent even when the teacher has no Halqas (user/announcements are always present).",
     endpoints: [
       {
         method: 'GET',
@@ -1466,9 +1523,10 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   },
   {
     key: 'leaves',
-    label: 'Leaves',
+    label: 'Leaves (Staff)',
+    tab: 'attendance',
     basePath: '/app',
-    description: 'Leave types, self-service apply/cancel/my-leaves, and admin approve/reject — thin wrappers over the same LeavesService the admin HR module uses. Leave types are a new named LeaveType lookup table (branch-scoped), not the free-text string the underlying Leave/LeaveQuota rows still also carry.',
+    description: 'Leave types, self-service apply/cancel/my-leaves — thin wrappers over the same LeavesService the admin HR module uses. Leave types are a new named LeaveType lookup table (branch-scoped), not the free-text string the underlying Leave/LeaveQuota rows still also carry. Approve/reject is now a separate permission (Leave Approvals, below).',
     endpoints: [
       {
         method: 'GET',
@@ -1538,10 +1596,29 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     ],
   },
   {
+    key: 'leaves-approve',
+    label: 'Leave Approvals (Staff)',
+    tab: 'attendance',
+    basePath: '/app',
+    description: 'Approve/reject staff leave requests (leaves/approvals, attendance/approve-leave, leaves/:id/reject) — split from the Leaves (Staff) module above so approval can be granted independently of self-service apply.',
+    permissionKey: 'mobile_api.leaves.approve',
+    endpoints: [],
+  },
+  {
+    key: 'tab-attendance',
+    label: 'Attendance Tab (master)',
+    tab: 'attendance',
+    basePath: '/app',
+    description: "Master switch for the Attendance tab itself — a role needs this to see the tab at all (My Attendance/My Leaves show unconditionally once it does). The permissions below it further narrow what's usable inside the tab.",
+    permissionKey: 'mobile_api.tab_attendance.access',
+    endpoints: [],
+  },
+  {
     key: 'attendance',
-    label: 'Attendance',
+    label: 'Attendance (view)',
+    tab: 'attendance',
     basePath: '/app/attendance',
-    description: "Own/all-employee attendance summaries and reports, plus the mobile clock-in review queue (PENDING_APPROVAL → PRESENT/REJECTED, new AttendanceStatus values with reviewedById/reviewedAt/rejectionReason on the same Attendance row — no separate request table). One shared report builder backs the summary/report/all-employees endpoints, so key names are consistent across all three (unlike legacy's 3-way inconsistent casing).",
+    description: "Own/all-employee attendance summaries and reports (Employee Attendance). Approving/rejecting pending clock-ins is now a separate permission (Attendance Approvals, below).",
     endpoints: [
       {
         method: 'GET',
@@ -1611,5 +1688,14 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
         response: `{ "status": "success", "message": "Attendance request rejected successfully" }`,
       },
     ],
+  },
+  {
+    key: 'attendance-approve',
+    label: 'Attendance Approvals',
+    tab: 'attendance',
+    basePath: '/app/attendance',
+    description: 'Review and approve/reject pending mobile clock-in requests (not-approved, approved, approve/:id, reject/:id) — split from Attendance (view) above so approval can be granted independently of just viewing summaries/reports.',
+    permissionKey: 'mobile_api.attendance.approve',
+    endpoints: [],
   },
 ];

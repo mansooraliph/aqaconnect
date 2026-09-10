@@ -36,6 +36,7 @@ export class LeavesController {
   }
 
   @Get('leaves/approvals')
+  @RequirePermission('mobile_api.leaves.approve')
   async approvals(@Req() req: AuthedRequest) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     return this.service.approvals(branchId);
@@ -66,6 +67,7 @@ export class LeavesController {
   }
 
   @Post('attendance/approve-leave')
+  @RequirePermission('mobile_api.leaves.approve')
   async approveLeave(@Req() req: AuthedRequest, @Body() dto: MobileApproveLeaveDto) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     try {
@@ -78,6 +80,7 @@ export class LeavesController {
   }
 
   @Post('leaves/:id/reject')
+  @RequirePermission('mobile_api.leaves.approve')
   async reject(@Req() req: AuthedRequest, @Param('id') id: string, @Body() dto: MobileRejectLeaveDto) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     const leave = await this.service.rejectLeave(branchId, req.user.userId, id, dto);
