@@ -81,11 +81,9 @@ export class StudentLeavesController {
   }
 
   @Post('leave-approval')
+  @RequirePermission('mobile_api.student_leaves.approve')
   async bulkReviewLeaves(@Req() req: AuthedRequest, @Body() dto: BulkReviewLeavesDto) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
-    if (!(await this.service.isTeacherOrAdmin(req.user.userId))) {
-      throw new ForbiddenException('Unauthorized.');
-    }
     try {
       return await this.service.bulkReviewLeaves(branchId, req.user.userId, dto);
     } catch (error) {
