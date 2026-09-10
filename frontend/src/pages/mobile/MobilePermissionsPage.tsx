@@ -66,7 +66,7 @@ export function MobilePermissionsPage() {
 
   const modules = useMemo(
     () =>
-      MOBILE_API_CATALOG.filter((m) => m.key !== 'auth').map((m) => ({
+      MOBILE_API_CATALOG.filter((m) => m.key !== 'auth' && m.key !== 'profile').map((m) => ({
         key: m.key,
         label: m.label,
         tab: m.tab ?? ('other' as AppTab),
