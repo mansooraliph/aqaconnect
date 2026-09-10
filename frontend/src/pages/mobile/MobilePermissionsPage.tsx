@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { Pencil } from 'lucide-react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuthStore } from '../../store/auth';
 import { api } from '../../lib/api';
@@ -6,6 +7,7 @@ import { PageHeader } from '../../components/ui/PageHeader';
 import { Badge } from '../../components/ui/Badge';
 import { Checkbox } from '../../components/ui/Checkbox';
 import { Button } from '../../components/ui/Button';
+import { Modal } from '../../components/ui/Modal';
 import { toast } from '../../components/ui/toast';
 import { MOBILE_API_CATALOG } from './apiCatalog';
 
@@ -45,8 +47,8 @@ export function MobilePermissionsPage() {
     enabled: canView,
   });
 
-  const [pendingRoleId, setPendingRoleId] = useState<string | null>(null);
-  const [draftByRole, setDraftByRole] = useState<Record<string, Set<string>>>({});
+  const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
+  const [draft, setDraft] = useState<Set<string>>(new Set());
 
   const modules = useMemo(
     () =>
@@ -58,23 +60,26 @@ export function MobilePermissionsPage() {
     [],
   );
 
-  const grantedFor = (role: MobileRole): Set<string> => draftByRole[role.id] ?? new Set(role.grantedKeys);
+  const editingRole = data?.roles.find((r) => r.id === editingRoleId) ?? null;
 
-  const isDirty = (role: MobileRole): boolean => {
-    const draft = draftByRole[role.id];
-    if (!draft) return false;
-    const original = new Set(role.grantedKeys);
-    if (draft.size !== original.size) return true;
-    for (const key of draft) if (!original.has(key)) return true;
-    return false;
+  const openEditor = (role: MobileRole) => {
+    setEditingRoleId(role.id);
+    setDraft(new Set(role.grantedKeys));
   };
 
-  const toggle = (role: MobileRole, permissionKey: string) => {
+  const closeEditor = () => {
+    setEditingRoleId(null);
+    setDraft(new Set());
+  };
+
+  const toggle = (permissionKey: string) => {
     if (!canManage) return;
-    const current = new Set(grantedFor(role));
-    if (current.has(permissionKey)) current.delete(permissionKey);
-    else current.add(permissionKey);
-    setDraftByRole((prev) => ({ ...prev, [role.id]: current }));
+    setDraft((prev) => {
+      const next = new Set(prev);
+      if (next.has(permissionKey)) next.delete(permissionKey);
+      else next.add(permissionKey);
+      return next;
+    });
   };
 
   const saveMutation = useMutation({
@@ -82,22 +87,17 @@ export function MobilePermissionsPage() {
       const res = await api.put<MobilePermissionsResponse>(`/roles/${roleId}/mobile-permissions`, { permissionKeys });
       return res.data;
     },
-    onSuccess: (updated, { roleId }) => {
+    onSuccess: (updated) => {
       queryClient.setQueryData(['mobile-permissions'], updated);
-      setDraftByRole((prev) => {
-        const next = { ...prev };
-        delete next[roleId];
-        return next;
-      });
       toast.success('Mobile API permissions updated');
+      closeEditor();
     },
     onError: () => toast.error('Failed to update permissions'),
-    onSettled: () => setPendingRoleId(null),
   });
 
-  const handleSave = (role: MobileRole) => {
-    setPendingRoleId(role.id);
-    saveMutation.mutate({ roleId: role.id, permissionKeys: [...grantedFor(role)] });
+  const handleSave = () => {
+    if (!editingRole) return;
+    saveMutation.mutate({ roleId: editingRole.id, permissionKeys: [...draft] });
   };
 
   if (!canView) {
@@ -114,36 +114,31 @@ export function MobilePermissionsPage() {
       </p>
 
       <div className="overflow-x-auto rounded-card border border-border bg-white">
-        <table className="w-full min-w-[720px] border-collapse text-sm">
+        <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="border-b border-border bg-table-alt">
               <th className="px-4 py-3 text-left font-semibold text-text-primary">Role</th>
-              {modules.map((m) => (
-                <th key={m.key} className="px-3 py-3 text-center font-semibold text-text-primary">
-                  {m.label}
-                </th>
-              ))}
-              {canManage && <th className="px-3 py-3 text-right font-semibold text-text-primary">Save</th>}
+              <th className="px-4 py-3 text-left font-semibold text-text-primary">Modules granted</th>
+              {canManage && <th className="px-4 py-3 text-right font-semibold text-text-primary">Actions</th>}
             </tr>
           </thead>
           <tbody>
             {isLoading && (
               <tr>
-                <td colSpan={modules.length + 2} className="px-4 py-6 text-center text-text-muted">
+                <td colSpan={3} className="px-4 py-6 text-center text-text-muted">
                   Loading…
                 </td>
               </tr>
             )}
             {!isLoading && (data?.roles.length ?? 0) === 0 && (
               <tr>
-                <td colSpan={modules.length + 2} className="px-4 py-6 text-center text-text-muted">
+                <td colSpan={3} className="px-4 py-6 text-center text-text-muted">
                   No roles found
                 </td>
               </tr>
             )}
             {data?.roles.map((role) => {
-              const granted = grantedFor(role);
-              const dirty = isDirty(role);
+              const grantedCount = modules.filter((m) => role.grantedKeys.includes(m.permissionKey)).length;
               return (
                 <tr key={role.id} className="border-b border-border last:border-0">
                   <td className="px-4 py-3">
@@ -152,24 +147,14 @@ export function MobilePermissionsPage() {
                       <Badge tone={role.scope === 'GLOBAL' ? 'purple' : 'blue'}>{role.scope}</Badge>
                     </div>
                   </td>
-                  {modules.map((m) => (
-                    <td key={m.key} className="px-3 py-3 text-center">
-                      <Checkbox
-                        checked={granted.has(m.permissionKey)}
-                        onChange={() => toggle(role, m.permissionKey)}
-                        disabled={!canManage}
-                      />
-                    </td>
-                  ))}
+                  <td className="px-4 py-3 text-text-muted">
+                    {grantedCount} of {modules.length}
+                  </td>
                   {canManage && (
-                    <td className="px-3 py-3 text-right">
-                      <Button
-                        size="sm"
-                        variant={dirty ? 'primary' : 'outline'}
-                        disabled={!dirty || (saveMutation.isPending && pendingRoleId === role.id)}
-                        onClick={() => handleSave(role)}
-                      >
-                        {saveMutation.isPending && pendingRoleId === role.id ? 'Saving…' : 'Save'}
+                    <td className="px-4 py-3 text-right">
+                      <Button size="sm" variant="outline" onClick={() => openEditor(role)}>
+                        <Pencil className="h-3.5 w-3.5" />
+                        Edit
                       </Button>
                     </td>
                   )}
@@ -179,6 +164,42 @@ export function MobilePermissionsPage() {
           </tbody>
         </table>
       </div>
+
+      <Modal
+        open={!!editingRole}
+        title={editingRole ? `Edit permissions — ${editingRole.name}` : ''}
+        onClose={closeEditor}
+        position="right"
+        width="max-w-md"
+        footer={
+          <>
+            <Button variant="outline" onClick={closeEditor} disabled={saveMutation.isPending}>
+              Cancel
+            </Button>
+            <Button onClick={handleSave} loading={saveMutation.isPending}>
+              Save
+            </Button>
+          </>
+        }
+      >
+        {editingRole && (
+          <div className="flex flex-col gap-1">
+            {modules.map((m) => (
+              <label
+                key={m.key}
+                className="flex items-center justify-between gap-3 rounded-card px-2 py-2 hover:bg-table-alt"
+              >
+                <span className="text-sm text-text-primary">{m.label}</span>
+                <Checkbox
+                  checked={draft.has(m.permissionKey)}
+                  onChange={() => toggle(m.permissionKey)}
+                  disabled={!canManage}
+                />
+              </label>
+            ))}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }
