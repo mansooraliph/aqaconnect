@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
 import { KeyRound, Plus, ShieldPlus } from 'lucide-react';
@@ -62,6 +62,7 @@ const emptyCreateForm = {
   phone: '',
   email: '',
   branchId: '',
+  type: 'Staff' as UserType,
 };
 
 export function UsersPage() {
@@ -87,6 +88,18 @@ export function UsersPage() {
 
   const createUser = useMutation({
     mutationFn: async (payload: Record<string, unknown>) => (await api.post('/users', payload)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['users'] }),
+  });
+
+  const createBranchEmployee = useMutation({
+    mutationFn: async ({ branchId, payload }: { branchId: string; payload: Record<string, unknown> }) =>
+      (await api.post(`/branches/${branchId}/employees`, payload)).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['users'] }),
+  });
+
+  const createBranchStudent = useMutation({
+    mutationFn: async ({ branchId, payload }: { branchId: string; payload: Record<string, unknown> }) =>
+      (await api.post(`/branches/${branchId}/students`, payload)).data,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['users'] }),
   });
 
@@ -148,16 +161,43 @@ export function UsersPage() {
     setAddErrors(errors);
     if (Object.keys(errors).length > 0) return;
 
+    const type = addForm.branchId ? addForm.type : 'Staff';
+
     setAddSubmitting(true);
     try {
-      await createUser.mutateAsync({
-        name: addForm.name,
-        username: addForm.username,
-        password: addForm.password,
-        phone: addForm.phone || undefined,
-        email: addForm.email || undefined,
-        branchId: addForm.branchId || undefined,
-      });
+      if (type === 'Employee' || type === 'Teacher') {
+        await createBranchEmployee.mutateAsync({
+          branchId: addForm.branchId,
+          payload: {
+            name: addForm.name,
+            username: addForm.username,
+            password: addForm.password,
+            phone: addForm.phone || undefined,
+            email: addForm.email || undefined,
+            employeeType: type === 'Teacher' ? 'TEACHER' : 'OFFICE_STAFF',
+          },
+        });
+      } else if (type === 'Student') {
+        await createBranchStudent.mutateAsync({
+          branchId: addForm.branchId,
+          payload: {
+            name: addForm.name,
+            username: addForm.username,
+            password: addForm.password,
+            email: addForm.email || undefined,
+            createLogin: true,
+          },
+        });
+      } else {
+        await createUser.mutateAsync({
+          name: addForm.name,
+          username: addForm.username,
+          password: addForm.password,
+          phone: addForm.phone || undefined,
+          email: addForm.email || undefined,
+          branchId: addForm.branchId || undefined,
+        });
+      }
       toast.success('User created');
       setAddOpen(false);
     } catch (err) {
@@ -172,6 +212,16 @@ export function UsersPage() {
     setAssignRoleId('');
     setAssignBranchId('');
   };
+
+  // A user has exactly one role — once it loads, populate the form with it
+  // so this reads as editing the existing grant, not picking one from blank.
+  useEffect(() => {
+    const currentRole = userDetailQuery.data?.userRoles[0];
+    if (currentRole) {
+      setAssignRoleId(currentRole.roleId);
+      setAssignBranchId(currentRole.branchId ?? '');
+    }
+  }, [userDetailQuery.data]);
 
   const submitAssignRole = async () => {
     if (!rolesModalUserId || !assignRoleId) return;
@@ -340,6 +390,19 @@ export function UsersPage() {
               options={(branches ?? []).map((b) => ({ label: b.name, value: b.id }))}
             />
           </Field>
+          {addForm.branchId && (
+            <Field
+              label="User Type"
+              required
+              hint="Employee/Teacher/Student also creates the matching HR/Academic record, same as adding one there."
+            >
+              <Select
+                value={addForm.type}
+                onChange={(e) => setAddForm((f) => ({ ...f, type: e.target.value as UserType }))}
+                options={USER_TYPES.map((t) => ({ label: t, value: t }))}
+              />
+            </Field>
+          )}
         </div>
       </Modal>
 
