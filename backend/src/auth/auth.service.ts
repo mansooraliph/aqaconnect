@@ -43,7 +43,10 @@ export class AuthService {
     });
 
     const rawRefreshToken = crypto.randomBytes(48).toString('hex');
-    const refreshTtlDays = Number(this.configService.get<string>('JWT_REFRESH_TTL_DAYS', '14'));
+    // Sliding window: refresh() rotates this on every use with a fresh 182-day
+    // (~6 month) expiry, so a session only actually dies after 6 months of
+    // inactivity — not on a fixed schedule from first login.
+    const refreshTtlDays = Number(this.configService.get<string>('JWT_REFRESH_TTL_DAYS', '182'));
     const expiresAt = new Date(Date.now() + refreshTtlDays * 24 * 60 * 60 * 1000);
 
     await this.prisma.refreshToken.create({
