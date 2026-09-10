@@ -42,6 +42,9 @@ import { RolesPage } from './pages/RolesPage';
 import { MobileApiDocsPage } from './pages/mobile/MobileApiDocsPage';
 import { MobileApiUsageHistoryPage } from './pages/mobile/MobileApiUsageHistoryPage';
 import { MobilePermissionsPage } from './pages/mobile/MobilePermissionsPage';
+import { DevicesPage } from './pages/devices/DevicesPage';
+import { EnrollmentsPage as BiometricEnrollmentsPage } from './pages/devices/EnrollmentsPage';
+import { TransactionsPage as BiometricTransactionsPage } from './pages/devices/TransactionsPage';
 
 function App() {
   return (
@@ -96,6 +99,10 @@ function App() {
           <Route path="/mobile/permissions" element={<MobilePermissionsPage />} />
           <Route path="/mobile/api-docs" element={<MobileApiDocsPage />} />
           <Route path="/mobile/usage-history" element={<MobileApiUsageHistoryPage />} />
+
+          <Route path="/devices/biometric-devices" element={<DevicesPage />} />
+          <Route path="/devices/biometric-enrollments" element={<BiometricEnrollmentsPage />} />
+          <Route path="/devices/biometric-transactions" element={<BiometricTransactionsPage />} />
         </Route>
       </Route>
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
