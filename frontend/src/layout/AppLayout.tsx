@@ -159,11 +159,16 @@ export function AppLayout() {
 
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const quickAddRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {
       if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
         setUserMenuOpen(false);
+      }
+      if (quickAddRef.current && !quickAddRef.current.contains(e.target as Node)) {
+        setQuickAddOpen(false);
       }
     }
     document.addEventListener('mousedown', onClickOutside);
@@ -320,18 +325,28 @@ export function AppLayout() {
 
           <div className="flex items-center gap-4">
             {quickAddShortcuts.length > 0 && (
-              <div className="flex items-center gap-2">
-                {quickAddShortcuts.map((s) => (
-                  <Button
-                    key={s.key}
-                    size="sm"
-                    variant="outline"
-                    onClick={() => navigate(`${s.path}?new=1`)}
-                  >
-                    {s.key === 'employee' ? <UserPlus className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
-                    {s.label}
-                  </Button>
-                ))}
+              <div className="relative" ref={quickAddRef}>
+                <Button size="sm" variant="outline" onClick={() => setQuickAddOpen((v) => !v)}>
+                  <Plus className="h-4 w-4" />
+                  Add
+                </Button>
+                {quickAddOpen && (
+                  <div className="absolute right-0 top-full z-20 mt-1 w-48 overflow-hidden rounded-card border border-border bg-white shadow-lg">
+                    {quickAddShortcuts.map((s) => (
+                      <button
+                        key={s.key}
+                        onClick={() => {
+                          setQuickAddOpen(false);
+                          navigate(`${s.path}?new=1`);
+                        }}
+                        className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-text-primary hover:bg-table-alt"
+                      >
+                        {s.key === 'employee' ? <UserPlus className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                        {s.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
