@@ -16,7 +16,7 @@ import { Select } from '../components/ui/Select';
 import { FilterSelect } from '../components/ui/FilterSelect';
 import { toast } from '../components/ui/toast';
 
-const USER_TYPES = ['Employee', 'Teacher', 'Student', 'Staff'] as const;
+const USER_TYPES = ['Admin', 'Office Staff', 'Teacher', 'Student'] as const;
 type UserType = (typeof USER_TYPES)[number];
 
 function getErrorMessage(err: unknown, fallback: string): string {

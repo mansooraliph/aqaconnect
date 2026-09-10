@@ -8,23 +8,38 @@ import { UserAccessContext } from '../rbac/access-control.service';
 
 const SALT_ROUNDS = 10;
 
-export type UserType = 'Employee' | 'Teacher' | 'Student' | 'Staff';
+export type UserType = 'Admin' | 'Office Staff' | 'Teacher' | 'Student';
+
+const EMPLOYEE_TYPE_LABELS: Record<string, UserType> = {
+  ADMIN: 'Admin',
+  OFFICE_STAFF: 'Office Staff',
+  TEACHER: 'Teacher',
+};
 
 function splitName(name: string): { firstName: string; lastName?: string } {
   const [firstName, ...rest] = name.trim().split(/\s+/);
   return { firstName, lastName: rest.length > 0 ? rest.join(' ') : undefined };
 }
 
-function deriveType(user: { employee: unknown; teacher: unknown; student: unknown }): UserType {
-  // Teacher wins over Employee: a Teacher-type employee has both an Employee and
-  // a linked Teacher record, and "Teacher" is the more specific classification.
+function deriveType(user: {
+  employee: { employeeType: string } | null;
+  teacher: unknown;
+  student: unknown;
+}): UserType {
+  // Teacher wins over Office Staff/Admin: a Teacher-type employee has both an
+  // Employee and a linked Teacher record, and "Teacher" is the more specific
+  // classification. The employeeType itself already reads "Teacher" for this
+  // case, so this only matters if that ever drifts out of sync.
   if (user.teacher) return 'Teacher';
-  if (user.employee) return 'Employee';
+  if (user.employee) return EMPLOYEE_TYPE_LABELS[user.employee.employeeType] ?? 'Office Staff';
   if (user.student) return 'Student';
-  return 'Staff';
+  // No Employee/Teacher/Student record at all (a bare login created without
+  // a branch) — treat the same as a plain Office Staff login rather than a
+  // separate "Staff" category.
+  return 'Office Staff';
 }
 
-function withType<T extends { employee: unknown; teacher: unknown; student: unknown }>(
+function withType<T extends { employee: { employeeType: string } | null; teacher: unknown; student: unknown }>(
   user: T,
 ): Omit<T, 'employee' | 'teacher' | 'student'> & { type: UserType } {
   const { employee, teacher, student, ...rest } = user;
@@ -61,7 +76,7 @@ export class UsersService {
       branchId: true,
       lastLoginAt: true,
       createdAt: true,
-      employee: { select: { id: true } },
+      employee: { select: { id: true, employeeType: true } },
       teacher: { select: { id: true } },
       student: { select: { id: true } },
     };
