@@ -428,6 +428,7 @@ export function StudentsPage() {
         width="w-64"
         label="Filter by Halqa"
         placeholder="All Halqas"
+        placeholderSelectable
         value={filterHalqaId}
         onChange={setFilterHalqaId}
         options={halqaOptions}
