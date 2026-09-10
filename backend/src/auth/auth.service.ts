@@ -90,7 +90,7 @@ export class AuthService {
 
     const tokens = await this.issueTokenPair(user.id, user.username);
     const accessContext = await this.accessControl.getUserAccessContext(user.id);
-    const permissions = this.accessControl.buildLegacyPermissions(accessContext.permissions);
+    const permissions = this.accessControl.buildLegacyPermissions(accessContext);
     const employee = await this.prisma.employee.findUnique({
       where: { userId: user.id },
       include: { designation: true },
@@ -153,7 +153,7 @@ export class AuthService {
   async me(userId: string) {
     const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
     const accessContext = await this.accessControl.getUserAccessContext(userId);
-    const permissions = this.accessControl.buildLegacyPermissions(accessContext.permissions);
+    const permissions = this.accessControl.buildLegacyPermissions(accessContext);
     const employee = await this.prisma.employee.findUnique({
       where: { userId: user.id },
       include: { designation: true },

@@ -39,14 +39,25 @@ export interface ApiModule {
    * role). Omit to show for every tier (a shared item).
    */
   tiers?: RoleTier[];
+  /**
+   * Section heading for this module on the API Docs page (distinct from
+   * `tab`, which groups by mobile-app-tab for the RBAC modal using
+   * role-specific relabeled names unsuited to documentation). Modules
+   * with no endpoints (permission-only, RBAC-modal-only entries) are
+   * excluded from the docs page entirely regardless of this field.
+   */
+  docsGroup?: DocsGroup;
 }
 
 export type RoleTier = 'admin' | 'teacher' | 'student';
+
+export type DocsGroup = 'Core' | 'Academic' | 'Halqa & Teachers' | 'Students' | 'HR & Attendance' | 'Dashboard & Profile';
 
 export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'auth',
     label: 'Authentication',
+    docsGroup: 'Core',
     basePath: '/auth',
     description:
       'Shared with the admin portal — the mobile app authenticates against the same endpoints, no separate mobile login exists. ' +
@@ -154,6 +165,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'academic-classes',
     label: 'Classes',
+    docsGroup: 'Academic',
     tab: 'dashboard',
     section: 'Manage',
     order: 7,
@@ -215,6 +227,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'teachers',
     label: 'Teachers',
+    docsGroup: 'Halqa & Teachers',
     tab: 'dashboard',
     section: 'Manage',
     order: 6,
@@ -349,6 +362,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'halqas',
     label: 'Halqa List',
+    docsGroup: 'Halqa & Teachers',
     tab: 'halqa',
     tiers: ['admin', 'teacher'],
     basePath: '/app/halqas',
@@ -582,6 +596,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'student-leaves',
     label: 'Student Leaves',
+    docsGroup: 'Students',
     basePath: '/app/student_leave',
     description: "Student leave requests. Note: this module's responses never use a status wrapper — just plain { message, ... }. leave_type is validated as 'home'|'hostal' (legacy's own spelling, preserved verbatim).",
     endpoints: [
@@ -720,6 +735,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'students',
     label: 'Students',
+    docsGroup: 'Students',
     tab: 'dashboard',
     section: 'Manage',
     order: 5,
@@ -1056,7 +1072,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     label: 'Announcements',
     tab: 'dashboard',
     order: 8,
-    tiers: ['teacher'],
+    tiers: ['teacher', 'admin'],
     basePath: '/app/announcements',
     description: "Dashboard's Announcements shortcut — same permission as the Announcements module.",
     permissionKey: 'mobile_api.announcements.access',
@@ -1065,6 +1081,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'student-surah-progress',
     label: "Today's Progress",
+    docsGroup: 'Academic',
     tab: 'dashboard',
     section: 'Quick Actions',
     order: 1,
@@ -1386,6 +1403,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'surah-schedules',
     label: 'Surah Schedules',
+    docsGroup: 'Academic',
     tab: 'schedules',
     basePath: '/app/surah-schedules',
     description: "A student's Hifdh (memorization) schedule and progress summary. Legacy reads a non-existent `quality_assessment` column (always null in production) — replicated verbatim, not fixed.",
@@ -1434,6 +1452,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'lesson-stages',
     label: 'Lesson Stages',
+    docsGroup: 'Academic',
     tab: 'lessons',
     basePath: '/app/lesson-stages',
     description: 'Read-only curriculum reference content (stages + their sub-stages) for the mobile lesson browser. Not branch-scoped — shared config, same as the admin Configuration module. Gated by the same permission as Lessons below (both live under LessonContentController).',
@@ -1481,6 +1500,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'lessons',
     label: 'Lessons',
+    docsGroup: 'Academic',
     tab: 'lessons',
     basePath: '/app/lessons',
     description: "Read-only lesson list, filterable by stage/sub-stage — branch-scoped, wraps the same LessonsService the admin Academic module uses. Legacy's two separate query-param routes (stage_id, sub_stage_id) are the same endpoint here.",
@@ -1504,6 +1524,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'hr-lookups',
     label: 'HR Lookups',
+    docsGroup: 'HR & Attendance',
     basePath: '/app',
     description: 'Read-only department/designation dropdown data for the mobile app. Legacy field names verbatim (departments come from legacy\'s "Team" model, aliased to name).',
     endpoints: [
@@ -1526,6 +1547,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'profile',
     label: 'Profile',
+    docsGroup: 'Dashboard & Profile',
     tab: 'profile',
     basePath: '/app/profile',
     description: "The caller's own Employee/Student/User profile. Legacy's task-completion stats (total_tasks, completed_percentage) are dropped — no Task module exists in aqa_v2. Avatar upload is accepted but not persisted — no avatar storage exists yet, `image` is always null.",
@@ -1594,6 +1616,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'dashboard',
     label: 'Summary Card',
+    docsGroup: 'Dashboard & Profile',
     tab: 'dashboard',
     order: 0,
     tiers: ['admin', 'teacher'],
@@ -1705,6 +1728,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'leaves',
     label: 'Leaves (Staff)',
+    docsGroup: 'HR & Attendance',
     basePath: '/app',
     description: 'Leave types, self-service apply/cancel/my-leaves — thin wrappers over the same LeavesService the admin HR module uses. Leave types are a new named LeaveType lookup table (branch-scoped), not the free-text string the underlying Leave/LeaveQuota rows still also carry. Approve/reject is now a separate permission (Leave Approvals, below).',
     endpoints: [
@@ -1797,6 +1821,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'attendance',
     label: 'Employee Attendance',
+    docsGroup: 'HR & Attendance',
     tab: 'attendance',
     order: 1,
     tiers: ['admin'],

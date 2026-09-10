@@ -8,7 +8,7 @@ import { Button } from '../../components/ui/Button';
 import { cn } from '../../lib/utils/cn';
 import { api } from '../../lib/api';
 import { MOBILE_API_CATALOG } from './apiCatalog';
-import type { ApiEndpoint } from './apiCatalog';
+import type { ApiEndpoint, ApiModule, DocsGroup } from './apiCatalog';
 import { JsonView } from './JsonView';
 
 const METHOD_STYLE: Record<ApiEndpoint['method'], string> = {
@@ -119,19 +119,43 @@ function TryItPanel({ endpoint }: { endpoint: ApiEndpoint }) {
   );
 }
 
+/**
+ * The catalog also carries permission-only entries (no documented
+ * endpoints) added purely for the Mobile Permissions role-edit modal's
+ * checklist — e.g. "Add Halqa", "Mark Attendance". Those aren't real API
+ * modules, so the docs page excludes anything with an empty endpoints list.
+ */
+const DOCUMENTED_MODULES = MOBILE_API_CATALOG.filter((m) => m.endpoints.length > 0);
+
+const DOCS_GROUP_ORDER: DocsGroup[] = [
+  'Core',
+  'Academic',
+  'Halqa & Teachers',
+  'Students',
+  'HR & Attendance',
+  'Dashboard & Profile',
+];
+
+const modulesByGroup = new Map<DocsGroup, ApiModule[]>();
+for (const group of DOCS_GROUP_ORDER) modulesByGroup.set(group, []);
+for (const mod of DOCUMENTED_MODULES) {
+  const group = mod.docsGroup ?? 'Core';
+  modulesByGroup.get(group)!.push(mod);
+}
+
 export function MobileApiDocsPage() {
   const [search, setSearch] = useState('');
-  const [activeKey, setActiveKey] = useState(MOBILE_API_CATALOG[0]?.key ?? '');
+  const [activeKey, setActiveKey] = useState(DOCUMENTED_MODULES[0]?.key ?? '');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const activeModule = MOBILE_API_CATALOG.find((m) => m.key === activeKey) ?? MOBILE_API_CATALOG[0];
+  const activeModule = DOCUMENTED_MODULES.find((m) => m.key === activeKey) ?? DOCUMENTED_MODULES[0];
 
   const filteredEndpoints = useMemo(
     () => (activeModule ? activeModule.endpoints.filter((e) => matches(e, search)) : []),
     [activeModule, search],
   );
 
-  const totalEndpoints = useMemo(() => MOBILE_API_CATALOG.reduce((sum, m) => sum + m.endpoints.length, 0), []);
+  const totalEndpoints = useMemo(() => DOCUMENTED_MODULES.reduce((sum, m) => sum + m.endpoints.length, 0), []);
 
   function toggle(id: string) {
     setExpanded((prev) => {
@@ -146,7 +170,7 @@ export function MobileApiDocsPage() {
     <div className="flex flex-col gap-4">
       <PageHeader title="Mobile API Documentation" variant="plain" />
       <p className="-mt-2 text-sm text-text-muted">
-        Reference for the legacy-mirroring Mobile App API — {MOBILE_API_CATALOG.length} modules,{' '}
+        Reference for the legacy-mirroring Mobile App API — {DOCUMENTED_MODULES.length} modules,{' '}
         {totalEndpoints} endpoints. All routes are under <code className="rounded bg-table-alt px-1 py-0.5">/api</code>{' '}
         and require a Bearer token, same as the rest of this API.
       </p>
@@ -161,25 +185,30 @@ export function MobileApiDocsPage() {
         />
       </div>
 
-      <div className="flex flex-wrap gap-1 border-b border-border">
-        {MOBILE_API_CATALOG.map((mod) => {
-          const isActive = mod.key === activeKey;
-          return (
-            <button
-              key={mod.key}
-              onClick={() => setActiveKey(mod.key)}
-              className={cn(
-                '-mb-px flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium transition-colors',
-                isActive
-                  ? 'border-blue text-blue'
-                  : 'border-transparent text-text-muted hover:text-text-primary',
-              )}
-            >
-              {mod.label}
-              <Badge tone={isActive ? 'blue' : 'gray'}>{mod.endpoints.length}</Badge>
-            </button>
-          );
-        })}
+      <div className="flex flex-col gap-2">
+        {DOCS_GROUP_ORDER.filter((group) => modulesByGroup.get(group)?.length).map((group) => (
+          <div key={group} className="flex flex-wrap items-center gap-1 border-b border-border pb-2">
+            <span className="mr-2 text-xs font-semibold uppercase tracking-wide text-text-faint">{group}</span>
+            {(modulesByGroup.get(group) ?? []).map((mod) => {
+              const isActive = mod.key === activeKey;
+              return (
+                <button
+                  key={mod.key}
+                  onClick={() => setActiveKey(mod.key)}
+                  className={cn(
+                    'flex items-center gap-2 rounded-card px-3 py-1.5 text-sm font-medium transition-colors',
+                    isActive
+                      ? 'bg-blue text-white'
+                      : 'bg-table-alt text-text-muted hover:text-text-primary',
+                  )}
+                >
+                  {mod.label}
+                  <Badge tone={isActive ? 'purple' : 'gray'}>{mod.endpoints.length}</Badge>
+                </button>
+              );
+            })}
+          </div>
+        ))}
       </div>
 
       {activeModule && (
