@@ -85,12 +85,6 @@ export class AccessControlService {
     return {
       teachers: has('mobile_api.teachers.access'),
       students: has('mobile_api.students.access'),
-      attendance: {
-        attendance_summary: has('mobile_api.attendance.access'),
-        leave_approval: has('mobile_api.leaves.access'),
-        attendance_approval: has('mobile_api.attendance.access'),
-      },
-      attendance_punch: { Normal: false, Photo: false, Face: false, QR: false },
       halqa: has('mobile_api.halqas.access'),
       admin_halqa: false,
       lessons: has('mobile_api.lesson_content.access'),
@@ -105,6 +99,12 @@ export class AccessControlService {
       hr_lookups: has('mobile_api.hr_lookups.access'),
       notifications: has('mobile_api.notifications.access'),
       announcements: has('mobile_api.announcements.access'),
+      attendance: {
+        attendance_summary: has('mobile_api.attendance.access'),
+        leave_approval: has('mobile_api.leaves.access'),
+        attendance_approval: has('mobile_api.attendance.access'),
+      },
+      attendance_punch: { Normal: false, Photo: false, Face: false, QR: false },
     };
   }
 }
