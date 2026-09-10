@@ -1677,6 +1677,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     label: 'Leave Approvals',
     tab: 'attendance',
     order: 2,
+    adminOnly: true,
     basePath: '/app',
     description: 'Approve/reject staff leave requests (leaves/approvals, attendance/approve-leave, leaves/:id/reject) — split from the Leaves (Staff) module above so approval can be granted independently of self-service apply.',
     permissionKey: 'mobile_api.leaves.approve',
@@ -1695,6 +1696,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     label: 'Employee Attendance',
     tab: 'attendance',
     order: 1,
+    adminOnly: true,
     basePath: '/app/attendance',
     description: "Own/all-employee attendance summaries and reports (Employee Attendance). Approving/rejecting pending clock-ins is now a separate permission (Attendance Approvals, below).",
     endpoints: [
@@ -1772,6 +1774,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     label: 'Attendance Approvals',
     tab: 'attendance',
     order: 4,
+    adminOnly: true,
     basePath: '/app/attendance',
     description: 'Review and approve/reject pending mobile clock-in requests (not-approved, approved, approve/:id, reject/:id) — split from Attendance (view) above so approval can be granted independently of just viewing summaries/reports.',
     permissionKey: 'mobile_api.attendance.approve',
