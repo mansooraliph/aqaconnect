@@ -24,4 +24,10 @@ export class DashboardController {
     const data = await this.service.teacherDashboard(req.user.userId);
     return Reply.dataOnly({ error: false, data });
   }
+
+  @Get('admin-dashboard')
+  async adminDashboard(@Req() req: AuthedRequest) {
+    const data = await this.service.adminDashboard(req.user.userId);
+    return Reply.dataOnly({ error: false, data });
+  }
 }
