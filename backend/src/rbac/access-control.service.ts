@@ -76,8 +76,8 @@ export class AccessControlService {
    * hr_lookups, notifications, announcements) — added so nothing grantable
    * on that admin screen is silently missing from this response.
    *
-   * `admin_halqa` and `attendance_punch` have no `mobile_api.*` equivalent
-   * and stay hardcoded `false` — nothing to derive them from.
+   * `attendance_punch` has no `mobile_api.*` equivalent and stays
+   * hardcoded `false` — nothing to derive it from.
    */
   buildLegacyPermissions(granted: Set<string>): Record<string, Record<string, boolean | string> | boolean> {
     const has = (key: string) => granted.has(key);
@@ -86,7 +86,7 @@ export class AccessControlService {
       teachers: has('mobile_api.teachers.access'),
       students: has('mobile_api.students.access'),
       halqa: has('mobile_api.halqas.access'),
-      admin_halqa: false,
+      admin_halqa: has('mobile_api.admin_halqa.access'),
       lessons: has('mobile_api.lesson_content.access'),
       hifdh: has('mobile_api.surah_schedules.access') || has('mobile_api.student_surah_progress.access'),
       academic_classes: has('mobile_api.academic_classes.access'),

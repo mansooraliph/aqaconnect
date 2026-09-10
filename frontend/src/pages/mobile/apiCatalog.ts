@@ -512,6 +512,17 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     ],
   },
   {
+    key: 'admin-halqa',
+    label: 'Admin Halqa',
+    basePath: '/app/halqas',
+    description:
+      "Gates the mobile app's Admin Halqa tab (the Admin role's cross-Halqa admin view) — not a separate " +
+      "set of endpoints; it reuses the same /app/halqas/* routes as the Halqas module above under the " +
+      "Admin role's broader (branch-wide, not own-Halqa-only) scope. Kept as its own permission so an " +
+      "admin can be granted the Halqa tab independently of the regular Halqa module grant.",
+    endpoints: [],
+  },
+  {
     key: 'student-leaves',
     label: 'Student Leaves',
     basePath: '/app/student_leave',

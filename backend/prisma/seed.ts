@@ -19,6 +19,7 @@ const PERMISSIONS: { key: string; module: string; description: string }[] = [
   { key: 'mobile_api.academic_classes.access', module: 'mobile_api', description: 'Mobile app: create/update academic classes' },
   { key: 'mobile_api.teachers.access', module: 'mobile_api', description: 'Mobile app: teacher account CRUD' },
   { key: 'mobile_api.halqas.access', module: 'mobile_api', description: 'Mobile app: Halqa CRUD, roster, student assignment' },
+  { key: 'mobile_api.admin_halqa.access', module: 'mobile_api', description: 'Mobile app: Admin Halqa tab (cross-branch/all-Halqa admin view)' },
   { key: 'mobile_api.students.access', module: 'mobile_api', description: 'Mobile app: student profile CRUD, activity reports, exam records' },
   { key: 'mobile_api.student_leaves.access', module: 'mobile_api', description: 'Mobile app: student leave requests' },
   { key: 'mobile_api.student_leaves.approve', module: 'mobile_api', description: 'Mobile app: approve/reject student leave requests' },
