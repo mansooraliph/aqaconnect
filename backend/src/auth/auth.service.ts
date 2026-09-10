@@ -29,17 +29,29 @@ export class AuthService {
     return crypto.createHash('sha256').update(rawToken).digest('hex');
   }
 
+  private static readonly UNIT_SECONDS: Record<string, number> = {
+    s: 1,
+    m: 60,
+    h: 60 * 60,
+    d: 24 * 60 * 60,
+  };
+
+  /**
+   * Deliberately long-lived (default 30d) so the mobile app's silent-refresh
+   * flow isn't load-bearing for staying logged in — a missed/broken refresh
+   * call was showing up as frequent "missing token" 401s in the app.
+   */
   private accessTokenTtlSeconds(): number {
-    const ttl = this.configService.get<string>('JWT_ACCESS_TTL', '15m');
-    const match = /^(\d+)m$/.exec(ttl);
-    return match ? Number(match[1]) * 60 : 15 * 60;
+    const ttl = this.configService.get<string>('JWT_ACCESS_TTL', '30d');
+    const match = /^(\d+)([smhd])$/.exec(ttl);
+    return match ? Number(match[1]) * AuthService.UNIT_SECONDS[match[2]] : 30 * 24 * 60 * 60;
   }
 
   private async issueTokenPair(userId: string, username: string): Promise<TokenPair> {
     const payload: Record<string, unknown> = { sub: userId, username };
     const accessToken = this.jwtService.sign(payload, {
       secret: this.configService.getOrThrow<string>('JWT_ACCESS_SECRET'),
-      expiresIn: this.configService.get<string>('JWT_ACCESS_TTL', '15m') as never,
+      expiresIn: this.configService.get<string>('JWT_ACCESS_TTL', '30d') as never,
     });
 
     const rawRefreshToken = crypto.randomBytes(48).toString('hex');
