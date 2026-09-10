@@ -73,8 +73,8 @@ export class AccessControlService {
    * has no equivalent "own vs all" scoping concept to compute them from.
    *
    * teachers/students/lessons/hifdh/halqa/admin_halqa only expose `view`;
-   * leaves only exposes `create`/`edit` — the other legacy CRUD actions for
-   * these modules were dropped by request, not derived from aqa_v2 data.
+   * leaves only exposes `create` — the other legacy CRUD actions for these
+   * modules were dropped by request, not derived from aqa_v2 data.
    */
   buildLegacyPermissions(granted: Set<string>): Record<string, Record<string, boolean | string>> {
     const has = (key: string) => granted.has(key);
@@ -97,7 +97,6 @@ export class AccessControlService {
       attendance_punch: { Normal: false, Photo: false, Face: false, QR: false },
       leaves: {
         create: has('hr.leaves.apply'),
-        edit: has('hr.leaves.approve'),
         own_type: 'own',
       },
       halqa: {
