@@ -62,7 +62,7 @@ const emptyCreateForm = {
   phone: '',
   email: '',
   branchId: '',
-  type: 'Staff' as UserType,
+  type: 'Admin' as const,
 };
 
 export function UsersPage() {
@@ -94,12 +94,6 @@ export function UsersPage() {
   const createBranchEmployee = useMutation({
     mutationFn: async ({ branchId, payload }: { branchId: string; payload: Record<string, unknown> }) =>
       (await api.post(`/branches/${branchId}/employees`, payload)).data,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['users'] }),
-  });
-
-  const createBranchStudent = useMutation({
-    mutationFn: async ({ branchId, payload }: { branchId: string; payload: Record<string, unknown> }) =>
-      (await api.post(`/branches/${branchId}/students`, payload)).data,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['users'] }),
   });
 
@@ -161,12 +155,10 @@ export function UsersPage() {
     setAddErrors(errors);
     if (Object.keys(errors).length > 0) return;
 
-    const type = addForm.branchId ? addForm.type : 'Staff';
-
     setAddSubmitting(true);
     try {
-      if (type === 'Employee' || type === 'Teacher') {
-        await createBranchEmployee.mutateAsync({
+      if (addForm.branchId) {
+        const employee = await createBranchEmployee.mutateAsync({
           branchId: addForm.branchId,
           payload: {
             name: addForm.name,
@@ -174,20 +166,17 @@ export function UsersPage() {
             password: addForm.password,
             phone: addForm.phone || undefined,
             email: addForm.email || undefined,
-            employeeType: type === 'Teacher' ? 'TEACHER' : 'OFFICE_STAFF',
+            employeeType: 'ADMIN',
           },
         });
-      } else if (type === 'Student') {
-        await createBranchStudent.mutateAsync({
-          branchId: addForm.branchId,
-          payload: {
-            name: addForm.name,
-            username: addForm.username,
-            password: addForm.password,
-            email: addForm.email || undefined,
-            createLogin: true,
-          },
-        });
+        const branchAdminRole = rolesQuery.data?.find((r) => r.name === 'Branch Admin');
+        if (branchAdminRole) {
+          await assignRole.mutateAsync({
+            userId: (employee as { userId: string }).userId,
+            roleId: branchAdminRole.id,
+            branchId: addForm.branchId,
+          });
+        }
       } else {
         await createUser.mutateAsync({
           name: addForm.name,
@@ -195,7 +184,6 @@ export function UsersPage() {
           password: addForm.password,
           phone: addForm.phone || undefined,
           email: addForm.email || undefined,
-          branchId: addForm.branchId || undefined,
         });
       }
       toast.success('User created');
@@ -341,6 +329,7 @@ export function UsersPage() {
         open={addOpen}
         title="Add User"
         onClose={() => setAddOpen(false)}
+        position="right"
         footer={
           <>
             <Button variant="outline" onClick={() => setAddOpen(false)} disabled={addSubmitting}>
@@ -394,13 +383,9 @@ export function UsersPage() {
             <Field
               label="User Type"
               required
-              hint="Employee/Teacher/Student also creates the matching HR/Academic record, same as adding one there."
+              hint="Creates an Employee record and grants the Branch Admin role for this branch."
             >
-              <Select
-                value={addForm.type}
-                onChange={(e) => setAddForm((f) => ({ ...f, type: e.target.value as UserType }))}
-                options={USER_TYPES.map((t) => ({ label: t, value: t }))}
-              />
+              <Select value={addForm.type} onChange={() => {}} options={[{ label: 'Admin', value: 'Admin' }]} />
             </Field>
           )}
         </div>
