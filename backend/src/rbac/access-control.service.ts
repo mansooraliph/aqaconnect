@@ -60,72 +60,59 @@ export class AccessControlService {
   }
 
   /**
-   * Builds the legacy-derived mobile permission shape, GROUPED BY APP TAB
-   * (dashboard/schedules/lessons/halqa/attendance/profile, plus an `other`
-   * bucket for permissions not tied to a specific tab) rather than one flat
-   * object — matches the mobile app's own tab structure so the client can
-   * read `permissions.<tab>.<field>` directly instead of flattening this
-   * itself. This is a breaking-change reshape of a previously flat
-   * response; every leaf field keeps its old name, just relocated under
-   * its tab.
+   * Builds the mobile permission shape, GROUPED BY APP TAB (dashboard/
+   * lessons/halqa/attendance/profile) rather than one flat object —
+   * strictly mirrors the checkboxes on the "Mobile App API > Permissions"
+   * admin screen (RbacController.listMobilePermissions /
+   * updateMobilePermissions, apiCatalog.ts): every field here corresponds
+   * to exactly one labeled option there, and nothing not shown there is
+   * included (no schedules/other groups, no tab-master/fallback-only
+   * fields, no attendance_punch). `mark_attendance` and `student_summary`
+   * render as disabled placeholders on that screen (no backend capability
+   * yet) and stay hardcoded `false` here to match.
    *
-   * Wired from the `mobile_api.*` keys — the same permission set managed
-   * on the "Mobile App API > Permissions" admin screen
-   * (RbacController.listMobilePermissions / updateMobilePermissions) —
-   * rather than the general RBAC keys, so toggling a role's mobile module
-   * access there is the one place that controls what this block reports.
-   *
-   * `attendance_punch`, `mark_attendance`, and `student_summary` have no
-   * `mobile_api.*` equivalent and stay hardcoded `false` — nothing to
-   * derive them from (the last two are unbuilt mobile features).
+   * This is a breaking response-shape change coordinated with an
+   * in-progress mobile app update to read permissions.<tab>.<field>.
    */
-  buildLegacyPermissions(
-    granted: Set<string>,
-  ): Record<string, Record<string, boolean | string | Record<string, boolean>>> {
+  buildLegacyPermissions(granted: Set<string>): Record<string, Record<string, boolean>> {
     const has = (key: string) => granted.has(key);
 
     return {
       dashboard: {
-        dashboard: has('mobile_api.dashboard.access'),
-        student_surah_progress: has('mobile_api.student_surah_progress.access'),
-        students_activity: has('mobile_api.students.activity.access'),
-        students_reports: has('mobile_api.students.reports.access'),
+        summary_card: has('mobile_api.dashboard.access'),
+        header: has('mobile_api.dashboard.header'),
+        verse_of_day: has('mobile_api.dashboard.verse_of_day'),
+        todays_progress: has('mobile_api.student_surah_progress.access'),
+        my_progress: has('mobile_api.student_surah_progress.access'),
+        my_learning: has('mobile_api.lesson_content.access'),
+        my_schedule: has('mobile_api.surah_schedules.access'),
+        apply_leave: has('mobile_api.student_leaves.access'),
+        manage_students_activity: has('mobile_api.students.activity.access'),
+        student_reports: has('mobile_api.students.reports.access'),
+        assign_students_to_halqa: has('mobile_api.halqas.access'),
         students: has('mobile_api.students.access'),
         teachers: has('mobile_api.teachers.access'),
-        academic_classes: has('mobile_api.academic_classes.access'),
-        announcements: has('mobile_api.announcements.access'),
-      },
-      schedules: {
-        schedule: has('mobile_api.surah_schedules.access'),
-        surah_schedules: has('mobile_api.surah_schedules.access'),
+        classes: has('mobile_api.academic_classes.access'),
+        announcements: has('mobile_api.announcements.access') || has('mobile_api.dashboard.announcements'),
       },
       lessons: {
+        lesson_stages: has('mobile_api.lesson_content.access'),
         lessons: has('mobile_api.lesson_content.access'),
       },
       halqa: {
-        halqa: has('mobile_api.halqas.access'),
-        halqa_create: has('mobile_api.halqas.create'),
-        admin_halqa: has('mobile_api.admin_halqa.access'),
-        hifdh: has('mobile_api.surah_schedules.access') || has('mobile_api.student_surah_progress.access'),
+        halqa_list: has('mobile_api.halqas.access'),
+        add_halqa: has('mobile_api.halqas.create'),
       },
       attendance: {
-        hasAny: has('mobile_api.tab_attendance.access'),
         mark_attendance: false,
-        attendance_summary: has('mobile_api.attendance.access'),
-        leave_approval: has('mobile_api.leaves.approve'),
-        student_leave_approval: has('mobile_api.student_leaves.approve'),
-        attendance_approval: has('mobile_api.attendance.approve'),
+        employee_attendance: has('mobile_api.attendance.access'),
+        leave_approvals: has('mobile_api.leaves.approve'),
+        student_leave_approvals: has('mobile_api.student_leaves.approve'),
+        attendance_approvals: has('mobile_api.attendance.approve'),
         student_summary: false,
-        attendance_punch: { Normal: false, Photo: false, Face: false, QR: false },
       },
       profile: {
-        profile: has('mobile_api.profile.access'),
-        profile_edit: has('mobile_api.profile.edit'),
-      },
-      other: {
-        student_leaves: has('mobile_api.student_leaves.access'),
-        hr_lookups: has('mobile_api.hr_lookups.access'),
-        notifications: has('mobile_api.notifications.access'),
+        edit_profile: has('mobile_api.profile.edit'),
       },
     };
   }

@@ -32,11 +32,16 @@ export interface ApiModule {
   order?: number;
   /** No backend capability exists yet — renders as a permanently unchecked, disabled placeholder in the role-edit modal instead of a real toggle. */
   alwaysOff?: boolean;
-  /** Only shown in the role-edit modal when editing an admin-tier role (Super Admin/Branch Admin/Management) — e.g. the Dashboard's Manage section, which Teacher doesn't have. */
-  adminOnly?: boolean;
-  /** Only shown in the role-edit modal when editing a non-admin role (Teacher/Student/etc.) — e.g. Teacher's Dashboard-only shortcuts that Admin's dashboard doesn't have. */
-  teacherOnly?: boolean;
+  /**
+   * Restricts this module to specific role tiers in the role-edit modal's
+   * per-tab checklist — 'admin' (Super Admin/Branch Admin/Management),
+   * 'teacher' (everyone else except Student), 'student' (the Student
+   * role). Omit to show for every tier (a shared item).
+   */
+  tiers?: RoleTier[];
 }
+
+export type RoleTier = 'admin' | 'teacher' | 'student';
 
 export const MOBILE_API_CATALOG: ApiModule[] = [
   {
@@ -152,7 +157,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     tab: 'dashboard',
     section: 'Manage',
     order: 7,
-    adminOnly: true,
+    tiers: ['admin'],
     basePath: '/app/academic/classes',
     description: 'Create/update academic classes from the mobile app. Response mirrors the legacy Eloquent model dump verbatim, including the added_by/last_updated_by audit relation.',
     endpoints: [
@@ -213,7 +218,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     tab: 'dashboard',
     section: 'Manage',
     order: 6,
-    adminOnly: true,
+    tiers: ['admin'],
     basePath: '/app/teachers',
     description: 'Teacher account CRUD. Responses use the "Record saved/updated/deleted successfully." wording and status/message envelope verbatim from the legacy controller.',
     endpoints: [
@@ -705,7 +710,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     tab: 'dashboard',
     section: 'Manage',
     order: 5,
-    adminOnly: true,
+    tiers: ['admin'],
     basePath: '/app/students',
     description: 'Student profile CRUD, academic reference lookups, and per-student exam records. Fields with no equivalent data in this schema (mother_name, image_url, custom_fields, roll_no, etc.) are present in the response shape but always null, matching legacy\'s field names exactly.',
     endpoints: [
@@ -1001,6 +1006,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     tab: 'dashboard',
     section: 'Quick Actions',
     order: 4,
+    tiers: ['admin', 'teacher'],
     basePath: '/app/students',
     description:
       "Dashboard Quick Action gating the student-activity and activity-report endpoints " +
@@ -1014,6 +1020,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     tab: 'dashboard',
     section: 'Quick Actions',
     order: 2,
+    tiers: ['admin', 'teacher'],
     basePath: '/app/students',
     description: "Dashboard Quick Action gating the admission-year-reports endpoint.",
     permissionKey: 'mobile_api.students.reports.access',
@@ -1025,7 +1032,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     tab: 'dashboard',
     section: 'Quick Actions',
     order: 3,
-    teacherOnly: true,
+    tiers: ['teacher', 'admin'],
     basePath: '/app/halqas/assign-student',
     description: "Teacher's Dashboard Quick Action for assigning students to a Halqa — same permission as Halqa List (Halqa tab), surfaced again here since it's also a Dashboard shortcut.",
     permissionKey: 'mobile_api.halqas.access',
@@ -1036,7 +1043,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     label: 'Announcements',
     tab: 'dashboard',
     order: 8,
-    teacherOnly: true,
+    tiers: ['teacher'],
     basePath: '/app/announcements',
     description: "Dashboard's Announcements shortcut — same permission as the Announcements module.",
     permissionKey: 'mobile_api.announcements.access',
@@ -1048,6 +1055,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     tab: 'dashboard',
     section: 'Quick Actions',
     order: 1,
+    tiers: ['admin', 'teacher'],
     basePath: '/app/student-surah-progress',
     description: 'Per-ayah-range Surah memorization progress ledger (New/Juzh/Old Lesson types, grading, verification, Juzuh/page-range tracking) — separate from the Surah Schedules module below. Legacy field names (badge classes, added_by/last_updated_by/verified_by, remark_file_url) are all present verbatim.',
     endpoints: [
@@ -1575,6 +1583,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     label: 'Summary Card',
     tab: 'dashboard',
     order: 0,
+    tiers: ['admin', 'teacher'],
     basePath: '/app/teacher-dashboard',
     description: "Summary counts for the caller's own Halqas/students, plus a branch announcements feed (a new Announcement model — no admin CRUD UI yet, rows are seeded/managed directly). Also gates /app/admin-dashboard (branch-wide teacher/student/Halqa/attendance/progress summary for admin roles). Unlike legacy, the response shape is consistent even when the teacher has no Halqas (user/announcements are always present).",
     endpoints: [
@@ -1598,6 +1607,87 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
 }`,
       },
     ],
+  },
+  {
+    key: 'dashboard-header',
+    label: 'Header',
+    tab: 'dashboard',
+    order: -2,
+    tiers: ['student'],
+    basePath: '/app/students',
+    description: "Student Dashboard's greeting header.",
+    permissionKey: 'mobile_api.dashboard.header',
+    endpoints: [],
+  },
+  {
+    key: 'dashboard-verse',
+    label: 'Verse of the Day card',
+    tab: 'dashboard',
+    order: -1,
+    tiers: ['student'],
+    basePath: '/app/students',
+    description: "Student Dashboard's Verse of the Day card.",
+    permissionKey: 'mobile_api.dashboard.verse_of_day',
+    endpoints: [],
+  },
+  {
+    key: 'dashboard-my-progress',
+    label: 'My Progress',
+    tab: 'dashboard',
+    section: 'My Learning',
+    order: 1,
+    tiers: ['student'],
+    basePath: '/app/student-surah-progress',
+    description: "Student's own Surah progress — same permission as Today's Progress (Admin/Teacher's Quick Action).",
+    permissionKey: 'mobile_api.student_surah_progress.access',
+    endpoints: [],
+  },
+  {
+    key: 'dashboard-my-learning',
+    label: 'My Learning',
+    tab: 'dashboard',
+    section: 'My Learning',
+    order: 2,
+    tiers: ['student'],
+    basePath: '/app/lessons',
+    description: 'Same permission as the Lessons module (Lessons tab).',
+    permissionKey: 'mobile_api.lesson_content.access',
+    endpoints: [],
+  },
+  {
+    key: 'dashboard-my-schedule',
+    label: 'My Schedule',
+    tab: 'dashboard',
+    section: 'My Learning',
+    order: 3,
+    tiers: ['student'],
+    basePath: '/app/surah-schedules',
+    description: "Student's own Hifdh schedule — same permission as Surah Schedules.",
+    permissionKey: 'mobile_api.surah_schedules.access',
+    endpoints: [],
+  },
+  {
+    key: 'dashboard-apply-leave',
+    label: 'Apply Leave',
+    tab: 'dashboard',
+    section: 'My Learning',
+    order: 4,
+    tiers: ['student'],
+    basePath: '/app/student_leave',
+    description: 'Same permission as Student Leaves (apply/view own leave requests).',
+    permissionKey: 'mobile_api.student_leaves.access',
+    endpoints: [],
+  },
+  {
+    key: 'dashboard-announcements-student',
+    label: 'Announcements',
+    tab: 'dashboard',
+    order: 9,
+    tiers: ['student'],
+    basePath: '/app/announcements',
+    description: "Student Dashboard's Announcements widget.",
+    permissionKey: 'mobile_api.dashboard.announcements',
+    endpoints: [],
   },
   {
     key: 'leaves',
@@ -1677,7 +1767,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     label: 'Leave Approvals',
     tab: 'attendance',
     order: 2,
-    adminOnly: true,
+    tiers: ['admin'],
     basePath: '/app',
     description: 'Approve/reject staff leave requests (leaves/approvals, attendance/approve-leave, leaves/:id/reject) — split from the Leaves (Staff) module above so approval can be granted independently of self-service apply.',
     permissionKey: 'mobile_api.leaves.approve',
@@ -1696,7 +1786,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     label: 'Employee Attendance',
     tab: 'attendance',
     order: 1,
-    adminOnly: true,
+    tiers: ['admin'],
     basePath: '/app/attendance',
     description: "Own/all-employee attendance summaries and reports (Employee Attendance). Approving/rejecting pending clock-ins is now a separate permission (Attendance Approvals, below).",
     endpoints: [
@@ -1774,7 +1864,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     label: 'Attendance Approvals',
     tab: 'attendance',
     order: 4,
-    adminOnly: true,
+    tiers: ['admin'],
     basePath: '/app/attendance',
     description: 'Review and approve/reject pending mobile clock-in requests (not-approved, approved, approve/:id, reject/:id) — split from Attendance (view) above so approval can be granted independently of just viewing summaries/reports.',
     permissionKey: 'mobile_api.attendance.approve',

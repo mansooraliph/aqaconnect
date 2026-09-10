@@ -10,7 +10,7 @@ import { Checkbox } from '../../components/ui/Checkbox';
 import { Button } from '../../components/ui/Button';
 import { Modal } from '../../components/ui/Modal';
 import { toast } from '../../components/ui/toast';
-import { MOBILE_API_CATALOG, type AppTab } from './apiCatalog';
+import { MOBILE_API_CATALOG, type AppTab, type RoleTier } from './apiCatalog';
 
 interface MobilePermission {
   id: string;
@@ -63,6 +63,13 @@ export function MobilePermissionsPage() {
 
   const ADMIN_ROLE_NAMES = ['Super Admin', 'Branch Admin', 'Management'];
 
+  /** Anything not Admin or Student defaults to the 'teacher' tier (Teacher, Accountant, etc.). */
+  const roleTier = (name: string): RoleTier => {
+    if (ADMIN_ROLE_NAMES.includes(name)) return 'admin';
+    if (name === 'Student') return 'student';
+    return 'teacher';
+  };
+
   const sortedRoles = useMemo(() => {
     const roles = data?.roles ?? [];
     const admin = ADMIN_ROLE_NAMES.map((name) => roles.find((r) => r.name === name)).filter(
@@ -88,24 +95,20 @@ export function MobilePermissionsPage() {
           section: m.section,
           order: m.order ?? 0,
           alwaysOff: m.alwaysOff ?? false,
-          adminOnly: m.adminOnly ?? false,
-          teacherOnly: m.teacherOnly ?? false,
+          tiers: m.tiers,
           permissionKey: m.permissionKey ?? derivePermissionKey(m.key),
         }))
         .sort((a, b) => a.order - b.order),
     [],
   );
 
-  const isAdminRoleName = (name: string) => ADMIN_ROLE_NAMES.includes(name);
-
-  /** Admin-only items (e.g. Dashboard's Manage section) and teacher-only items (e.g. Assign Students to Halqa) are mutually exclusive by role tier. */
-  const modulesForRoleTier = (isAdmin: boolean) =>
-    modules.filter((m) => (!m.adminOnly || isAdmin) && (!m.teacherOnly || !isAdmin));
+  /** Modules with no `tiers` restriction are shared across all role tiers. */
+  const modulesForRoleTier = (tier: RoleTier) => modules.filter((m) => !m.tiers || m.tiers.includes(tier));
 
   const editingRole = data?.roles.find((r) => r.id === editingRoleId) ?? null;
-  const editingIsAdmin = editingRole ? isAdminRoleName(editingRole.name) : false;
+  const editingTier: RoleTier = editingRole ? roleTier(editingRole.name) : 'teacher';
 
-  const roleModules = useMemo(() => modulesForRoleTier(editingIsAdmin), [modules, editingIsAdmin]);
+  const roleModules = useMemo(() => modulesForRoleTier(editingTier), [modules, editingTier]);
 
   const modulesByTab = useMemo(() => {
     const grouped = new Map<AppTab, typeof modules>();
@@ -204,7 +207,7 @@ export function MobilePermissionsPage() {
                   </td>
                 </tr>,
                 ...roles.map((role) => {
-                  const roleTierModules = modulesForRoleTier(isAdminRoleName(role.name)).filter((m) => !m.alwaysOff);
+                  const roleTierModules = modulesForRoleTier(roleTier(role.name)).filter((m) => !m.alwaysOff);
                   const grantedCount = roleTierModules.filter((m) => role.grantedKeys.includes(m.permissionKey)).length;
                   return (
                     <tr key={role.id} className="border-b border-border last:border-0">
