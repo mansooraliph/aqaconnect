@@ -1,11 +1,11 @@
 import { useMemo } from 'react';
+import type { ComponentType } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, BookOpen, GraduationCap, DollarSign, Smartphone, UsersRound } from 'lucide-react';
 import { useAuthStore } from '../store/auth';
 import { api } from '../lib/api';
-import { MODULES } from '../layout/AppLayout';
 import { PageHeader } from '../components/ui/PageHeader';
 import { StatCard } from '../components/ui/StatCard';
 import { DataTable } from '../components/ui/DataTable';
@@ -255,17 +255,72 @@ function WelcomeSection() {
   );
 }
 
+interface QuickLink {
+  key: string;
+  label: string;
+  description: string;
+  icon: ComponentType<{ className?: string }>;
+  path: string;
+  permission: string;
+}
+
+/** Curated set of frequently-used destinations, not a 1:1 mirror of the sidebar's module list. */
+const QUICK_LINKS: QuickLink[] = [
+  {
+    key: 'halqas',
+    label: 'Halqas',
+    description: 'Manage Halqas',
+    icon: BookOpen,
+    path: '/academic/halqas',
+    permission: 'academic.halqas.view',
+  },
+  {
+    key: 'hifdh-tracking',
+    label: 'Hifdh Tracking',
+    description: 'Track Hifdh schedules',
+    icon: BookOpen,
+    path: '/academic/hifdh-tracking',
+    permission: 'academic.hifdh_schedules.view',
+  },
+  {
+    key: 'student-list',
+    label: 'Student List',
+    description: 'Manage students',
+    icon: GraduationCap,
+    path: '/student-management/students',
+    permission: 'student_management.students.view',
+  },
+  {
+    key: 'teachers-list',
+    label: 'Teachers List',
+    description: 'Manage teachers',
+    icon: UsersRound,
+    path: '/hr/teachers',
+    permission: 'hr.teachers.view',
+  },
+  {
+    key: 'fees',
+    label: 'Fees',
+    description: 'Manage fees',
+    icon: DollarSign,
+    path: '/fees/fee-types',
+    permission: 'fees.fee_types.view',
+  },
+  {
+    key: 'mobile-api',
+    label: 'Mobile API',
+    description: 'Manage mobile app access',
+    icon: Smartphone,
+    path: '/mobile/permissions',
+    permission: 'system.mobile_api.view',
+  },
+];
+
 function QuickLinksSection() {
   const navigate = useNavigate();
   const hasPermission = useAuthStore((s) => s.hasPermission);
 
-  const links = useMemo(
-    () =>
-      MODULES.map((m) => ({ ...m, items: m.items.filter((i) => hasPermission(i.permission)) })).filter(
-        (m) => m.items.length > 0,
-      ),
-    [hasPermission],
-  );
+  const links = useMemo(() => QUICK_LINKS.filter((l) => hasPermission(l.permission)), [hasPermission]);
 
   if (links.length === 0) return null;
 
@@ -273,12 +328,12 @@ function QuickLinksSection() {
     <div className="mt-6 rounded-card border border-border bg-white p-5">
       <h2 className="text-base font-semibold text-text-primary">Quick links</h2>
       <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {links.map((m) => {
-          const Icon = m.icon;
+        {links.map((link) => {
+          const Icon = link.icon;
           return (
             <button
-              key={m.key}
-              onClick={() => navigate(m.items[0].key)}
+              key={link.key}
+              onClick={() => navigate(link.path)}
               className={cn(
                 'flex items-center gap-3 rounded-card border border-border p-4 text-left transition-colors',
                 'hover:border-brand/40 hover:bg-brand/5',
@@ -288,8 +343,8 @@ function QuickLinksSection() {
                 <Icon className="h-4.5 w-4.5" />
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-medium text-text-primary">{m.label}</span>
-                <span className="block truncate text-xs text-text-muted">{m.items.length} section{m.items.length === 1 ? '' : 's'}</span>
+                <span className="block truncate text-sm font-medium text-text-primary">{link.label}</span>
+                <span className="block truncate text-xs text-text-muted">{link.description}</span>
               </span>
               <ChevronRight className="h-4 w-4 shrink-0 text-text-faint" />
             </button>

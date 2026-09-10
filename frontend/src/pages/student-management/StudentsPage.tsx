@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Copy, KeyRound, Pencil, Plus } from 'lucide-react';
@@ -174,6 +175,19 @@ export function StudentsPage() {
     setErrors({});
     setModalOpen(true);
   };
+
+  // Top-bar "Add Student" shortcut lands here with ?new=1 to open the create modal directly.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get('new') === '1') {
+      openCreate();
+      setSearchParams((prev) => {
+        prev.delete('new');
+        return prev;
+      }, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   const openEdit = (record: Student) => {
     setEditing(record);

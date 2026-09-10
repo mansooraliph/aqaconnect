@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Pencil, Plus } from 'lucide-react';
@@ -147,6 +148,19 @@ export function EmployeesPage() {
     setErrors({});
     setModalOpen(true);
   };
+
+  // Top-bar "Add Employee" shortcut lands here with ?new=1 to open the create modal directly.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get('new') === '1') {
+      openCreate();
+      setSearchParams((prev) => {
+        prev.delete('new');
+        return prev;
+      }, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   const openEdit = (record: Employee) => {
     setEditing(record);

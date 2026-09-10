@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Plus, Trash2 } from 'lucide-react';
@@ -86,6 +87,19 @@ export function HalqasPage() {
     setEditing(null);
     setModalOpen(true);
   };
+
+  // Top-bar "Add Halqa" shortcut lands here with ?new=1 to open the create modal directly.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get('new') === '1') {
+      openCreate();
+      setSearchParams((prev) => {
+        prev.delete('new');
+        return prev;
+      }, { replace: true });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   const openEdit = (halqa: Halqa) => {
     setEditing(halqa);

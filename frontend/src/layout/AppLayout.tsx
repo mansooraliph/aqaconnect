@@ -16,11 +16,14 @@ import {
   ChevronLeft,
   LogOut,
   ChevronDown,
+  UserPlus,
+  Plus,
 } from 'lucide-react';
 import { useAuthStore } from '../store/auth';
 import { useBranches } from '../hooks/useBranches';
 import { api } from '../lib/api';
 import { Select } from '../components/ui/Select';
+import { Button } from '../components/ui/Button';
 import { cn } from '../lib/utils/cn';
 
 export interface NavItem {
@@ -192,6 +195,21 @@ export function AppLayout() {
 
   const activeModule = visibleModules.find((m) => location.pathname.startsWith(`/${m.key}`));
 
+  const quickAddShortcuts = useMemo(
+    () =>
+      [
+        { key: 'employee', label: 'Add Employee', path: '/hr/employees', permission: 'hr.employees.manage' },
+        {
+          key: 'student',
+          label: 'Add Student',
+          path: '/student-management/students',
+          permission: 'student_management.students.manage',
+        },
+        { key: 'halqa', label: 'Add Halqa', path: '/academic/halqas', permission: 'academic.halqas.manage' },
+      ].filter((s) => hasPermission(s.permission)),
+    [hasPermission],
+  );
+
   const handleLogout = async () => {
     try {
       if (refreshToken) {
@@ -301,6 +319,22 @@ export function AppLayout() {
           </div>
 
           <div className="flex items-center gap-4">
+            {quickAddShortcuts.length > 0 && (
+              <div className="flex items-center gap-2">
+                {quickAddShortcuts.map((s) => (
+                  <Button
+                    key={s.key}
+                    size="sm"
+                    variant="outline"
+                    onClick={() => navigate(`${s.path}?new=1`)}
+                  >
+                    {s.key === 'employee' ? <UserPlus className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                    {s.label}
+                  </Button>
+                ))}
+              </div>
+            )}
+
             {user?.isGlobal && branches && branches.length > 0 ? (
               <Select
                 className="w-56"
