@@ -551,6 +551,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     key: 'halqas-create',
     label: 'Add Halqa',
     tab: 'halqa',
+    tiers: ['admin', 'teacher'],
     basePath: '/app/halqas/store',
     description: 'Add-Halqa button, split from Halqa List above so creating new Halqas can be granted independently of general Halqa management.',
     permissionKey: 'mobile_api.halqas.create',
@@ -696,6 +697,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     label: 'Student Leave Approvals',
     tab: 'attendance',
     order: 3,
+    tiers: ['admin', 'teacher'],
     basePath: '/app/student_leave',
     description:
       'Approve/reject student leave requests — a distinct permission from Student Leaves above (which covers ' +
@@ -1875,6 +1877,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     label: 'Student Summary',
     tab: 'attendance',
     order: 5,
+    tiers: ['admin', 'teacher'],
     basePath: '/app',
     description: "Teacher's Attendance tab student-attendance summary — not implemented yet in aqa_v2, always off until built.",
     permissionKey: 'mobile_api.attendance.student_summary',
