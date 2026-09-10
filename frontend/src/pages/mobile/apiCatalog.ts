@@ -138,7 +138,8 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   },
   {
     key: 'academic-classes',
-    label: 'Academic Classes',
+    label: 'Classes',
+    tab: 'dashboard',
     basePath: '/app/academic/classes',
     description: 'Create/update academic classes from the mobile app. Response mirrors the legacy Eloquent model dump verbatim, including the added_by/last_updated_by audit relation.',
     endpoints: [
@@ -978,7 +979,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   },
   {
     key: 'student-surah-progress',
-    label: 'Student Surah Progress',
+    label: "Today's Progress",
     tab: 'dashboard',
     basePath: '/app/student-surah-progress',
     description: 'Per-ayah-range Surah memorization progress ledger (New/Juzh/Old Lesson types, grading, verification, Juzuh/page-range tracking) — separate from the Surah Schedules module below. Legacy field names (badge classes, added_by/last_updated_by/verified_by, remark_file_url) are all present verbatim.',
@@ -1495,7 +1496,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   },
   {
     key: 'dashboard',
-    label: 'Dashboard',
+    label: 'Summary Card',
     tab: 'dashboard',
     basePath: '/app/teacher-dashboard',
     description: "Summary counts for the caller's own Halqas/students, plus a branch announcements feed (a new Announcement model — no admin CRUD UI yet, rows are seeded/managed directly). Also gates /app/admin-dashboard (branch-wide teacher/student/Halqa/attendance/progress summary for admin roles). Unlike legacy, the response shape is consistent even when the teacher has no Halqas (user/announcements are always present).",
