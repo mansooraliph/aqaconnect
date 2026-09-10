@@ -132,6 +132,10 @@ const PERMISSIONS: { key: string; module: string; description: string }[] = [
   { key: 'academic.exam_results.enter', module: 'academic', description: 'Enter/edit draft exam results' },
   { key: 'academic.exam_results.publish', module: 'academic', description: 'Publish exam results' },
   { key: 'academic.dashboard.view', module: 'academic', description: 'View Academic dashboard KPIs' },
+
+  // Devices
+  { key: 'devices.biometric_devices.view', module: 'devices', description: 'View biometric devices, enrollments, and attendance punches' },
+  { key: 'devices.biometric_devices.manage', module: 'devices', description: 'Assign/approve/deactivate devices, run device commands, enroll users' },
 ];
 
 // Role -> permission keys, per MIGRATION_PLAN.md's "RBAC seed data" starting point.
@@ -157,7 +161,7 @@ const ROLES: {
       'system.mobile_api.view',
       ...PERMISSIONS.filter(
         (p) =>
-          ['configuration', 'hr', 'student_management', 'fees', 'academic'].includes(p.module) &&
+          ['configuration', 'hr', 'student_management', 'fees', 'academic', 'devices'].includes(p.module) &&
           p.key.endsWith('.view'),
       ).map((p) => p.key),
     ],
@@ -173,9 +177,16 @@ const ROLES: {
       'system.mobile_api.view',
       'system.mobile_api.manage',
       ...PERMISSIONS.filter((p) =>
-        ['configuration', 'hr', 'student_management', 'fees', 'academic', 'mobile_api', 'communication'].includes(
-          p.module,
-        ),
+        [
+          'configuration',
+          'hr',
+          'student_management',
+          'fees',
+          'academic',
+          'mobile_api',
+          'communication',
+          'devices',
+        ].includes(p.module),
       ).map((p) => p.key),
     ],
   },
