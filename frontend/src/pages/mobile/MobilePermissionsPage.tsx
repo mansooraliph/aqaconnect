@@ -87,22 +87,34 @@ export function MobilePermissionsPage() {
           tab: m.tab as AppTab,
           section: m.section,
           order: m.order ?? 0,
+          alwaysOff: m.alwaysOff ?? false,
+          adminOnly: m.adminOnly ?? false,
+          teacherOnly: m.teacherOnly ?? false,
           permissionKey: m.permissionKey ?? derivePermissionKey(m.key),
         }))
         .sort((a, b) => a.order - b.order),
     [],
   );
 
+  const isAdminRoleName = (name: string) => ADMIN_ROLE_NAMES.includes(name);
+
+  /** Admin-only items (e.g. Dashboard's Manage section) and teacher-only items (e.g. Assign Students to Halqa) are mutually exclusive by role tier. */
+  const modulesForRoleTier = (isAdmin: boolean) =>
+    modules.filter((m) => (!m.adminOnly || isAdmin) && (!m.teacherOnly || !isAdmin));
+
+  const editingRole = data?.roles.find((r) => r.id === editingRoleId) ?? null;
+  const editingIsAdmin = editingRole ? isAdminRoleName(editingRole.name) : false;
+
+  const roleModules = useMemo(() => modulesForRoleTier(editingIsAdmin), [modules, editingIsAdmin]);
+
   const modulesByTab = useMemo(() => {
     const grouped = new Map<AppTab, typeof modules>();
     for (const tab of TAB_ORDER) grouped.set(tab, []);
-    for (const m of modules) grouped.get(m.tab)!.push(m);
+    for (const m of roleModules) grouped.get(m.tab)!.push(m);
     return grouped;
-  }, [modules]);
+  }, [roleModules]);
 
   const visibleTabs = TAB_ORDER.filter((tab) => (modulesByTab.get(tab)?.length ?? 0) > 0);
-
-  const editingRole = data?.roles.find((r) => r.id === editingRoleId) ?? null;
 
   const openEditor = (role: MobileRole) => {
     setEditingRoleId(role.id);
@@ -192,7 +204,8 @@ export function MobilePermissionsPage() {
                   </td>
                 </tr>,
                 ...roles.map((role) => {
-                  const grantedCount = modules.filter((m) => role.grantedKeys.includes(m.permissionKey)).length;
+                  const roleTierModules = modulesForRoleTier(isAdminRoleName(role.name)).filter((m) => !m.alwaysOff);
+                  const grantedCount = roleTierModules.filter((m) => role.grantedKeys.includes(m.permissionKey)).length;
                   return (
                     <tr key={role.id} className="border-b border-border last:border-0">
                       <td className="px-4 py-3">
@@ -202,7 +215,7 @@ export function MobilePermissionsPage() {
                         </div>
                       </td>
                       <td className="px-4 py-3 text-text-muted">
-                        {grantedCount} of {modules.length}
+                        {grantedCount} of {roleTierModules.length}
                       </td>
                       {canManage && (
                         <td className="px-4 py-3 text-right">
@@ -242,7 +255,7 @@ export function MobilePermissionsPage() {
           <div className="flex flex-col gap-4">
             <div className="flex flex-wrap gap-1 border-b border-border pb-3">
               {visibleTabs.map((tab) => {
-                const tabModules = modulesByTab.get(tab) ?? [];
+                const tabModules = (modulesByTab.get(tab) ?? []).filter((m) => !m.alwaysOff);
                 const grantedInTab = tabModules.filter((m) => draft.has(m.permissionKey)).length;
                 return (
                   <button
@@ -280,11 +293,14 @@ export function MobilePermissionsPage() {
                         </p>
                       )}
                       <label className="flex items-center justify-between gap-3 rounded-card px-2 py-2 hover:bg-table-alt">
-                        <span className="text-sm text-text-primary">{m.label}</span>
+                        <span className="text-sm text-text-primary">
+                          {m.label}
+                          {m.alwaysOff && <span className="ml-1.5 text-xs text-text-faint">(not available yet)</span>}
+                        </span>
                         <Checkbox
-                          checked={draft.has(m.permissionKey)}
+                          checked={!m.alwaysOff && draft.has(m.permissionKey)}
                           onChange={() => toggle(m.permissionKey)}
-                          disabled={!canManage}
+                          disabled={!canManage || m.alwaysOff}
                         />
                       </label>
                     </div>

@@ -30,6 +30,12 @@ export interface ApiModule {
   section?: string;
   /** Explicit sort position within its tab (and section) in the role-edit modal. Lower first; ties keep catalog order. Defaults to 0. */
   order?: number;
+  /** No backend capability exists yet — renders as a permanently unchecked, disabled placeholder in the role-edit modal instead of a real toggle. */
+  alwaysOff?: boolean;
+  /** Only shown in the role-edit modal when editing an admin-tier role (Super Admin/Branch Admin/Management) — e.g. the Dashboard's Manage section, which Teacher doesn't have. */
+  adminOnly?: boolean;
+  /** Only shown in the role-edit modal when editing a non-admin role (Teacher/Student/etc.) — e.g. Teacher's Dashboard-only shortcuts that Admin's dashboard doesn't have. */
+  teacherOnly?: boolean;
 }
 
 export const MOBILE_API_CATALOG: ApiModule[] = [
@@ -145,7 +151,8 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     label: 'Classes',
     tab: 'dashboard',
     section: 'Manage',
-    order: 6,
+    order: 7,
+    adminOnly: true,
     basePath: '/app/academic/classes',
     description: 'Create/update academic classes from the mobile app. Response mirrors the legacy Eloquent model dump verbatim, including the added_by/last_updated_by audit relation.',
     endpoints: [
@@ -205,7 +212,8 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     label: 'Teachers',
     tab: 'dashboard',
     section: 'Manage',
-    order: 5,
+    order: 6,
+    adminOnly: true,
     basePath: '/app/teachers',
     description: 'Teacher account CRUD. Responses use the "Record saved/updated/deleted successfully." wording and status/message envelope verbatim from the legacy controller.',
     endpoints: [
@@ -557,7 +565,6 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'student-leaves',
     label: 'Student Leaves',
-    tab: 'attendance',
     basePath: '/app/student_leave',
     description: "Student leave requests. Note: this module's responses never use a status wrapper — just plain { message, ... }. leave_type is validated as 'home'|'hostal' (legacy's own spelling, preserved verbatim).",
     endpoints: [
@@ -669,9 +676,21 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     ],
   },
   {
+    key: 'attendance-mark',
+    label: 'Mark Attendance',
+    tab: 'attendance',
+    order: 0,
+    basePath: '/app',
+    description: 'Mobile self mark-attendance flow — not implemented yet in aqa_v2, always off until built.',
+    permissionKey: 'mobile_api.attendance.mark',
+    alwaysOff: true,
+    endpoints: [],
+  },
+  {
     key: 'student-leaves-approve',
     label: 'Student Leave Approvals',
     tab: 'attendance',
+    order: 3,
     basePath: '/app/student_leave',
     description:
       'Approve/reject student leave requests — a distinct permission from Student Leaves above (which covers ' +
@@ -685,7 +704,8 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     label: 'Students',
     tab: 'dashboard',
     section: 'Manage',
-    order: 4,
+    order: 5,
+    adminOnly: true,
     basePath: '/app/students',
     description: 'Student profile CRUD, academic reference lookups, and per-student exam records. Fields with no equivalent data in this schema (mother_name, image_url, custom_fields, roll_no, etc.) are present in the response shape but always null, matching legacy\'s field names exactly.',
     endpoints: [
@@ -980,7 +1000,7 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     label: 'Manage Students Activity',
     tab: 'dashboard',
     section: 'Quick Actions',
-    order: 2,
+    order: 4,
     basePath: '/app/students',
     description:
       "Dashboard Quick Action gating the student-activity and activity-report endpoints " +
@@ -993,10 +1013,33 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     label: 'Student Reports',
     tab: 'dashboard',
     section: 'Quick Actions',
-    order: 3,
+    order: 2,
     basePath: '/app/students',
     description: "Dashboard Quick Action gating the admission-year-reports endpoint.",
     permissionKey: 'mobile_api.students.reports.access',
+    endpoints: [],
+  },
+  {
+    key: 'dashboard-assign-halqa',
+    label: 'Assign Students to Halqa',
+    tab: 'dashboard',
+    section: 'Quick Actions',
+    order: 3,
+    teacherOnly: true,
+    basePath: '/app/halqas/assign-student',
+    description: "Teacher's Dashboard Quick Action for assigning students to a Halqa — same permission as Halqa List (Halqa tab), surfaced again here since it's also a Dashboard shortcut.",
+    permissionKey: 'mobile_api.halqas.access',
+    endpoints: [],
+  },
+  {
+    key: 'dashboard-announcements',
+    label: 'Announcements',
+    tab: 'dashboard',
+    order: 8,
+    teacherOnly: true,
+    basePath: '/app/announcements',
+    description: "Dashboard's Announcements shortcut — same permission as the Announcements module.",
+    permissionKey: 'mobile_api.announcements.access',
     endpoints: [],
   },
   {
@@ -1559,7 +1602,6 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'leaves',
     label: 'Leaves (Staff)',
-    tab: 'attendance',
     basePath: '/app',
     description: 'Leave types, self-service apply/cancel/my-leaves — thin wrappers over the same LeavesService the admin HR module uses. Leave types are a new named LeaveType lookup table (branch-scoped), not the free-text string the underlying Leave/LeaveQuota rows still also carry. Approve/reject is now a separate permission (Leave Approvals, below).',
     endpoints: [
@@ -1632,8 +1674,9 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   },
   {
     key: 'leaves-approve',
-    label: 'Leave Approvals (Staff)',
+    label: 'Leave Approvals',
     tab: 'attendance',
+    order: 2,
     basePath: '/app',
     description: 'Approve/reject staff leave requests (leaves/approvals, attendance/approve-leave, leaves/:id/reject) — split from the Leaves (Staff) module above so approval can be granted independently of self-service apply.',
     permissionKey: 'mobile_api.leaves.approve',
@@ -1642,7 +1685,6 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   {
     key: 'tab-attendance',
     label: 'Attendance Tab (master)',
-    tab: 'attendance',
     basePath: '/app',
     description: "Master switch for the Attendance tab itself — a role needs this to see the tab at all (My Attendance/My Leaves show unconditionally once it does). The permissions below it further narrow what's usable inside the tab.",
     permissionKey: 'mobile_api.tab_attendance.access',
@@ -1650,8 +1692,9 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
   },
   {
     key: 'attendance',
-    label: 'Attendance (view)',
+    label: 'Employee Attendance',
     tab: 'attendance',
+    order: 1,
     basePath: '/app/attendance',
     description: "Own/all-employee attendance summaries and reports (Employee Attendance). Approving/rejecting pending clock-ins is now a separate permission (Attendance Approvals, below).",
     endpoints: [
@@ -1728,9 +1771,21 @@ export const MOBILE_API_CATALOG: ApiModule[] = [
     key: 'attendance-approve',
     label: 'Attendance Approvals',
     tab: 'attendance',
+    order: 4,
     basePath: '/app/attendance',
     description: 'Review and approve/reject pending mobile clock-in requests (not-approved, approved, approve/:id, reject/:id) — split from Attendance (view) above so approval can be granted independently of just viewing summaries/reports.',
     permissionKey: 'mobile_api.attendance.approve',
+    endpoints: [],
+  },
+  {
+    key: 'attendance-student-summary',
+    label: 'Student Summary',
+    tab: 'attendance',
+    order: 5,
+    basePath: '/app',
+    description: "Teacher's Attendance tab student-attendance summary — not implemented yet in aqa_v2, always off until built.",
+    permissionKey: 'mobile_api.attendance.student_summary',
+    alwaysOff: true,
     endpoints: [],
   },
 ];
