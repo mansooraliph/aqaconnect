@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
-import { KeyRound, Plus, ShieldPlus } from 'lucide-react';
+import { KeyRound, Pencil, Plus } from 'lucide-react';
 import { useAuthStore } from '../store/auth';
 import { useBranches } from '../hooks/useBranches';
 import { api } from '../lib/api';
@@ -30,12 +30,14 @@ interface UserRow {
   username: string;
   firstName: string;
   lastName: string;
+  email: string | null;
   phone: string | null;
   isActive: boolean;
   branchId: string | null;
   lastLoginAt: string | null;
   createdAt: string;
   type: UserType;
+  role: string | null;
 }
 
 interface RoleGrant {
@@ -110,6 +112,15 @@ export function UsersPage() {
       (await api.post(`/users/${userId}/reset-password`, { password })).data,
   });
 
+  const updateUser = useMutation({
+    mutationFn: async ({ userId, payload }: { userId: string; payload: Record<string, unknown> }) =>
+      (await api.patch(`/users/${userId}`, payload)).data,
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+      queryClient.invalidateQueries({ queryKey: ['user-detail', variables.userId] });
+    },
+  });
+
   const [filterType, setFilterType] = useState('');
   const filteredUsers = useMemo(() => {
     const users = usersQuery.data ?? [];
@@ -121,10 +132,11 @@ export function UsersPage() {
   const [addErrors, setAddErrors] = useState<Record<string, string>>({});
   const [addSubmitting, setAddSubmitting] = useState(false);
 
-  const [rolesModalUserId, setRolesModalUserId] = useState<string | null>(null);
+  const [editUserId, setEditUserId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ name: '', email: '', phone: '', branchId: '', isActive: true });
   const [assignRoleId, setAssignRoleId] = useState('');
   const [assignBranchId, setAssignBranchId] = useState('');
-  const [assignSubmitting, setAssignSubmitting] = useState(false);
+  const [editSubmitting, setEditSubmitting] = useState(false);
 
   const [resetPasswordUserId, setResetPasswordUserId] = useState<string | null>(null);
   const [resetPasswordValue, setResetPasswordValue] = useState('');
@@ -132,9 +144,9 @@ export function UsersPage() {
   const [resetPasswordSubmitting, setResetPasswordSubmitting] = useState(false);
 
   const userDetailQuery = useQuery({
-    queryKey: ['user-detail', rolesModalUserId],
-    queryFn: async () => (await api.get<UserDetail>(`/users/${rolesModalUserId}`)).data,
-    enabled: Boolean(rolesModalUserId),
+    queryKey: ['user-detail', editUserId],
+    queryFn: async () => (await api.get<UserDetail>(`/users/${editUserId}`)).data,
+    enabled: Boolean(editUserId),
   });
 
   const branchName = (branchId: string | null) =>
@@ -195,34 +207,54 @@ export function UsersPage() {
     }
   };
 
-  const openRolesModal = (userId: string) => {
-    setRolesModalUserId(userId);
+  const openEdit = (userId: string) => {
+    setEditUserId(userId);
     setAssignRoleId('');
     setAssignBranchId('');
   };
 
-  // A user has exactly one role — once it loads, populate the form with it
-  // so this reads as editing the existing grant, not picking one from blank.
+  // Once the user's detail loads, populate both the profile fields and the
+  // (exactly one) role grant, so this reads as editing what's there already.
   useEffect(() => {
-    const currentRole = userDetailQuery.data?.userRoles[0];
+    const detail = userDetailQuery.data;
+    if (!detail) return;
+    setEditForm({
+      name: [detail.firstName, detail.lastName].filter(Boolean).join(' '),
+      email: detail.email ?? '',
+      phone: detail.phone ?? '',
+      branchId: detail.branchId ?? '',
+      isActive: detail.isActive,
+    });
+    const currentRole = detail.userRoles[0];
     if (currentRole) {
       setAssignRoleId(currentRole.roleId);
       setAssignBranchId(currentRole.branchId ?? '');
     }
   }, [userDetailQuery.data]);
 
-  const submitAssignRole = async () => {
-    if (!rolesModalUserId || !assignRoleId) return;
-    setAssignSubmitting(true);
+  const submitEdit = async () => {
+    if (!editUserId) return;
+    setEditSubmitting(true);
     try {
-      await assignRole.mutateAsync({ userId: rolesModalUserId, roleId: assignRoleId, branchId: assignBranchId });
-      toast.success('Role assigned');
-      setAssignRoleId('');
-      setAssignBranchId('');
-    } catch {
-      toast.error('Failed to assign role');
+      await updateUser.mutateAsync({
+        userId: editUserId,
+        payload: {
+          name: editForm.name || undefined,
+          email: editForm.email || undefined,
+          phone: editForm.phone || undefined,
+          branchId: editForm.branchId || null,
+          isActive: editForm.isActive,
+        },
+      });
+      if (assignRoleId) {
+        await assignRole.mutateAsync({ userId: editUserId, roleId: assignRoleId, branchId: assignBranchId });
+      }
+      toast.success('User updated');
+      setEditUserId(null);
+    } catch (err) {
+      toast.error(getErrorMessage(err, 'Failed to update user'));
     } finally {
-      setAssignSubmitting(false);
+      setEditSubmitting(false);
     }
   };
 
@@ -255,14 +287,22 @@ export function UsersPage() {
       header: 'Name',
       id: 'name',
       cell: ({ row }) => (
-        <span className="font-medium text-text-primary">
-          {row.original.firstName} {row.original.lastName}
-        </span>
+        <div>
+          <div className="font-medium text-text-primary">
+            {row.original.firstName} {row.original.lastName}
+          </div>
+          {row.original.phone && <div className="text-xs text-text-muted">{row.original.phone}</div>}
+        </div>
       ),
     },
     { header: 'Username', accessorKey: 'username' },
     { header: 'Type', accessorKey: 'type' },
-    { header: 'Phone', accessorKey: 'phone', cell: ({ row }) => row.original.phone ?? '—' },
+    {
+      header: 'Role',
+      id: 'role',
+      cell: ({ row }) =>
+        row.original.role ? <Badge tone="blue">{row.original.role}</Badge> : <span className="text-text-faint">—</span>,
+    },
     { header: 'Branch', id: 'branch', cell: ({ row }) => branchName(row.original.branchId) },
     {
       header: 'Status',
@@ -282,13 +322,18 @@ export function UsersPage() {
             header: '',
             cell: ({ row }: { row: { original: UserRow } }) => (
               <div className="flex gap-1">
-                <Button size="sm" variant="ghost" onClick={() => openRolesModal(row.original.id)}>
-                  <ShieldPlus className="h-4 w-4" />
-                  Roles
+                <Button size="sm" variant="ghost" onClick={() => openEdit(row.original.id)}>
+                  <Pencil className="h-4 w-4" />
+                  Edit
                 </Button>
-                <Button size="sm" variant="ghost" onClick={() => openResetPassword(row.original.id)}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => openResetPassword(row.original.id)}
+                  title="Reset Password"
+                  aria-label="Reset Password"
+                >
                   <KeyRound className="h-4 w-4" />
-                  Reset Password
                 </Button>
               </div>
             ),
@@ -392,64 +437,84 @@ export function UsersPage() {
       </Modal>
 
       <Modal
-        open={Boolean(rolesModalUserId)}
-        title="Manage Roles"
-        onClose={() => setRolesModalUserId(null)}
+        open={Boolean(editUserId)}
+        title="Edit User"
+        onClose={() => setEditUserId(null)}
+        position="right"
         footer={
           <>
-            <Button variant="outline" onClick={() => setRolesModalUserId(null)}>
-              Close
+            <Button variant="outline" onClick={() => setEditUserId(null)} disabled={editSubmitting}>
+              Cancel
             </Button>
-            <Button onClick={submitAssignRole} loading={assignSubmitting} disabled={!assignRoleId}>
-              Assign Role
+            <Button onClick={submitEdit} loading={editSubmitting}>
+              Save
             </Button>
           </>
         }
       >
-        <div className="flex flex-col gap-4">
-          <div>
-            <p className="mb-2 text-sm font-medium text-text-primary">Current roles</p>
-            {userDetailQuery.isLoading ? (
-              <p className="text-sm text-text-muted">Loading…</p>
-            ) : userDetailQuery.data && userDetailQuery.data.userRoles.length > 0 ? (
-              <div className="flex flex-wrap gap-2">
-                {userDetailQuery.data.userRoles.map((ur) => (
-                  <Badge key={ur.id} tone="blue">
-                    {ur.role.name}
-                    {ur.branchId ? ` (${branchName(ur.branchId)})` : ''}
-                  </Badge>
-                ))}
+        {userDetailQuery.isLoading ? (
+          <p className="text-sm text-text-muted">Loading…</p>
+        ) : (
+          <div className="flex flex-col gap-4">
+            <Field label="Name">
+              <Input value={editForm.name} onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))} />
+            </Field>
+            <Field label="Email">
+              <Input
+                type="email"
+                value={editForm.email}
+                onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))}
+              />
+            </Field>
+            <Field label="Mobile">
+              <Input value={editForm.phone} onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))} />
+            </Field>
+            <Field label="Branch" hint="Leave unset for a global (non-branch) user">
+              <Select
+                value={editForm.branchId}
+                onChange={(e) => setEditForm((f) => ({ ...f, branchId: e.target.value }))}
+                placeholder="No home branch (global)"
+                options={(branches ?? []).map((b) => ({ label: b.name, value: b.id }))}
+              />
+            </Field>
+            <Field label="Status">
+              <Select
+                value={editForm.isActive ? 'active' : 'inactive'}
+                onChange={(e) => setEditForm((f) => ({ ...f, isActive: e.target.value === 'active' }))}
+                options={[
+                  { label: 'Active', value: 'active' },
+                  { label: 'Inactive', value: 'inactive' },
+                ]}
+              />
+            </Field>
+
+            {canViewRoles ? (
+              <div className="flex flex-col gap-4 border-t border-border pt-4">
+                <p className="text-sm font-medium text-text-primary">Role</p>
+                <Field label="Role">
+                  <Select
+                    value={assignRoleId}
+                    onChange={(e) => setAssignRoleId(e.target.value)}
+                    placeholder="No role assigned"
+                    options={(rolesQuery.data ?? []).map((r) => ({ label: `${r.name} (${r.scope})`, value: r.id }))}
+                  />
+                </Field>
+                <Field label="Branch override" hint="Optional — only needed to scope a BRANCH-level role to a specific branch">
+                  <Select
+                    value={assignBranchId}
+                    onChange={(e) => setAssignBranchId(e.target.value)}
+                    placeholder="Use user's home branch"
+                    options={(branches ?? []).map((b) => ({ label: b.name, value: b.id }))}
+                  />
+                </Field>
               </div>
             ) : (
-              <p className="text-sm text-text-muted">No roles assigned yet.</p>
+              <p className="border-t border-border pt-4 text-sm text-text-muted">
+                You do not have permission to view the roles list.
+              </p>
             )}
           </div>
-
-          {canViewRoles ? (
-            <div className="flex flex-col gap-4 border-t border-border pt-4">
-              <Field label="Role" required>
-                <Select
-                  value={assignRoleId}
-                  onChange={(e) => setAssignRoleId(e.target.value)}
-                  placeholder="Select a role"
-                  options={(rolesQuery.data ?? []).map((r) => ({ label: `${r.name} (${r.scope})`, value: r.id }))}
-                />
-              </Field>
-              <Field label="Branch override" hint="Optional — only needed to scope a BRANCH-level role to a specific branch">
-                <Select
-                  value={assignBranchId}
-                  onChange={(e) => setAssignBranchId(e.target.value)}
-                  placeholder="Use user's home branch"
-                  options={(branches ?? []).map((b) => ({ label: b.name, value: b.id }))}
-                />
-              </Field>
-            </div>
-          ) : (
-            <p className="text-sm text-text-muted">
-              You do not have permission to view the roles list.
-            </p>
-          )}
-        </div>
+        )}
       </Modal>
 
       <Modal

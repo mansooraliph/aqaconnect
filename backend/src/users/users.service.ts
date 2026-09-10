@@ -2,6 +2,7 @@ import { ConflictException, Injectable, NotFoundException } from '@nestjs/common
 import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 import { AssignRoleDto } from './dto/assign-role.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { UserAccessContext } from '../rbac/access-control.service';
@@ -61,7 +62,10 @@ export class UsersService {
           select: this.publicSelect(),
           orderBy: { username: 'asc' },
         });
-    return users.map(withType);
+    return users.map((u) => {
+      const { userRoles, ...rest } = u;
+      return { ...withType(rest), role: userRoles[0]?.role.name ?? null };
+    });
   }
 
   private publicSelect() {
@@ -79,6 +83,7 @@ export class UsersService {
       employee: { select: { id: true, employeeType: true } },
       teacher: { select: { id: true } },
       student: { select: { id: true } },
+      userRoles: { select: { role: { select: { name: true } } } },
     };
   }
 
@@ -113,6 +118,23 @@ export class UsersService {
       throw new NotFoundException('User not found');
     }
     return withType(user);
+  }
+
+  async update(id: string, dto: UpdateUserDto) {
+    await this.findOne(id);
+    const { firstName, lastName } = dto.name ? splitName(dto.name) : { firstName: undefined, lastName: undefined };
+    await this.prisma.user.update({
+      where: { id },
+      data: {
+        firstName,
+        lastName,
+        email: dto.email,
+        phone: dto.phone,
+        branchId: dto.branchId,
+        isActive: dto.isActive,
+      },
+    });
+    return this.findOne(id);
   }
 
   async resetPassword(id: string, dto: ResetPasswordDto) {

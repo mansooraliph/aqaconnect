@@ -489,7 +489,7 @@ export function EmployeesPage() {
                   onChange={(e) => setField('email', e.target.value)}
                 />
               </Field>
-              <Field label="Employee type" required hint="Teacher also creates a linked Teacher record, so they show up in the Teachers list.">
+              <Field label="User Type" required hint="Teacher also creates a linked Teacher record, so they show up in the Teachers list.">
                 <Select
                   options={[
                     { label: 'Teacher', value: 'TEACHER' },
