@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   HttpException,
+  InternalServerErrorException,
   Param,
   Patch,
   Post,
@@ -66,12 +67,12 @@ export class TeachersController {
       const teacher = await this.service.store(branchId, dto);
       return Reply.successWithData('Record saved successfully.', { user: teacher });
     } catch (error) {
-      // Legacy: `catch (\Exception $e) { return Reply::error($e->getMessage()); }`
-      // — a plain array with no status override, so this is HTTP 200 with a
-      // fail-status body, not a real 500. Validation-style errors (already
-      // thrown as HttpException, e.g. duplicate username) pass through as-is.
+      // Unexpected errors (e.g. a failed transaction) must surface as a
+      // non-2xx status — returning Reply.error() here left Nest's default
+      // 2xx status on the response, so the mobile client (which only checks
+      // the status code) reported success for a save that never happened.
       if (error instanceof HttpException) throw error;
-      return Reply.error((error as Error).message);
+      throw new InternalServerErrorException((error as Error).message);
     }
   }
 
@@ -84,7 +85,7 @@ export class TeachersController {
       return Reply.successWithData('Record updated successfully.', { user: teacher });
     } catch (error) {
       if (error instanceof HttpException) throw error;
-      return Reply.error((error as Error).message);
+      throw new InternalServerErrorException((error as Error).message);
     }
   }
 
