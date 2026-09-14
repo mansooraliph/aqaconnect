@@ -127,6 +127,7 @@ export class TeachersService {
           userId: user.id,
           branchId,
           employeeCode,
+          employeeType: 'TEACHER',
           departmentId: dto.department,
           designationId: dto.designation,
           dateOfJoining: dto.joining_date ? parseDdMmYyyy(dto.joining_date, 'joining_date') : undefined,
