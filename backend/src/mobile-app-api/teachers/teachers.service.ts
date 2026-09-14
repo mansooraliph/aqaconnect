@@ -84,6 +84,16 @@ export class TeachersService {
     }
   }
 
+  private async assertEmailAvailable(email: string, excludeUserId?: string) {
+    const existing = await this.prisma.user.findUnique({ where: { email } });
+    if (existing && existing.id !== excludeUserId) {
+      throw new UnprocessableEntityException({
+        status: 'error',
+        message: 'The email has already been taken.',
+      });
+    }
+  }
+
   private async assertDepartmentAndDesignationBelongToBranch(
     branchId: string,
     departmentId?: string,
@@ -111,6 +121,9 @@ export class TeachersService {
 
   async store(branchId: string, dto: StoreTeacherDto) {
     await this.assertUsernameAvailable(dto.username);
+    if (dto.email) {
+      await this.assertEmailAvailable(dto.email);
+    }
     await this.assertDepartmentAndDesignationBelongToBranch(branchId, dto.department, dto.designation);
 
     const { firstName, lastName } = splitName(dto.name);
@@ -119,7 +132,15 @@ export class TeachersService {
 
     const teacherId = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
-        data: { username: dto.username, passwordHash, firstName, lastName, phone: dto.mobile, branchId },
+        data: {
+          username: dto.username,
+          passwordHash,
+          firstName,
+          lastName,
+          phone: dto.mobile,
+          email: dto.email,
+          branchId,
+        },
       });
 
       const employee = await tx.employee.create({
@@ -156,6 +177,9 @@ export class TeachersService {
     if (dto.username !== undefined) {
       await this.assertUsernameAvailable(dto.username, existing.userId);
     }
+    if (dto.email !== undefined) {
+      await this.assertEmailAvailable(dto.email, existing.userId);
+    }
     await this.assertDepartmentAndDesignationBelongToBranch(branchId, dto.department, dto.designation);
 
     const nameParts = dto.name !== undefined ? splitName(dto.name) : undefined;
@@ -168,6 +192,7 @@ export class TeachersService {
           ...(dto.username !== undefined && { username: dto.username }),
           ...(nameParts && { firstName: nameParts.firstName, lastName: nameParts.lastName ?? null }),
           ...(dto.mobile !== undefined && { phone: dto.mobile }),
+          ...(dto.email !== undefined && { email: dto.email }),
           ...(passwordHash && { passwordHash }),
         },
       });
