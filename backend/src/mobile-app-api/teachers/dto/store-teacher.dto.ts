@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsEmail, IsIn, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class StoreTeacherDto {
   @IsString()
@@ -8,6 +8,11 @@ export class StoreTeacherDto {
   @IsString()
   @MaxLength(255)
   username!: string;
+
+  @IsOptional()
+  @IsEmail()
+  @MaxLength(255)
+  email?: string;
 
   @IsString()
   @MaxLength(20)
