@@ -5,6 +5,7 @@ import { Gender } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StoreTeacherDto } from './dto/store-teacher.dto';
 import { UpdateTeacherDto } from './dto/update-teacher.dto';
+import { parseDdMmYyyy } from '../../common/date';
 
 const SALT_ROUNDS = 10;
 
@@ -128,8 +129,9 @@ export class TeachersService {
           employeeCode,
           departmentId: dto.department,
           designationId: dto.designation,
-          dateOfJoining: dto.joining_date ? new Date(dto.joining_date) : undefined,
+          dateOfJoining: dto.joining_date ? parseDdMmYyyy(dto.joining_date, 'joining_date') : undefined,
           gender: toGenderEnum(dto.gender),
+          address: dto.address,
         },
       });
 
@@ -175,8 +177,11 @@ export class TeachersService {
           data: {
             ...(dto.department !== undefined && { departmentId: dto.department }),
             ...(dto.designation !== undefined && { designationId: dto.designation }),
-            ...(dto.joining_date !== undefined && { dateOfJoining: new Date(dto.joining_date) }),
+            ...(dto.joining_date !== undefined && {
+              dateOfJoining: parseDdMmYyyy(dto.joining_date, 'joining_date'),
+            }),
             ...(dto.gender !== undefined && { gender: toGenderEnum(dto.gender) }),
+            ...(dto.address !== undefined && { address: dto.address }),
           },
         });
       }

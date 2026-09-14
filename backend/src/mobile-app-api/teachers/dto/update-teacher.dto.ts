@@ -36,4 +36,9 @@ export class UpdateTeacherDto {
   @IsOptional()
   @IsIn(['male', 'female'])
   gender?: 'male' | 'female';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  address?: string;
 }
