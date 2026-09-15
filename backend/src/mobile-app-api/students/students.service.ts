@@ -890,9 +890,25 @@ export class MobileStudentsService {
       });
       for (const ex of exams) {
         const date = toDateOnly(ex.examDate);
-        let description = `Exam: ${ex.examId ?? 'General'} - Result: ${ex.result ? EXAM_RESULT_DISPLAY[ex.result] : 'N/A'}`;
+        const resultLabel = ex.result ? EXAM_RESULT_DISPLAY[ex.result] : 'N/A';
+        let description = `Exam: ${ex.examId ?? 'General'} - Result: ${resultLabel}`;
         if (ex.marks !== null) description += ` (Marks: ${ex.marks})`;
-        push(date, withId({ type: 'exam', description, time: toDateOnly(ex.examDate) }, ex.id, 'exam'));
+        push(
+          date,
+          withId(
+            {
+              type: 'exam',
+              description,
+              time: toDateOnly(ex.examDate),
+              result: ex.result ?? null,
+              result_label: resultLabel,
+              marks: ex.marks !== null ? Number(ex.marks) : null,
+              remarks: ex.remarks,
+            },
+            ex.id,
+            'exam',
+          ),
+        );
       }
     }
 

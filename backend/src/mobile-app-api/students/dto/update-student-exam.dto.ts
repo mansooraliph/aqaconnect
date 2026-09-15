@@ -1,3 +1,4 @@
+import { Type } from 'class-transformer';
 import { IsIn, IsNumber, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 
 export class UpdateStudentExamDto {
@@ -18,6 +19,7 @@ export class UpdateStudentExamDto {
   result?: 'Pass' | 'fail' | 'preparation';
 
   @IsOptional()
+  @Type(() => Number)
   @IsNumber()
   @Min(0)
   @Max(100)
