@@ -1124,6 +1124,7 @@ model StudentLeave {
   leaveDate       DateTime           @db.Date
   reason          String
   leaveType       String? // "home" | "hostal" per old system's enum, kept as string for admin extensibility
+  isHalfDay       Boolean            @default(false)
   status          StudentLeaveStatus @default(PENDING)
   creationRemarks String?
   approvalRemarks String?

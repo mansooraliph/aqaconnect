@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class UpdateLeaveDto {
   @IsOptional()
@@ -17,6 +17,10 @@ export class UpdateLeaveDto {
   @IsOptional()
   @IsIn(['home', 'hostal'])
   leave_type?: 'home' | 'hostal';
+
+  @IsOptional()
+  @IsBoolean()
+  is_half_day?: boolean;
 
   @IsOptional()
   @IsIn(['pending', 'approved', 'rejected'])

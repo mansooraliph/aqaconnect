@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
-import { Gender, StudentExamOutcome } from '@prisma/client';
+import { Gender, StudentExamOutcome, ProgressEntryGrade, ProgressEntryStatus, ProgressEntryType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { HifdhService } from '../../academic/hifdh/hifdh.service';
 import { CreateStudentDto } from './dto/create-student.dto';
@@ -14,6 +14,24 @@ import { AddStudentExamDto } from './dto/add-student-exam.dto';
 import { UpdateStudentExamDto } from './dto/update-student-exam.dto';
 
 const SALT_ROUNDS = 10;
+
+const LESSON_TYPE_LABEL: Record<ProgressEntryType, string> = {
+  NEW_LESSON: 'New Lesson',
+  OLD_LESSON: 'Old Lesson',
+  JUZH_LESSON: 'Juzh Lesson',
+};
+const STATUS_TO_LEGACY: Record<ProgressEntryStatus, string> = {
+  NOT_STARTED: 'Not Started',
+  IN_PROGRESS: 'In Progress',
+  COMPLETED: 'Completed',
+  VERIFIED: 'Verified',
+};
+const GRADE_TO_LEGACY: Record<ProgressEntryGrade, string> = {
+  VERY_GOOD: 'Very Good',
+  GOOD: 'Good',
+  AVERAGE: 'Average',
+  BAD: 'Bad',
+};
 
 function pad2(n: number): string {
   return String(n).padStart(2, '0');
@@ -725,41 +743,92 @@ export class MobileStudentsService {
       push(date, withId(entry, a.id, 'attendance'));
     }
 
-    // 4. Surah-completed events, derived from the per-ayah progress ledger
-    // (StudentSurahProgressEntry) — a surah counts as "completed" once every
-    // one of its ayah entries is at least COMPLETED (VERIFIED counts too, per
-    // the same COMPLETED-or-VERIFIED convention used by getFullProgressReport
-    // in student-surah-progress.service.ts); the event date is the latest of
-    // those completion/verification timestamps.
-    const progressEntries = await this.prisma.studentSurahProgressEntry.findMany({
-      where: { studentId, type: 'NEW_LESSON', surahId: { not: null } },
-      include: { surah: { select: { nameEnglish: true } } },
+    // 4. Surah progress entries — New Lesson, Old Lesson, and Juzh Lesson
+    // all funnel through here. One activity entry per real
+    // StudentSurahProgressEntry row (not aggregated) so `id` is always a
+    // genuine, editable progress-entry id and `record_data` carries full
+    // detail (surah, ayah range, grade, remarks) for the UI to render and
+    // for the bulk-edit screen to operate on via POST .../update. `type` is
+    // always 'surah_progress' so both consumer screens' isSurahProgress
+    // filters see it; `lesson_type` (top-level) and `record_data.type`
+    // (legacy label) carry the New/Old/Juzh discriminator.
+    const surahProgressEntries = await this.prisma.studentSurahProgressEntry.findMany({
+      where: {
+        studentId,
+        type: { in: ['NEW_LESSON', 'OLD_LESSON', 'JUZH_LESSON'] },
+        status: { in: ['COMPLETED', 'VERIFIED'] },
+      },
+      include: {
+        surah: { select: { id: true, number: true, nameArabic: true, nameEnglish: true, totalAyahs: true } },
+      },
     });
-    const bySurah = new Map<string, { surahName: string; total: number; verified: number; latestAt: Date }>();
-    for (const e of progressEntries) {
-      if (!e.surahId || !e.surah) continue;
-      const at = e.verifiedAt ?? e.completedAt ?? e.updatedAt;
-      const g = bySurah.get(e.surahId) ?? { surahName: e.surah.nameEnglish, total: 0, verified: 0, latestAt: at };
-      g.total += 1;
-      if (e.status === 'COMPLETED' || e.status === 'VERIFIED') g.verified += 1;
-      if (at > g.latestAt) g.latestAt = at;
-      bySurah.set(e.surahId, g);
-    }
-    for (const [surahId, g] of bySurah) {
-      if (g.total === 0 || g.verified !== g.total) continue;
-      if (g.latestAt < start || g.latestAt > end) continue;
-      const date = toDateOnly(g.latestAt);
+    for (const e of surahProgressEntries) {
+      const at = e.verifiedAt ?? e.completedAt;
+      if (!at || at < start || at > end || !e.type) continue;
+      const lessonLabel = LESSON_TYPE_LABEL[e.type];
+      const ayahCount = e.fromAyah != null && e.toAyah != null ? Math.max(0, e.toAyah - e.fromAyah + 1) : null;
+
+      let description: string;
+      if (e.type === 'NEW_LESSON') {
+        description = e.surah
+          ? `${lessonLabel}: ${e.surah.nameEnglish}${ayahCount ? ` (Ayah ${e.fromAyah}-${e.toAyah})` : ''}`
+          : lessonLabel;
+      } else {
+        let range = '';
+        if (e.surahFrom) {
+          range = `Surah ${e.surahFrom}${e.surahTo && e.surahTo !== e.surahFrom ? `-${e.surahTo}` : ''}`;
+          if (e.surahFromAyah || e.surahToAyah) range += ` (Ayah ${e.surahFromAyah ?? 1}-${e.surahToAyah ?? '?'})`;
+        } else if (e.juzuhFrom) {
+          range = `Juz ${e.juzuhFrom}${e.juzuhTo && e.juzuhTo !== e.juzuhFrom ? `-${e.juzuhTo}` : ''}`;
+        } else if (e.pageFrom) {
+          range = `Page ${e.pageFrom}${e.pageTo && e.pageTo !== e.pageFrom ? `-${e.pageTo}` : ''}`;
+        }
+        description = range ? `${lessonLabel}: ${range}` : lessonLabel;
+      }
+
+      const date = toDateOnly(at);
       push(
         date,
         withId(
           {
             type: 'surah_progress',
-            description: `Completed Surah: ${g.surahName}`,
-            time: g.latestAt.toISOString(),
-            surah_id: surahId,
-            total_ayahs: g.total,
+            lesson_type: lessonLabel,
+            description,
+            time: at.toISOString(),
+            surah_id: e.surahId,
+            total_ayahs: ayahCount,
+            record_data: {
+              id: e.id,
+              surah_id: e.surahId,
+              surah_from: e.surahFrom,
+              surah_from_ayah: e.surahFromAyah,
+              surah_to: e.surahTo,
+              surah_to_ayah: e.surahToAyah,
+              juzuh_from: e.juzuhFrom,
+              juzuh_to: e.juzuhTo,
+              page_from: e.pageFrom,
+              page_to: e.pageTo,
+              from_ayah: e.fromAyah,
+              to_ayah: e.toAyah,
+              type: lessonLabel,
+              grade: e.grade ? GRADE_TO_LEGACY[e.grade] : null,
+              completion_status: STATUS_TO_LEGACY[e.status],
+              remarks: e.remarks,
+              remark_file_url: null,
+              completed_at: e.completedAt ? toDateOnly(e.completedAt) : null,
+              day: e.day,
+              surah: e.surah
+                ? {
+                    id: e.surah.id,
+                    surah_number: e.surah.number,
+                    name_ar: e.surah.nameArabic,
+                    name_en: e.surah.nameEnglish,
+                    total_ayahs: e.surah.totalAyahs,
+                  }
+                : null,
+            },
           },
-          `${studentId}:${surahId}`,
+          e.id,
           'surah_progress',
         ),
       );
@@ -792,7 +861,7 @@ export class MobileStudentsService {
     });
     for (const l of leaves) {
       const date = toDateOnly(l.leaveDate);
-      let description = 'Leave approved';
+      let description = l.isHalfDay ? 'Half Day Leave approved' : 'Leave approved';
       if (l.reason) description += ` - Reason: ${l.reason}`;
       push(
         date,
@@ -851,7 +920,7 @@ export class MobileStudentsService {
   async getStudentActivityReport(branchId: string, query: ActivityQueryDto & { student_id: string }) {
     return this.buildActivityTimeline(branchId, query.student_id, query, {
       includeIdAndType: false,
-      includeExams: false,
+      includeExams: true,
     });
   }
 

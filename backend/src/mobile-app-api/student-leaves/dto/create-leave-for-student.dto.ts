@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class CreateLeaveForStudentDto {
   @IsString()
@@ -17,6 +17,10 @@ export class CreateLeaveForStudentDto {
   @IsOptional()
   @IsIn(['home', 'hostal'])
   leave_type?: 'home' | 'hostal';
+
+  @IsOptional()
+  @IsBoolean()
+  is_half_day?: boolean;
 
   @IsOptional()
   @IsString()

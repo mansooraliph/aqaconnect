@@ -29,6 +29,7 @@ interface StudentLeave {
   leaveDate: string;
   reason: string | null;
   leaveType: string | null;
+  isHalfDay: boolean;
   status: StudentLeaveStatus;
   approvalRemarks: string | null;
   creationRemarks: string | null;
@@ -73,6 +74,7 @@ export function StudentLeavesPage() {
     { name: 'endDate', label: 'End date', type: 'date', required: true },
     { name: 'reason', label: 'Reason', type: 'textarea', required: true },
     { name: 'leaveType', label: 'Leave type', type: 'text' },
+    { name: 'isHalfDay', label: 'Half day', type: 'checkbox' },
   ];
 
   const handleApply = async (values: Record<string, unknown>) => {
@@ -225,6 +227,11 @@ export function StudentLeavesPage() {
     },
     { header: 'Reason', accessorKey: 'reason', cell: ({ row }) => row.original.reason ?? '-' },
     { header: 'Leave type', accessorKey: 'leaveType', cell: ({ row }) => row.original.leaveType ?? '-' },
+    {
+      header: 'Duration',
+      accessorKey: 'isHalfDay',
+      cell: ({ row }) => (row.original.isHalfDay ? 'Half Day' : 'Full Day'),
+    },
     {
       header: 'Status',
       accessorKey: 'status',

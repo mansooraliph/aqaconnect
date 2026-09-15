@@ -91,6 +91,7 @@ export class StudentLeavesService {
             leaveDate,
             reason: dto.reason,
             leaveType: dto.leaveType,
+            isHalfDay: dto.isHalfDay ?? false,
             creationRemarks: dto.creationRemarks,
             status: StudentLeaveStatus.PENDING,
             createdById: actorUserId,

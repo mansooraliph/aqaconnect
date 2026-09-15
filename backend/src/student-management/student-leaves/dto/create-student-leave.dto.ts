@@ -1,4 +1,4 @@
-import { IsDateString, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsBoolean, IsDateString, IsOptional, IsString, MinLength } from 'class-validator';
 
 export class CreateStudentLeaveDto {
   @IsString()
@@ -18,6 +18,10 @@ export class CreateStudentLeaveDto {
   @IsOptional()
   @IsString()
   leaveType?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  isHalfDay?: boolean;
 
   @IsOptional()
   @IsString()

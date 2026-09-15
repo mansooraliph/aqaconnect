@@ -38,6 +38,7 @@ function serializeLeave(leave: {
   leaveDate: Date;
   reason: string;
   leaveType: string | null;
+  isHalfDay: boolean;
   status: StudentLeaveStatus;
   creationRemarks: string | null;
   approvalRemarks: string | null;
@@ -59,6 +60,7 @@ function serializeLeave(leave: {
     leave_date: toDateOnly(leave.leaveDate),
     reason: leave.reason,
     leave_type: leave.leaveType,
+    is_half_day: leave.isHalfDay,
     status: toLegacyStatus(leave.status),
     creation_remarks: leave.creationRemarks,
     approval_remarks: leave.approvalRemarks,
@@ -134,6 +136,7 @@ export class MobileStudentLeavesService {
             leaveDate: new Date(`${leaveDate}T00:00:00.000Z`),
             reason: dto.reason,
             leaveType: dto.leave_type,
+            isHalfDay: dto.is_half_day ?? false,
             status: StudentLeaveStatus.PENDING,
             creationRemarks: dto.creation_remarks,
             createdById: userId,
@@ -174,6 +177,7 @@ export class MobileStudentLeavesService {
             leaveDate: new Date(`${leaveDate}T00:00:00.000Z`),
             reason: dto.reason,
             leaveType: dto.leave_type,
+            isHalfDay: dto.is_half_day ?? false,
             status: toEnumStatus(status),
             creationRemarks: dto.creation_remarks,
             createdById: userId,
@@ -289,6 +293,7 @@ export class MobileStudentLeavesService {
           data: {
             ...(dto.reason !== undefined && { reason: dto.reason }),
             ...(dto.leave_type !== undefined && { leaveType: dto.leave_type }),
+            ...(dto.is_half_day !== undefined && { isHalfDay: dto.is_half_day }),
             ...(dto.creation_remarks !== undefined && { creationRemarks: dto.creation_remarks }),
             leaveDate: new Date(`${firstDate}T00:00:00.000Z`),
             ...(dto.status !== undefined && { status: toEnumStatus(dto.status) }),
@@ -306,6 +311,7 @@ export class MobileStudentLeavesService {
                 leaveDate: new Date(`${date}T00:00:00.000Z`),
                 reason: updatedOriginal.reason,
                 leaveType: updatedOriginal.leaveType,
+                isHalfDay: updatedOriginal.isHalfDay,
                 status: updatedOriginal.status,
                 creationRemarks: updatedOriginal.creationRemarks,
                 createdById: leave.createdById,
@@ -335,6 +341,7 @@ export class MobileStudentLeavesService {
       data: {
         ...(dto.reason !== undefined && { reason: dto.reason }),
         ...(dto.leave_type !== undefined && { leaveType: dto.leave_type }),
+        ...(dto.is_half_day !== undefined && { isHalfDay: dto.is_half_day }),
         ...(dto.creation_remarks !== undefined && { creationRemarks: dto.creation_remarks }),
         ...(singleDate !== undefined && { leaveDate: new Date(`${singleDate}T00:00:00.000Z`) }),
         ...(dto.status !== undefined && { status: toEnumStatus(dto.status) }),
@@ -398,6 +405,7 @@ export class MobileStudentLeavesService {
         const payload = {
           ...(item.reason !== undefined && { reason: item.reason }),
           ...(item.leave_type !== undefined && { leaveType: item.leave_type }),
+          ...(item.is_half_day !== undefined && { isHalfDay: item.is_half_day }),
           ...(item.creation_remarks !== undefined && { creationRemarks: item.creation_remarks }),
           ...(item.status !== undefined && {
             status: toEnumStatus(item.status),
@@ -421,6 +429,7 @@ export class MobileStudentLeavesService {
                 leaveDate: new Date(`${date}T00:00:00.000Z`),
                 reason: updatedOriginal.reason,
                 leaveType: updatedOriginal.leaveType,
+                isHalfDay: updatedOriginal.isHalfDay,
                 status: updatedOriginal.status,
                 creationRemarks: updatedOriginal.creationRemarks,
                 createdById: leave.createdById,

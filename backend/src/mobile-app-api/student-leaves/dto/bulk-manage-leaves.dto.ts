@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { IsArray, IsIn, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
+import { IsArray, IsBoolean, IsIn, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
 
 class BulkManageLeaveUpdateItemDto {
   @IsString()
@@ -21,6 +21,10 @@ class BulkManageLeaveUpdateItemDto {
   @IsOptional()
   @IsIn(['home', 'hostal'])
   leave_type?: 'home' | 'hostal';
+
+  @IsOptional()
+  @IsBoolean()
+  is_half_day?: boolean;
 
   @IsOptional()
   @IsIn(['pending', 'approved', 'rejected'])
