@@ -1,3 +1,4 @@
+import { Type } from 'class-transformer';
 import { IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 
 export class StoreOldLessonProgressDto {
@@ -11,42 +12,50 @@ export class StoreOldLessonProgressDto {
   completed_at!: string;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   surah_from?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   surah_from_ayah?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   surah_to?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   surah_to_ayah?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(30)
   juzuh_from?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(30)
   juzuh_to?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(604)
   page_from?: number;
 
   @IsOptional()
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(604)
