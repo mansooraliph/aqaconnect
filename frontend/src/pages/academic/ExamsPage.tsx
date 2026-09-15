@@ -370,7 +370,14 @@ function ExamsTab() {
   };
 
   const createFields: FieldDef[] = [
-    { name: 'examTypeId', label: 'Exam Type', type: 'select', required: true, options: examTypeOptions },
+    {
+      name: 'examTypeId',
+      label: 'Exam Type',
+      type: 'select',
+      required: true,
+      options: examTypeOptions,
+      placeholder: 'Select exam type',
+    },
     { name: 'name', label: 'Name', type: 'text', required: true },
     { name: 'examDate', label: 'Exam date', type: 'date', required: true },
     { name: 'maxMarks', label: 'Max marks', type: 'number' },

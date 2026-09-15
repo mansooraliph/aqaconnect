@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Modal } from './ui/Modal';
 import { Button } from './ui/Button';
 import { Field, Input, Textarea } from './ui/Input';
@@ -62,8 +62,13 @@ export function CrudFormModal({
   // createOnly fields are the mirror image.
   const visibleFields = fields.filter((f) => (isEditing ? !f.createOnly : !f.editOnly));
 
+  // Reset only when the modal actually opens (closed -> open), not on every
+  // re-render while it's already open — `fields`/`initialValues` are new
+  // object/array literals on each parent render, so depending on them here
+  // would wipe user input (e.g. a just-picked select value) mid-interaction.
+  const wasOpen = useRef(false);
   useEffect(() => {
-    if (open) {
+    if (open && !wasOpen.current) {
       const next: Record<string, unknown> = {};
       for (const field of visibleFields) {
         next[field.name] = initialValues?.[field.name] ?? emptyValueFor(field);
@@ -71,8 +76,9 @@ export function CrudFormModal({
       setValues(next);
       setErrors({});
     }
+    wasOpen.current = open;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, initialValues, fields]);
+  }, [open]);
 
   const setField = (name: string, value: unknown) => {
     setValues((v) => ({ ...v, [name]: value }));
