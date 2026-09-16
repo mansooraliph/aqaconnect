@@ -827,6 +827,26 @@ export class MobileStudentsService {
         surah: { select: { id: true, number: true, nameArabic: true, nameEnglish: true, totalAyahs: true } },
       },
     });
+
+    // For cross-surah Old/Juzh Lesson ranges, `surah` above only resolves
+    // the From surah (via surahId) — batch-fetch the To surah's name too so
+    // the UI can show "Al-Ikhlas → An-Nas" instead of bare surah numbers.
+    const crossSurahToNumbers = [
+      ...new Set(
+        surahProgressEntries
+          .filter((e) => e.surahTo != null && e.surahFrom != null && e.surahTo !== e.surahFrom)
+          .map((e) => e.surahTo!),
+      ),
+    ];
+    const toSurahByNumber = new Map<number, { nameEnglish: string; nameArabic: string }>();
+    if (crossSurahToNumbers.length > 0) {
+      const toSurahs = await this.prisma.surah.findMany({
+        where: { number: { in: crossSurahToNumbers } },
+        select: { number: true, nameEnglish: true, nameArabic: true },
+      });
+      for (const s of toSurahs) toSurahByNumber.set(s.number, s);
+    }
+
     for (const e of surahProgressEntries) {
       const at = e.verifiedAt ?? e.completedAt;
       if (!at || at < start || at > end || !e.type) continue;
@@ -841,8 +861,15 @@ export class MobileStudentsService {
       } else {
         let range = '';
         if (e.surahFrom) {
-          range = `Surah ${e.surahFrom}${e.surahTo && e.surahTo !== e.surahFrom ? `-${e.surahTo}` : ''}`;
-          if (e.surahFromAyah || e.surahToAyah) range += ` (Ayah ${e.surahFromAyah ?? 1}-${e.surahToAyah ?? '?'})`;
+          const isCrossSurah = e.surahTo != null && e.surahTo !== e.surahFrom;
+          if (isCrossSurah) {
+            const toName = toSurahByNumber.get(e.surahTo!)?.nameEnglish ?? `Surah ${e.surahTo}`;
+            const fromName = e.surah?.nameEnglish ?? `Surah ${e.surahFrom}`;
+            range = `${fromName} (Ayah ${e.surahFromAyah ?? 1}) → ${toName} (Ayah ${e.surahToAyah ?? '?'})`;
+          } else {
+            range = `Surah ${e.surahFrom}`;
+            if (e.surahFromAyah || e.surahToAyah) range += ` (Ayah ${e.surahFromAyah ?? 1}-${e.surahToAyah ?? '?'})`;
+          }
         } else if (e.juzuhFrom) {
           range = `Juz ${e.juzuhFrom}${e.juzuhTo && e.juzuhTo !== e.juzuhFrom ? `-${e.juzuhTo}` : ''}`;
         } else if (e.pageFrom) {
@@ -869,6 +896,8 @@ export class MobileStudentsService {
               surah_from_ayah: e.surahFromAyah,
               surah_to: e.surahTo,
               surah_to_ayah: e.surahToAyah,
+              surah_to_name_en: e.surahTo != null ? toSurahByNumber.get(e.surahTo)?.nameEnglish ?? null : null,
+              surah_to_name_ar: e.surahTo != null ? toSurahByNumber.get(e.surahTo)?.nameArabic ?? null : null,
               juzuh_from: e.juzuhFrom,
               juzuh_to: e.juzuhTo,
               page_from: e.pageFrom,
