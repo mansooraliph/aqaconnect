@@ -7,6 +7,10 @@ export class AddStudentEventDto {
   @IsString()
   event_date!: string;
 
+  @IsOptional()
+  @IsString()
+  event_date_to?: string;
+
   @IsString()
   @MaxLength(255)
   event_name!: string;

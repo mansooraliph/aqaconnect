@@ -1016,7 +1016,11 @@ model StudentEvent {
   branch      Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
   studentId   String
   student     Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
-  eventDate   DateTime @db.Date
+  eventDate   DateTime  @db.Date
+  // Null means single-day — the event ends on eventDate itself. Kept
+  // optional rather than backfilled so already-deployed single-date rows
+  // need no migration data-fix; readers must fall back to eventDate.
+  eventDateTo DateTime? @db.Date
   eventName   String
   remarks     String?
   createdById String?

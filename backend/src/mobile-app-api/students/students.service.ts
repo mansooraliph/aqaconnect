@@ -664,11 +664,18 @@ export class MobileStudentsService {
       throw new NotFoundException({ status: 'error', message: 'Student not found in your organization' });
     }
 
+    const eventDate = new Date(dto.event_date);
+    const eventDateTo = dto.event_date_to ? new Date(dto.event_date_to) : null;
+    if (eventDateTo && eventDateTo < eventDate) {
+      throw new UnprocessableEntityException({ status: 'error', message: 'Event To date cannot be before the From date.' });
+    }
+
     const event = await this.prisma.studentEvent.create({
       data: {
         branchId,
         studentId: dto.student_id,
-        eventDate: new Date(dto.event_date),
+        eventDate,
+        eventDateTo,
         eventName: dto.event_name,
         remarks: dto.remarks,
       },
@@ -693,11 +700,19 @@ export class MobileStudentsService {
       }
     }
 
+    const nextEventDate = dto.event_date !== undefined ? new Date(dto.event_date) : event.eventDate;
+    const nextEventDateTo =
+      dto.event_date_to !== undefined ? (dto.event_date_to ? new Date(dto.event_date_to) : null) : event.eventDateTo;
+    if (nextEventDateTo && nextEventDateTo < nextEventDate) {
+      throw new UnprocessableEntityException({ status: 'error', message: 'Event To date cannot be before the From date.' });
+    }
+
     const updated = await this.prisma.studentEvent.update({
       where: { id: eventId },
       data: {
         ...(dto.student_id !== undefined && { studentId: dto.student_id }),
-        ...(dto.event_date !== undefined && { eventDate: new Date(dto.event_date) }),
+        ...(dto.event_date !== undefined && { eventDate: nextEventDate }),
+        ...(dto.event_date_to !== undefined && { eventDateTo: nextEventDateTo }),
         ...(dto.event_name !== undefined && { eventName: dto.event_name }),
         ...(dto.remarks !== undefined && { remarks: dto.remarks }),
       },
@@ -967,26 +982,40 @@ export class MobileStudentsService {
     // holidays, since these are one-off records a teacher marks and expects
     // to see reflected everywhere, not gated behind opts.includeExams.
     const events = await this.prisma.studentEvent.findMany({
-      where: { studentId, eventDate: { gte: start, lte: end } },
+      where: { studentId, eventDate: { lte: end } },
     });
     for (const ev of events) {
-      const date = toDateOnly(ev.eventDate);
-      let description = `Event: ${ev.eventName}`;
-      if (ev.remarks) description += ` - ${ev.remarks}`;
-      push(
-        date,
-        withId(
-          {
-            type: 'event',
-            description,
-            time: toDateOnly(ev.eventDate),
-            event_name: ev.eventName,
-            remarks: ev.remarks,
-          },
-          ev.id,
-          'event',
-        ),
-      );
+      const evEnd = ev.eventDateTo ?? ev.eventDate;
+      if (evEnd < start) continue; // ends before the queried range starts
+
+      const isMultiDay = toDateOnly(ev.eventDate) !== toDateOnly(evEnd);
+      const rangeSuffix = isMultiDay ? ` (${toDateOnly(ev.eventDate)} to ${toDateOnly(evEnd)})` : '';
+
+      // Show once per day it spans within the queried range, same as any
+      // other per-day timeline entry.
+      const dayStart = ev.eventDate > start ? ev.eventDate : start;
+      const dayEnd = evEnd < end ? evEnd : end;
+      for (const d = new Date(dayStart); d <= dayEnd; d.setUTCDate(d.getUTCDate() + 1)) {
+        const date = toDateOnly(d);
+        let description = `Event: ${ev.eventName}${rangeSuffix}`;
+        if (ev.remarks) description += ` - ${ev.remarks}`;
+        push(
+          date,
+          withId(
+            {
+              type: 'event',
+              description,
+              time: date,
+              event_name: ev.eventName,
+              event_date_from: toDateOnly(ev.eventDate),
+              event_date_to: toDateOnly(evEnd),
+              remarks: ev.remarks,
+            },
+            ev.id,
+            'event',
+          ),
+        );
+      }
     }
 
     const sortedDates = [...activitiesByDate.keys()].sort();
@@ -1066,6 +1095,7 @@ function serializeEvent(event: {
   id: string;
   studentId: string;
   eventDate: Date;
+  eventDateTo: Date | null;
   eventName: string;
   remarks: string | null;
   createdAt: Date;
@@ -1081,6 +1111,7 @@ function serializeEvent(event: {
       id: event.id,
       student_id: event.studentId,
       event_date: toDateOnly(event.eventDate),
+      event_date_to: toDateOnly(event.eventDateTo ?? event.eventDate),
       event_name: event.eventName,
       remarks: event.remarks,
     },

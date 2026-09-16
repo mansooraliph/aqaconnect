@@ -11,6 +11,10 @@ export class UpdateStudentEventDto {
 
   @IsOptional()
   @IsString()
+  event_date_to?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(255)
   event_name?: string;
 
