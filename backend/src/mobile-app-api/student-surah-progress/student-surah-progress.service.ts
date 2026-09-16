@@ -684,6 +684,11 @@ export class StudentSurahProgressService {
             grade: dto.grade ? GRADE_TO_ENUM[dto.grade] : undefined,
             remarks: dto.remarks,
             lastUpdatedById: userId,
+            // dto.type was only used above to select which pending rows to
+            // touch — write it here too, or the entry keeps whatever type it
+            // was originally seeded with (always NEW_LESSON today) instead
+            // of the lesson type the caller actually marked it as.
+            ...(dto.type && { type: TYPE_TO_ENUM[dto.type] }),
           },
         });
         if (entry.surahId) entriesBySurah.set(entry.surahId, (entriesBySurah.get(entry.surahId) ?? 0) + 1);
