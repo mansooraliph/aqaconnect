@@ -1475,8 +1475,9 @@ model Halqa {
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
 
-  students       HalqaStudent[]
-  hifdhSchedules SurahHifdhStudentSchedule[]
+  students             HalqaStudent[]
+  restoreTargetFor     HalqaStudent[] @relation("HalqaStudentRestoreTarget")
+  hifdhSchedules       SurahHifdhStudentSchedule[]
 
   @@index([branchId])
   @@index([teacherId])
@@ -1492,6 +1493,14 @@ model HalqaStudent {
   student    Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
   assignedAt DateTime  @default(now())
   removedAt  DateTime?
+
+  // Set when this membership was created via a temporary move (e.g. covering
+  // a teacher's leave) rather than a normal reassignment — restoreToHalqaId
+  // remembers where the student came from so "Restore" can send them back.
+  // Both are cleared (false/null) on a normal assign-student call.
+  isTemporary      Boolean @default(false)
+  restoreToHalqaId String?
+  restoreToHalqa   Halqa?  @relation("HalqaStudentRestoreTarget", fields: [restoreToHalqaId], references: [id])
 
   @@unique([halqaId, studentId])
   @@index([studentId])

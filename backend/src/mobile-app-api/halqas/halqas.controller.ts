@@ -19,6 +19,7 @@ import { MobileHalqasService } from './halqas.service';
 import { StoreHalqaDto } from './dto/store-halqa.dto';
 import { UpdateHalqaDto } from './dto/update-halqa.dto';
 import { AssignStudentsDto } from './dto/assign-students.dto';
+import { RestoreStudentsDto } from './dto/restore-students.dto';
 import { GetUnassignedStudentsQueryDto } from './dto/get-unassigned-students-query.dto';
 import { MobileContextService } from '../common/mobile-context.service';
 import { MobileValidationPipe } from '../common/mobile-validation.pipe';
@@ -112,6 +113,18 @@ export class HalqasController {
   async assignStudents(@Req() req: AuthedRequest, @Body() dto: AssignStudentsDto) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     return this.handle(() => this.service.assignStudents(branchId, req.user.userId, dto), 'assign students');
+  }
+
+  @Post('restore-students')
+  async restoreStudents(@Req() req: AuthedRequest, @Body() dto: RestoreStudentsDto) {
+    const branchId = await this.context.resolveBranchId(req.user.userId);
+    return this.handle(() => this.service.restoreStudents(branchId, req.user.userId, dto), 'restore students');
+  }
+
+  @Get('temporary-students')
+  async getTemporaryStudents(@Req() req: AuthedRequest) {
+    const branchId = await this.context.resolveBranchId(req.user.userId);
+    return this.service.getTemporaryStudents(branchId);
   }
 
   @Get('unassigned-students')

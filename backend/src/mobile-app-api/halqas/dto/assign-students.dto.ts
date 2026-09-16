@@ -1,4 +1,4 @@
-import { ArrayMinSize, IsArray, IsString } from 'class-validator';
+import { ArrayMinSize, IsArray, IsBoolean, IsOptional, IsString } from 'class-validator';
 
 export class AssignStudentsDto {
   @IsArray()
@@ -8,4 +8,10 @@ export class AssignStudentsDto {
 
   @IsString()
   halqa_id!: string;
+
+  // When true, each student's current active halqa (if any) is remembered
+  // as their restore target instead of being discarded — see restoreStudents.
+  @IsOptional()
+  @IsBoolean()
+  is_temporary?: boolean;
 }

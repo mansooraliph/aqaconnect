@@ -5,6 +5,7 @@ import { MobileContextService } from '../common/mobile-context.service';
 import { StoreHalqaDto } from './dto/store-halqa.dto';
 import { UpdateHalqaDto } from './dto/update-halqa.dto';
 import { AssignStudentsDto } from './dto/assign-students.dto';
+import { RestoreStudentsDto } from './dto/restore-students.dto';
 import { GetUnassignedStudentsQueryDto } from './dto/get-unassigned-students-query.dto';
 
 function pad2(n: number): string {
@@ -126,11 +127,14 @@ export class MobileHalqasService {
           }),
         },
       },
-      include: { student: { include: { user: true } } },
+      include: {
+        student: { include: { user: true } },
+        restoreToHalqa: { select: { id: true, name: true } },
+      },
       orderBy: { student: { name: 'asc' } },
     });
 
-    const studentsData = memberships.map(({ student }) => ({
+    const studentsData = memberships.map(({ student, isTemporary, restoreToHalqa }) => ({
       id: student.id,
       name: student.name,
       email: student.user?.email ?? null,
@@ -140,6 +144,8 @@ export class MobileHalqasService {
       status: toLegacyStatus(student.status),
       image_url: null, // legacy: asset($student->image_url) — no avatar/upload subsystem in this schema
       created_at: formatDateTime(student.createdAt),
+      is_temporary: isTemporary,
+      restore_to_halqa: restoreToHalqa ? { id: restoreToHalqa.id, name: restoreToHalqa.name } : null,
     }));
 
     return {
@@ -277,8 +283,21 @@ export class MobileHalqasService {
     }
 
     const validIds = validStudents.map((s) => s.id);
+    const isTemporary = dto.is_temporary === true;
 
     await this.prisma.$transaction(async (tx) => {
+      // If this is a temporary move, remember each student's current active
+      // halqa (if any) before closing it out, so restoreStudents can send
+      // them back later. A normal (non-temporary) assign clears any
+      // lingering temporary flag/target instead.
+      const priorMemberships = isTemporary
+        ? await tx.halqaStudent.findMany({
+            where: { studentId: { in: validIds }, removedAt: null, NOT: { halqaId: dto.halqa_id } },
+            select: { studentId: true, halqaId: true },
+          })
+        : [];
+      const restoreTargetByStudent = new Map(priorMemberships.map((m) => [m.studentId, m.halqaId]));
+
       // Legacy overwrites `student_details.halqa_id` unconditionally — same
       // effect here: close out any other active membership, then (re)open
       // one for the target Halqa.
@@ -288,26 +307,113 @@ export class MobileHalqasService {
       });
 
       for (const studentId of validIds) {
+        const restoreToHalqaId = isTemporary ? (restoreTargetByStudent.get(studentId) ?? null) : null;
         const existing = await tx.halqaStudent.findUnique({
           where: { halqaId_studentId: { halqaId: dto.halqa_id, studentId } },
         });
         if (existing) {
-          await tx.halqaStudent.update({ where: { id: existing.id }, data: { removedAt: null, assignedAt: new Date() } });
+          await tx.halqaStudent.update({
+            where: { id: existing.id },
+            data: { removedAt: null, assignedAt: new Date(), isTemporary, restoreToHalqaId },
+          });
         } else {
-          await tx.halqaStudent.create({ data: { halqaId: dto.halqa_id, studentId } });
+          await tx.halqaStudent.create({
+            data: { halqaId: dto.halqa_id, studentId, isTemporary, restoreToHalqaId },
+          });
         }
       }
     });
 
     return {
       status: 'success',
-      message: `${validIds.length} student(s) successfully assigned to halqa.`,
+      message: isTemporary
+        ? `${validIds.length} student(s) temporarily moved to halqa.`
+        : `${validIds.length} student(s) successfully assigned to halqa.`,
       data: {
         assigned_student_ids: validIds,
         halqa_id: dto.halqa_id,
         halqa_name: halqa.name,
+        is_temporary: isTemporary,
       },
     };
+  }
+
+  async restoreStudents(branchId: string, userId: string, dto: RestoreStudentsDto) {
+    const memberships = await this.prisma.halqaStudent.findMany({
+      where: {
+        studentId: { in: dto.student_ids },
+        removedAt: null,
+        isTemporary: true,
+        halqa: { branchId },
+      },
+    });
+    if (memberships.length === 0) {
+      throw new NotFoundException({
+        status: 'error',
+        message: 'None of the given students are currently temporarily assigned.',
+      });
+    }
+
+    const restoredIds: string[] = [];
+    const unassignedIds: string[] = [];
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const m of memberships) {
+        await tx.halqaStudent.update({
+          where: { id: m.id },
+          data: { removedAt: new Date(), isTemporary: false, restoreToHalqaId: null },
+        });
+
+        if (m.restoreToHalqaId) {
+          const existing = await tx.halqaStudent.findUnique({
+            where: { halqaId_studentId: { halqaId: m.restoreToHalqaId, studentId: m.studentId } },
+          });
+          if (existing) {
+            await tx.halqaStudent.update({
+              where: { id: existing.id },
+              data: { removedAt: null, assignedAt: new Date(), isTemporary: false, restoreToHalqaId: null },
+            });
+          } else {
+            await tx.halqaStudent.create({ data: { halqaId: m.restoreToHalqaId, studentId: m.studentId } });
+          }
+          restoredIds.push(m.studentId);
+        } else {
+          // No prior halqa recorded (they were unassigned before the
+          // temporary move) — leaving their current membership closed above
+          // is enough; they go back to being unassigned.
+          unassignedIds.push(m.studentId);
+        }
+      }
+    });
+
+    return {
+      status: 'success',
+      message: `${restoredIds.length + unassignedIds.length} student(s) restored.`,
+      data: { restored_student_ids: restoredIds, unassigned_student_ids: unassignedIds },
+    };
+  }
+
+  async getTemporaryStudents(branchId: string) {
+    const memberships = await this.prisma.halqaStudent.findMany({
+      where: { removedAt: null, isTemporary: true, halqa: { branchId } },
+      include: {
+        student: { include: { user: true } },
+        halqa: { select: { id: true, name: true } },
+        restoreToHalqa: { select: { id: true, name: true } },
+      },
+      orderBy: { assignedAt: 'desc' },
+    });
+
+    const data = memberships.map((m) => ({
+      student_id: m.studentId,
+      student_name: m.student.name,
+      student_image_url: null,
+      current_halqa: { id: m.halqa.id, name: m.halqa.name },
+      restore_to_halqa: m.restoreToHalqa ? { id: m.restoreToHalqa.id, name: m.restoreToHalqa.name } : null,
+      assigned_at: formatDateTime(m.assignedAt),
+    }));
+
+    return { status: 'success', data };
   }
 
   async getUnassignedStudents(branchId: string, query: GetUnassignedStudentsQueryDto) {
