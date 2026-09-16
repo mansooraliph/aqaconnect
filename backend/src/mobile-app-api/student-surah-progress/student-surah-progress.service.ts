@@ -900,12 +900,31 @@ export class StudentSurahProgressService {
       take: perPage,
     });
 
+    // Old/Juzh Lesson entries store surahFrom/surahTo as bare surah numbers
+    // (not relations) — batch-resolve both ends' names so the mobile app can
+    // show "Al-Ikhlas -> An-Nas" instead of "Surah 112 -> Surah 114".
+    const surahNumbers = [
+      ...new Set(entries.flatMap((e) => [e.surahFrom, e.surahTo].filter((n): n is number => n != null))),
+    ];
+    const surahByNumber = new Map<number, { nameEnglish: string; nameArabic: string }>();
+    if (surahNumbers.length > 0) {
+      const surahs = await this.prisma.surah.findMany({
+        where: { number: { in: surahNumbers } },
+        select: { number: true, nameEnglish: true, nameArabic: true },
+      });
+      for (const s of surahs) surahByNumber.set(s.number, s);
+    }
+
     const progressData = entries.map((entry) => ({
       ...serializeEntry(entry),
       surah_from: entry.surahFrom,
       surah_from_ayah: entry.surahFromAyah,
+      surah_from_name_en: entry.surahFrom != null ? surahByNumber.get(entry.surahFrom)?.nameEnglish ?? null : null,
+      surah_from_name_ar: entry.surahFrom != null ? surahByNumber.get(entry.surahFrom)?.nameArabic ?? null : null,
       surah_to: entry.surahTo,
       surah_to_ayah: entry.surahToAyah,
+      surah_to_name_en: entry.surahTo != null ? surahByNumber.get(entry.surahTo)?.nameEnglish ?? null : null,
+      surah_to_name_ar: entry.surahTo != null ? surahByNumber.get(entry.surahTo)?.nameArabic ?? null : null,
       surah_range: entry.surahFrom ? `${entry.surahFrom}${entry.surahTo && entry.surahTo !== entry.surahFrom ? `-${entry.surahTo}` : ''}` : null,
       juzuh_from: entry.juzuhFrom,
       juzuh_to: entry.juzuhTo,
