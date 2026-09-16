@@ -12,6 +12,8 @@ import { AcademicClassesQueryDto } from './dto/academic-classes-query.dto';
 import { ActivityQueryDto } from './dto/activity-query.dto';
 import { AddStudentExamDto } from './dto/add-student-exam.dto';
 import { UpdateStudentExamDto } from './dto/update-student-exam.dto';
+import { AddStudentEventDto } from './dto/add-student-event.dto';
+import { UpdateStudentEventDto } from './dto/update-student-event.dto';
 
 const SALT_ROUNDS = 10;
 
@@ -656,6 +658,54 @@ export class MobileStudentsService {
     return serializeExam(updated);
   }
 
+  async addStudentEvent(branchId: string, dto: AddStudentEventDto) {
+    const student = await this.prisma.student.findFirst({ where: { id: dto.student_id, branchId } });
+    if (!student) {
+      throw new NotFoundException({ status: 'error', message: 'Student not found in your organization' });
+    }
+
+    const event = await this.prisma.studentEvent.create({
+      data: {
+        branchId,
+        studentId: dto.student_id,
+        eventDate: new Date(dto.event_date),
+        eventName: dto.event_name,
+        remarks: dto.remarks,
+      },
+    });
+
+    return serializeEvent(event);
+  }
+
+  async updateStudentEvent(branchId: string, eventId: string, dto: UpdateStudentEventDto) {
+    const event = await this.prisma.studentEvent.findFirst({ where: { id: eventId, branchId } });
+    if (!event) {
+      throw new NotFoundException({ status: 'error', message: 'Event record not found' });
+    }
+
+    if (dto.student_id !== undefined) {
+      const student = await this.prisma.student.findFirst({ where: { id: dto.student_id, branchId } });
+      if (!student) {
+        throw new NotFoundException({
+          status: 'error',
+          message: 'The specified student does not exist or is not a student',
+        });
+      }
+    }
+
+    const updated = await this.prisma.studentEvent.update({
+      where: { id: eventId },
+      data: {
+        ...(dto.student_id !== undefined && { studentId: dto.student_id }),
+        ...(dto.event_date !== undefined && { eventDate: new Date(dto.event_date) }),
+        ...(dto.event_name !== undefined && { eventName: dto.event_name }),
+        ...(dto.remarks !== undefined && { remarks: dto.remarks }),
+      },
+    });
+
+    return serializeEvent(updated);
+  }
+
   private resolveDateRange(query: ActivityQueryDto, joiningDate: Date) {
     let start: Date;
     let end: Date;
@@ -912,6 +962,33 @@ export class MobileStudentsService {
       }
     }
 
+    // 9. Student events (arts day, sports day, etc.) — shown in both
+    // getStudentActivityReport and getStudentActivity, same as leaves/
+    // holidays, since these are one-off records a teacher marks and expects
+    // to see reflected everywhere, not gated behind opts.includeExams.
+    const events = await this.prisma.studentEvent.findMany({
+      where: { studentId, eventDate: { gte: start, lte: end } },
+    });
+    for (const ev of events) {
+      const date = toDateOnly(ev.eventDate);
+      let description = `Event: ${ev.eventName}`;
+      if (ev.remarks) description += ` - ${ev.remarks}`;
+      push(
+        date,
+        withId(
+          {
+            type: 'event',
+            description,
+            time: toDateOnly(ev.eventDate),
+            event_name: ev.eventName,
+            remarks: ev.remarks,
+          },
+          ev.id,
+          'event',
+        ),
+      );
+    }
+
     const sortedDates = [...activitiesByDate.keys()].sort();
     const activities = sortedDates.map((date) => ({ date, activities: activitiesByDate.get(date) }));
 
@@ -981,6 +1058,31 @@ function serializeExam(exam: {
       marks: exam.marks,
       remarks: exam.remarks,
       schedule_id: exam.scheduleId,
+    },
+  };
+}
+
+function serializeEvent(event: {
+  id: string;
+  studentId: string;
+  eventDate: Date;
+  eventName: string;
+  remarks: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}) {
+  return {
+    status: 'success',
+    message:
+      event.createdAt.getTime() === event.updatedAt.getTime()
+        ? 'Student event added successfully'
+        : 'Student event updated successfully',
+    data: {
+      id: event.id,
+      student_id: event.studentId,
+      event_date: toDateOnly(event.eventDate),
+      event_name: event.eventName,
+      remarks: event.remarks,
     },
   };
 }

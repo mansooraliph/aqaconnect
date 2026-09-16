@@ -30,6 +30,8 @@ import { AcademicClassesQueryDto } from './dto/academic-classes-query.dto';
 import { ActivityQueryDto } from './dto/activity-query.dto';
 import { AddStudentExamDto } from './dto/add-student-exam.dto';
 import { UpdateStudentExamDto } from './dto/update-student-exam.dto';
+import { AddStudentEventDto } from './dto/add-student-event.dto';
+import { UpdateStudentEventDto } from './dto/update-student-event.dto';
 import { MobileContextService } from '../common/mobile-context.service';
 import { MobileValidationPipe } from '../common/mobile-validation.pipe';
 import { MobileApiLoggingInterceptor } from '../common/mobile-api-logging.interceptor';
@@ -154,6 +156,19 @@ export class StudentsController {
   async updateStudentExam(@Req() req: AuthedRequest, @Param('examId') examId: string, @Body() dto: UpdateStudentExamDto) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     return this.handle(() => this.service.updateStudentExam(branchId, examId, dto), 'Failed to update exam record');
+  }
+
+  @Post('student-events')
+  @HttpCode(201)
+  async addStudentEvent(@Req() req: AuthedRequest, @Body() dto: AddStudentEventDto) {
+    const branchId = await this.context.resolveBranchId(req.user.userId);
+    return this.handle(() => this.service.addStudentEvent(branchId, dto), 'Failed to add student event');
+  }
+
+  @Patch('update-student-events/:eventId')
+  async updateStudentEvent(@Req() req: AuthedRequest, @Param('eventId') eventId: string, @Body() dto: UpdateStudentEventDto) {
+    const branchId = await this.context.resolveBranchId(req.user.userId);
+    return this.handle(() => this.service.updateStudentEvent(branchId, eventId, dto), 'Failed to update event record');
   }
 
   @Get('student-activity')

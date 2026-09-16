@@ -76,6 +76,7 @@ model Branch {
   exams     Exam[]
 
   studentExams    StudentExam[]
+  studentEvents   StudentEvent[]
   progressEntries StudentSurahProgressEntry[]
 
   notifications Notification[]
@@ -965,6 +966,7 @@ model Student {
   payments         Payment[]
   attendances      Attendance[]
   studentExams     StudentExam[]
+  studentEvents    StudentEvent[]
   progressEntries  StudentSurahProgressEntry[]
 
   biometricEnrollments  BiometricEnrollment[]
@@ -1003,6 +1005,26 @@ enum StudentExamOutcome {
   PASS
   FAIL
   PREPARATION
+}
+
+// A one-off school/academy event marked against a student (arts day, sports
+// day, etc.) — free-text name + optional info, surfaced in that student's
+// activity timeline alongside lessons/exams/leaves/holidays.
+model StudentEvent {
+  id          String   @id @default(cuid())
+  branchId    String
+  branch      Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  studentId   String
+  student     Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  eventDate   DateTime @db.Date
+  eventName   String
+  remarks     String?
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([branchId])
+  @@index([studentId])
 }
 
 // Mirrors legacy's per-ayah-range progress ledger (Mobile App API's
