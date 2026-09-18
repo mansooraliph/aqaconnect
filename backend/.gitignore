@@ -7,3 +7,4 @@ node_modules
 # Firebase service-account private key — never commit
 /credentials/
 /storage/
+/uploads/

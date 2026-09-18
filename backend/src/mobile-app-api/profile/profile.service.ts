@@ -28,7 +28,7 @@ export class ProfileService {
         name: [employee.user.firstName, employee.user.lastName].filter(Boolean).join(' '),
         email: employee.user.email,
         phone_number: employee.user.phone,
-        image: null, // placeholder: no avatar storage yet
+        image: employee.user.imageUrl,
         gender: employee.gender,
         address: employee.address,
         qualification: employee.qualification,
@@ -51,7 +51,7 @@ export class ProfileService {
         name: student.name,
         email: student.user?.email ?? null,
         phone_number: student.user?.phone ?? student.guardianPhone ?? null,
-        image: null, // placeholder: no avatar storage yet
+        image: student.user?.imageUrl ?? null,
         gender: student.gender,
         address: student.address,
         qualification: student.qualification,
@@ -67,18 +67,26 @@ export class ProfileService {
     throw new ForbiddenException('No employee or student record linked to your account in this branch');
   }
 
-  async editProfile(branchId: string, userId: string, dto: EditProfileDto) {
+  async editProfile(
+    branchId: string,
+    userId: string,
+    dto: EditProfileDto,
+    image?: Express.Multer.File,
+    publicBaseUrl?: string,
+  ) {
     const existingEmailOwner = await this.prisma.user.findUnique({ where: { email: dto.email } });
     if (existingEmailOwner && existingEmailOwner.id !== userId) {
       throw new ConflictException('That email is already in use.');
     }
+
+    const imageUrl = image ? `${publicBaseUrl}/uploads/avatars/${image.filename}` : undefined;
 
     const employee = await this.prisma.employee.findFirst({ where: { branchId, userId } });
     if (employee) {
       const { firstName, lastName } = splitName(dto.name);
       await this.prisma.user.update({
         where: { id: userId },
-        data: { firstName, lastName, email: dto.email, phone: dto.phone_number },
+        data: { firstName, lastName, email: dto.email, phone: dto.phone_number, ...(imageUrl && { imageUrl }) },
       });
       await this.prisma.employee.update({
         where: { id: employee.id },
@@ -97,7 +105,7 @@ export class ProfileService {
     if (student) {
       await this.prisma.user.update({
         where: { id: userId },
-        data: { email: dto.email, phone: dto.phone_number },
+        data: { email: dto.email, phone: dto.phone_number, ...(imageUrl && { imageUrl }) },
       });
       await this.prisma.student.update({
         where: { id: student.id },

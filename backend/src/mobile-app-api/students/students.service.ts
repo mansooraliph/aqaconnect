@@ -202,6 +202,7 @@ export class MobileStudentsService {
           gender: toGenderEnum(dto.gender),
           joiningDate: dto.joining_date ? new Date(dto.joining_date) : new Date(),
           hifdhStartDate: dto.hifdh_start_date ? new Date(dto.hifdh_start_date) : undefined,
+          address: dto.address,
         },
       });
 
@@ -270,6 +271,7 @@ export class MobileStudentsService {
           ...(dto.hifdh_start_date !== undefined && {
             hifdhStartDate: dto.hifdh_start_date ? new Date(dto.hifdh_start_date) : null,
           }),
+          ...(dto.address !== undefined && { address: dto.address }),
         },
       });
 
@@ -284,6 +286,55 @@ export class MobileStudentsService {
           } else {
             await tx.halqaStudent.create({ data: { halqaId: dto.halqa_id, studentId: id } });
           }
+        }
+      }
+
+      if (dto.class_section_year_id !== undefined || dto.roll_no !== undefined) {
+        const currentEnrollment = await tx.studentEnrollment.findFirst({ where: { studentId: id, status: 'ACTIVE' } });
+
+        const changingClass =
+          dto.class_section_year_id !== undefined &&
+          dto.class_section_year_id !== currentEnrollment?.academicClassSectionYearId;
+
+        if (changingClass) {
+          if (currentEnrollment) {
+            await tx.studentEnrollment.update({
+              where: { id: currentEnrollment.id },
+              data: { status: 'TRANSFERRED', withdrawnAt: new Date() },
+            });
+          }
+          if (dto.class_section_year_id) {
+            const existingTarget = await tx.studentEnrollment.findUnique({
+              where: {
+                studentId_academicClassSectionYearId: {
+                  studentId: id,
+                  academicClassSectionYearId: dto.class_section_year_id,
+                },
+              },
+            });
+            if (existingTarget) {
+              await tx.studentEnrollment.update({
+                where: { id: existingTarget.id },
+                data: {
+                  status: 'ACTIVE',
+                  withdrawnAt: null,
+                  ...(dto.roll_no !== undefined && { rollNo: dto.roll_no }),
+                },
+              });
+            } else {
+              await tx.studentEnrollment.create({
+                data: {
+                  studentId: id,
+                  academicClassSectionYearId: dto.class_section_year_id,
+                  status: 'ACTIVE',
+                  transferredFromId: currentEnrollment?.id,
+                  ...(dto.roll_no !== undefined && { rollNo: dto.roll_no }),
+                },
+              });
+            }
+          }
+        } else if (dto.roll_no !== undefined && currentEnrollment) {
+          await tx.studentEnrollment.update({ where: { id: currentEnrollment.id }, data: { rollNo: dto.roll_no } });
         }
       }
     });
@@ -332,9 +383,10 @@ export class MobileStudentsService {
     const enrollmentInfo = enrollment
       ? {
           id: enrollment.id,
-          roll_no: null, // no roll-number column in this schema
+          roll_no: enrollment.rollNo,
           enrolled_on: formatDate(enrollment.enrolledAt),
           status: enrollment.status.toLowerCase(),
+          class_section_year_id: enrollment.academicClassSectionYearId,
           academic_year: {
             id: enrollment.academicClassSectionYear.academicYear.id,
             name: enrollment.academicClassSectionYear.academicYear.name,
@@ -386,7 +438,8 @@ export class MobileStudentsService {
           whatsapp_country_code: null,
           joining_date: student.joiningDate ? toDateOnly(student.joiningDate) : null,
           blood_group: null,
-          address: null,
+          address: student.address,
+          hifdh_start_date: student.hifdhStartDate ? toDateOnly(student.hifdhStartDate) : null,
           halqa_id: membership?.halqaId ?? null,
         },
         halqa: halqaInfo,
@@ -566,6 +619,58 @@ export class MobileStudentsService {
     };
   }
 
+  // ── getAllStudents ────────────────────────────────────────────────────
+  // Branch-wide student listing, independent of halqa — each student
+  // carries their current halqa (or null if unassigned) so the caller can
+  // show/group across halqas instead of picking one at a time.
+  async getAllStudents(branchId: string, search: string) {
+    const students = await this.prisma.student.findMany({
+      where: {
+        branchId,
+        status: 'ACTIVE',
+        ...(search && {
+          OR: [
+            { name: { contains: search, mode: 'insensitive' } },
+            { studentCode: { contains: search, mode: 'insensitive' } },
+            { user: { email: { contains: search, mode: 'insensitive' } } },
+          ],
+        }),
+      },
+      include: {
+        user: true,
+        halqaMemberships: {
+          where: { removedAt: null },
+          include: { halqa: { select: { id: true, name: true } } },
+        },
+      },
+      orderBy: { name: 'asc' },
+    });
+
+    const studentsData = students.map((student) => {
+      const halqa = student.halqaMemberships[0]?.halqa ?? null;
+      return {
+        id: student.id,
+        name: student.name,
+        email: student.user?.email ?? null,
+        mobile: student.user?.phone ?? null,
+        country_phonecode: null,
+        gender: toLegacyGender(student.gender),
+        status: student.status.toLowerCase(),
+        image_url: null,
+        created_at: formatDateTime(student.createdAt),
+        halqa: halqa ? { id: halqa.id, name: halqa.name } : null,
+      };
+    });
+
+    return {
+      status: 'success',
+      data: {
+        students: studentsData,
+        meta: { search, total_students: studentsData.length },
+      },
+    };
+  }
+
   async destroyStudent(branchId: string, id: string) {
     const student = await this.prisma.student.findFirst({ where: { id, branchId } });
     if (!student) {
@@ -719,6 +824,14 @@ export class MobileStudentsService {
     });
 
     return serializeEvent(updated);
+  }
+
+  async deleteStudentEvent(branchId: string, eventId: string) {
+    const event = await this.prisma.studentEvent.findFirst({ where: { id: eventId, branchId } });
+    if (!event) {
+      throw new NotFoundException({ status: 'error', message: 'Event record not found' });
+    }
+    await this.prisma.studentEvent.delete({ where: { id: eventId } });
   }
 
   private resolveDateRange(query: ActivityQueryDto, joiningDate: Date) {

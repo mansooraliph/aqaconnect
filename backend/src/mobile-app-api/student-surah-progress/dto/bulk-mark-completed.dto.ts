@@ -15,8 +15,9 @@ export class BulkMarkCompletedDto {
   @MaxLength(1000)
   remarks?: string;
 
-  // Accepted for legacy request-shape compatibility; no file-storage
-  // subsystem in this schema, so nothing is actually persisted/uploaded.
+  // The actual uploaded file is read via @UploadedFile() in the controller,
+  // not through this DTO field — it only needs to exist so class-validator's
+  // whitelist doesn't reject the multipart field.
   @IsOptional()
   remark_file?: unknown;
 

@@ -1,7 +1,17 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { createHash } from 'crypto';
 import type { Prisma } from '@prisma/client';
-import { NotificationType, ProgressEntryGrade, ProgressEntryStatus, ProgressEntryType } from '@prisma/client';
+import {
+  HifdhScheduleStatus,
+  NotificationType,
+  ProgressEntryGrade,
+  ProgressEntryStatus,
+  ProgressEntryType,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { BulkMarkCompletedDto } from './dto/bulk-mark-completed.dto';
@@ -79,7 +89,9 @@ function gradeBadgeClass(grade: string): string {
       return 'secondary';
   }
 }
-function fullName(user: { firstName: string; lastName: string | null } | null | undefined): string {
+function fullName(
+  user: { firstName: string; lastName: string | null } | null | undefined,
+): string {
   if (!user) return '';
   return [user.firstName, user.lastName].filter(Boolean).join(' ');
 }
@@ -131,7 +143,9 @@ const ENTRY_INCLUDE = {
   verifiedBy: { select: { firstName: true, lastName: true } },
 } satisfies Prisma.StudentSurahProgressEntryInclude;
 
-type EntryRow = Prisma.StudentSurahProgressEntryGetPayload<{ include: typeof ENTRY_INCLUDE }>;
+type EntryRow = Prisma.StudentSurahProgressEntryGetPayload<{
+  include: typeof ENTRY_INCLUDE;
+}>;
 
 function serializeEntry(entry: EntryRow) {
   const status = STATUS_TO_LEGACY[entry.status];
@@ -148,10 +162,16 @@ function serializeEntry(entry: EntryRow) {
     completed_at_date: formatDateOnly(entry.completedAt),
     verified_at: formatDateTime(entry.verifiedAt),
     remarks: entry.remarks,
-    remark_file_url: null, // no file-storage subsystem in this schema
-    added_by: entry.addedBy ? { id: entry.addedById, name: fullName(entry.addedBy) } : null,
-    last_updated_by: entry.lastUpdatedBy ? { id: entry.lastUpdatedById, name: fullName(entry.lastUpdatedBy) } : null,
-    verified_by: entry.verifiedBy ? { id: entry.verifiedById, name: fullName(entry.verifiedBy) } : null,
+    remark_file_url: entry.remarkFile ?? null,
+    added_by: entry.addedBy
+      ? { id: entry.addedById, name: fullName(entry.addedBy) }
+      : null,
+    last_updated_by: entry.lastUpdatedBy
+      ? { id: entry.lastUpdatedById, name: fullName(entry.lastUpdatedBy) }
+      : null,
+    verified_by: entry.verifiedBy
+      ? { id: entry.verifiedById, name: fullName(entry.verifiedBy) }
+      : null,
     is_completed: status === 'Completed' || status === 'Verified',
     is_verified: status === 'Verified',
     can_complete: status === 'Not Started' || status === 'In Progress',
@@ -170,12 +190,18 @@ export class StudentSurahProgressService {
   ) {}
 
   /** Notifies each affected student's linked login that their recitation/Hifdh progress was updated by a teacher. */
-  private async notifyProgressMarked(branchId: string, updatedCountByStudentId: Map<string, number>) {
+  private async notifyProgressMarked(
+    branchId: string,
+    updatedCountByStudentId: Map<string, number>,
+  ) {
     if (updatedCountByStudentId.size === 0) {
       return;
     }
     const students = await this.prisma.student.findMany({
-      where: { id: { in: [...updatedCountByStudentId.keys()] }, userId: { not: null } },
+      where: {
+        id: { in: [...updatedCountByStudentId.keys()] },
+        userId: { not: null },
+      },
       select: { id: true, userId: true },
     });
     await Promise.all(
@@ -197,7 +223,10 @@ export class StudentSurahProgressService {
       include: { user: { select: { email: true } } },
     });
     if (!student) {
-      throw new NotFoundException({ status: 'error', message: 'Student not found or inactive' });
+      throw new NotFoundException({
+        status: 'error',
+        message: 'Student not found or inactive',
+      });
     }
     return student;
   }
@@ -212,7 +241,10 @@ export class StudentSurahProgressService {
    * Surahs with progress but no schedule row (rare — e.g. manually recorded
    * Old Lesson entries) are appended after, in their own createdAt order.
    */
-  private async getScheduleOrderedSurahIds(studentId: string, fallbackSurahIds: string[]): Promise<string[]> {
+  private async getScheduleOrderedSurahIds(
+    studentId: string,
+    fallbackSurahIds: string[],
+  ): Promise<string[]> {
     const scheduleRows = await this.prisma.surahHifdhStudentSchedule.findMany({
       where: { studentId, surahId: { not: null } },
       orderBy: [{ day: 'asc' }, { scheduledDate: 'asc' }],
@@ -220,7 +252,8 @@ export class StudentSurahProgressService {
     });
     const orderedIds: string[] = [];
     for (const row of scheduleRows) {
-      if (row.surahId && !orderedIds.includes(row.surahId)) orderedIds.push(row.surahId);
+      if (row.surahId && !orderedIds.includes(row.surahId))
+        orderedIds.push(row.surahId);
     }
     for (const id of fallbackSurahIds) {
       if (!orderedIds.includes(id)) orderedIds.push(id);
@@ -236,7 +269,11 @@ export class StudentSurahProgressService {
     return membership?.halqa ?? null;
   }
 
-  private async formatStudentBasic(student: { id: string; name: string; user: { email: string | null } | null }) {
+  private async formatStudentBasic(student: {
+    id: string;
+    name: string;
+    user: { email: string | null } | null;
+  }) {
     return {
       id: student.id,
       name: student.name,
@@ -246,26 +283,44 @@ export class StudentSurahProgressService {
     };
   }
 
-  private async formatStudentWithHalqa(student: { id: string; name: string; user: { email: string | null } | null }) {
+  private async formatStudentWithHalqa(student: {
+    id: string;
+    name: string;
+    user: { email: string | null } | null;
+  }) {
     const base = await this.formatStudentBasic(student);
     const halqa = await this.studentHalqa(student.id);
     return {
       ...base,
-      halqa: halqa ? { id: halqa.id, name: halqa.name, status: halqa.status.toLowerCase() } : null,
+      halqa: halqa
+        ? { id: halqa.id, name: halqa.name, status: halqa.status.toLowerCase() }
+        : null,
     };
   }
 
   /** Legacy computes total/completed/verified/in_progress/not_started ayah COUNTS per surah — each row is "one ayah entry" in its model, replicated verbatim here (row-count, not ayah-range width). */
   private async getSurahStatistics(studentId: string, surahId: string) {
-    const [total, completed, verified, inProgress, notStarted] = await Promise.all([
-      this.prisma.studentSurahProgressEntry.count({ where: { studentId, surahId } }),
-      this.prisma.studentSurahProgressEntry.count({ where: { studentId, surahId, status: 'COMPLETED' } }),
-      this.prisma.studentSurahProgressEntry.count({ where: { studentId, surahId, status: 'VERIFIED' } }),
-      this.prisma.studentSurahProgressEntry.count({ where: { studentId, surahId, status: 'IN_PROGRESS' } }),
-      this.prisma.studentSurahProgressEntry.count({ where: { studentId, surahId, status: 'NOT_STARTED' } }),
-    ]);
+    const [total, completed, verified, inProgress, notStarted] =
+      await Promise.all([
+        this.prisma.studentSurahProgressEntry.count({
+          where: { studentId, surahId },
+        }),
+        this.prisma.studentSurahProgressEntry.count({
+          where: { studentId, surahId, status: 'COMPLETED' },
+        }),
+        this.prisma.studentSurahProgressEntry.count({
+          where: { studentId, surahId, status: 'VERIFIED' },
+        }),
+        this.prisma.studentSurahProgressEntry.count({
+          where: { studentId, surahId, status: 'IN_PROGRESS' },
+        }),
+        this.prisma.studentSurahProgressEntry.count({
+          where: { studentId, surahId, status: 'NOT_STARTED' },
+        }),
+      ]);
     const totalCompleted = completed + verified;
-    const completionRate = total > 0 ? Math.round((totalCompleted / total) * 1000) / 10 : 0;
+    const completionRate =
+      total > 0 ? Math.round((totalCompleted / total) * 1000) / 10 : 0;
     return {
       total_ayahs: total,
       completed_ayahs: completed,
@@ -284,11 +339,22 @@ export class StudentSurahProgressService {
   }
 
   // ── getSurahDetails ─────────────────────────────────────────────────
-  async getSurahDetails(branchId: string, surahId: string, studentId: string, type?: string) {
+  async getSurahDetails(
+    branchId: string,
+    surahId: string,
+    studentId: string,
+    type?: string,
+  ) {
     const student = await this.requireActiveStudent(branchId, studentId);
-    const surah = await this.prisma.surah.findUnique({ where: { id: surahId }, select: SURAH_SELECT });
+    const surah = await this.prisma.surah.findUnique({
+      where: { id: surahId },
+      select: SURAH_SELECT,
+    });
     if (!surah) {
-      throw new NotFoundException({ status: 'error', message: 'Surah not found' });
+      throw new NotFoundException({
+        status: 'error',
+        message: 'Surah not found',
+      });
     }
 
     const entries = await this.prisma.studentSurahProgressEntry.findMany({
@@ -312,7 +378,10 @@ export class StudentSurahProgressService {
       byDate.set(date, list);
     }
     const sortedDates = [...byDate.keys()].sort().reverse();
-    const groupedProgress: { completed_at: string | null; entries: unknown[] }[] = sortedDates.map((date) => ({
+    const groupedProgress: {
+      completed_at: string | null;
+      entries: unknown[];
+    }[] = sortedDates.map((date) => ({
       completed_at: date,
       entries: byDate.get(date)!,
     }));
@@ -332,7 +401,11 @@ export class StudentSurahProgressService {
   }
 
   // ── getSurahProgressList ────────────────────────────────────────────
-  async getSurahProgressList(branchId: string, studentId: string, type?: string) {
+  async getSurahProgressList(
+    branchId: string,
+    studentId: string,
+    type?: string,
+  ) {
     const student = await this.requireActiveStudent(branchId, studentId);
 
     const allRecords = await this.prisma.studentSurahProgressEntry.findMany({
@@ -342,21 +415,69 @@ export class StudentSurahProgressService {
     });
     const fallbackSurahIds: string[] = [];
     for (const r of allRecords) {
-      if (r.surahId && !fallbackSurahIds.includes(r.surahId)) fallbackSurahIds.push(r.surahId);
+      if (r.surahId && !fallbackSurahIds.includes(r.surahId))
+        fallbackSurahIds.push(r.surahId);
     }
-    const orderedSurahIds = await this.getScheduleOrderedSurahIds(studentId, fallbackSurahIds);
+    const orderedSurahIds = await this.getScheduleOrderedSurahIds(
+      studentId,
+      fallbackSurahIds,
+    );
 
-    const surahs = await this.prisma.surah.findMany({ where: { id: { in: orderedSurahIds } }, select: SURAH_SELECT });
+    const surahs = await this.prisma.surah.findMany({
+      where: { id: { in: orderedSurahIds } },
+      select: SURAH_SELECT,
+    });
     const surahById = new Map(surahs.map((s) => [s.id, s]));
-    const orderedSurahs = orderedSurahIds.map((id) => surahById.get(id)).filter((s): s is NonNullable<typeof s> => !!s);
+    const orderedSurahs = orderedSurahIds
+      .map((id) => surahById.get(id))
+      .filter((s): s is NonNullable<typeof s> => !!s);
 
     const entries = await this.prisma.studentSurahProgressEntry.findMany({
       where: { studentId, ...this.typeWhere(type) },
     });
 
+    // Ayah -> Mushaf-line-count lookup, so progress is weighted by how much
+    // was actually memorized (lines) rather than by raw ayah/entry count —
+    // some ayahs are one line, others span several, and surahs vary hugely
+    // in length (An-Nas: 6 short ayahs vs. Al-Baqarah: 286 ayahs).
+    const pageLines = await this.prisma.surahAyahPageLine.findMany({
+      where: { surahId: { in: orderedSurahIds } },
+      select: { surahId: true, ayahNumber: true, lineFrom: true, lineTo: true },
+    });
+    const lineCountOf = new Map<string, number>(); // `${surahId}:${ayahNumber}` -> lines
+    for (const pl of pageLines) {
+      lineCountOf.set(
+        `${pl.surahId}:${pl.ayahNumber}`,
+        pl.lineTo - pl.lineFrom + 1,
+      );
+    }
+    // Entries without a concrete ayah range (e.g. some Old Lesson rows) fall
+    // back to a weight of 1 line so they still count, just without the
+    // length-weighting benefit.
+    function linesFor(
+      surahId: string | null,
+      fromAyah: number | null,
+      toAyah: number | null,
+    ): number {
+      if (!surahId || fromAyah === null || toAyah === null) return 1;
+      let lines = 0;
+      for (let ayah = fromAyah; ayah <= toAyah; ayah++) {
+        lines += lineCountOf.get(`${surahId}:${ayah}`) ?? 1;
+      }
+      return lines || 1;
+    }
+
     const progressMap = new Map<
       string,
-      { total: number; completed: number; inProgress: number; notStarted: number; types: Set<string> }
+      {
+        total: number;
+        completed: number;
+        inProgress: number;
+        notStarted: number;
+        totalLines: number;
+        completedLines: number;
+        types: Set<string>;
+      }
     >();
     for (const e of entries) {
       if (!e.surahId) continue;
@@ -365,12 +486,18 @@ export class StudentSurahProgressService {
         completed: 0,
         inProgress: 0,
         notStarted: 0,
+        totalLines: 0,
+        completedLines: 0,
         types: new Set<string>(),
       };
+      const lines = linesFor(e.surahId, e.fromAyah, e.toAyah);
       entry.total += 1;
+      entry.totalLines += lines;
       if (e.type) entry.types.add(TYPE_TO_LEGACY[e.type]);
-      if (e.status === 'COMPLETED' || e.status === 'VERIFIED') entry.completed += 1;
-      else if (e.status === 'IN_PROGRESS') entry.inProgress += 1;
+      if (e.status === 'COMPLETED' || e.status === 'VERIFIED') {
+        entry.completed += 1;
+        entry.completedLines += lines;
+      } else if (e.status === 'IN_PROGRESS') entry.inProgress += 1;
       else if (e.status === 'NOT_STARTED') entry.notStarted += 1;
       progressMap.set(e.surahId, entry);
     }
@@ -387,10 +514,15 @@ export class StudentSurahProgressService {
           progressPercentage = 100;
         } else if (data.completed > 0 || data.inProgress > 0) {
           completionStatus = 'In Progress';
-          progressPercentage = data.total > 0 ? Math.round((data.completed / data.total) * 10000) / 100 : 0;
+          progressPercentage =
+            data.totalLines > 0
+              ? Math.round((data.completedLines / data.totalLines) * 10000) /
+                100
+              : 0;
         }
       }
-      const displayType = type ?? (types.length > 0 ? types.join(', ') : 'No lessons');
+      const displayType =
+        type ?? (types.length > 0 ? types.join(', ') : 'No lessons');
 
       return {
         surah_id: surah.id,
@@ -413,10 +545,29 @@ export class StudentSurahProgressService {
     });
 
     const totalSurahs = orderedSurahs.length;
-    const completedSurahs = surahList.filter((s) => s.completion_status === 'Completed').length;
-    const inProgressSurahs = surahList.filter((s) => s.completion_status === 'In Progress').length;
-    const notStartedSurahs = surahList.filter((s) => s.completion_status === 'Not Started').length;
-    const overallProgress = totalSurahs > 0 ? Math.round((completedSurahs / totalSurahs) * 10000) / 100 : 0;
+    const completedSurahs = surahList.filter(
+      (s) => s.completion_status === 'Completed',
+    ).length;
+    const inProgressSurahs = surahList.filter(
+      (s) => s.completion_status === 'In Progress',
+    ).length;
+    const notStartedSurahs = surahList.filter(
+      (s) => s.completion_status === 'Not Started',
+    ).length;
+    // Line-weighted overall percentage — NOT completedSurahs/totalSurahs,
+    // which would count a 6-ayah surah the same as a 286-ayah one.
+    let totalLinesAll = 0;
+    let completedLinesAll = 0;
+    for (const data of progressMap.values()) {
+      totalLinesAll += data.totalLines;
+      completedLinesAll += data.completedLines;
+    }
+    const overallProgress =
+      totalLinesAll > 0
+        ? Math.round((completedLinesAll / totalLinesAll) * 10000) / 100
+        : 0;
+
+    const pacing = await this.computeSchedulePacing(studentId, lineCountOf);
 
     return {
       status: 'success',
@@ -429,9 +580,220 @@ export class StudentSurahProgressService {
           in_progress_surahs: inProgressSurahs,
           not_started_surahs: notStartedSurahs,
           overall_progress_percentage: overallProgress,
+          actual_progress_percentage: pacing.actualProgressPercentage,
+          expected_progress_percentage: pacing.expectedProgressPercentage,
+          target_completion_date: pacing.targetCompletionDate,
+          projected_completion_date: pacing.projectedCompletionDate,
+          pace_status: pacing.paceStatus,
+          pace_message: pacing.paceMessage,
         },
         filter_applied: { type: type ?? null },
       },
+    };
+  }
+
+  /**
+   * Schedule-based pacing: how much of the student's Hifdh schedule SHOULD
+   * be done by today (by scheduled date) vs. how much actually IS done (by
+   * SurahHifdhStudentSchedule.status, which syncScheduleEntries() keeps in
+   * sync with progress marking), plus when they're on track to finish vs.
+   * when the schedule says they should. All line-weighted, same as the
+   * surah list above, so a 6-ayah surah doesn't count the same as a
+   * 286-ayah one.
+   */
+  private async computeSchedulePacing(
+    studentId: string,
+    lineCountOf: Map<string, number>,
+  ) {
+    const latestScheduleNoAgg =
+      await this.prisma.surahHifdhStudentSchedule.aggregate({
+        where: { studentId },
+        _max: { scheduleNo: true },
+      });
+    const scheduleNo = latestScheduleNoAgg._max.scheduleNo;
+    if (!scheduleNo) {
+      return {
+        actualProgressPercentage: 0,
+        expectedProgressPercentage: 0,
+        targetCompletionDate: null as string | null,
+        projectedCompletionDate: null as string | null,
+        paceStatus: 'no_schedule',
+        paceMessage: 'No schedule generated for this student yet',
+      };
+    }
+
+    const rows = await this.prisma.surahHifdhStudentSchedule.findMany({
+      where: { studentId, scheduleNo },
+      select: {
+        surahId: true,
+        fromAyah: true,
+        toAyah: true,
+        scheduledDate: true,
+        status: true,
+        completedAt: true,
+      },
+    });
+
+    // lineCountOf was built from the New Lesson surahs only — schedule rows
+    // can reference surahs outside that set (e.g. after a curriculum
+    // restart), so top up any missing surah's ayah/line data on demand.
+    const missingSurahIds = [
+      ...new Set(rows.map((r) => r.surahId).filter((id): id is string => !!id)),
+    ].filter(
+      (id) => ![...lineCountOf.keys()].some((k) => k.startsWith(`${id}:`)),
+    );
+    if (missingSurahIds.length > 0) {
+      const extra = await this.prisma.surahAyahPageLine.findMany({
+        where: { surahId: { in: missingSurahIds } },
+        select: {
+          surahId: true,
+          ayahNumber: true,
+          lineFrom: true,
+          lineTo: true,
+        },
+      });
+      for (const pl of extra)
+        lineCountOf.set(
+          `${pl.surahId}:${pl.ayahNumber}`,
+          pl.lineTo - pl.lineFrom + 1,
+        );
+    }
+
+    const linesForRow = (
+      surahId: string | null,
+      fromAyah: number | null,
+      toAyah: number | null,
+    ): number => {
+      if (!surahId || fromAyah === null || toAyah === null) return 1;
+      let lines = 0;
+      for (let ayah = fromAyah; ayah <= toAyah; ayah++)
+        lines += lineCountOf.get(`${surahId}:${ayah}`) ?? 1;
+      return lines || 1;
+    };
+
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+
+    let totalLines = 0;
+    let actualLines = 0;
+    let expectedLines = 0;
+    let latestDate: Date | null = null;
+    // Pace is measured from actual practice, not the schedule's nominal
+    // start date — a student whose schedule was generated months ago but
+    // who only just started completing lessons should be paced from when
+    // they actually started, not averaged over the months they hadn't
+    // begun yet (that crushes linesPerDay toward zero and produces
+    // multi-century projections for anyone early in a long-dormant plan).
+    let earliestCompletedAt: Date | null = null;
+    // Separately, the most recent completion — used to detect a student
+    // who's simply gone quiet recently, independent of how long they've
+    // been on the schedule overall.
+    let latestCompletedAt: Date | null = null;
+
+    for (const row of rows) {
+      const lines = linesForRow(row.surahId, row.fromAyah, row.toAyah);
+      totalLines += lines;
+      if (row.status === HifdhScheduleStatus.COMPLETED) {
+        actualLines += lines;
+        if (row.completedAt) {
+          if (!earliestCompletedAt || row.completedAt < earliestCompletedAt) {
+            earliestCompletedAt = row.completedAt;
+          }
+          if (!latestCompletedAt || row.completedAt > latestCompletedAt) {
+            latestCompletedAt = row.completedAt;
+          }
+        }
+      }
+      if (row.scheduledDate <= today) expectedLines += lines;
+      if (!latestDate || row.scheduledDate > latestDate)
+        latestDate = row.scheduledDate;
+    }
+
+    const actualProgressPercentage =
+      totalLines > 0 ? Math.round((actualLines / totalLines) * 10000) / 100 : 0;
+    const expectedProgressPercentage =
+      totalLines > 0
+        ? Math.round((expectedLines / totalLines) * 10000) / 100
+        : 0;
+    const targetCompletionDate = latestDate ? formatDateOnly(latestDate) : null;
+
+    // Project a finish date from the student's own actual pace so far —
+    // lines actually completed ÷ days elapsed since they first actually
+    // completed something. A raw extrapolation here can produce nonsense
+    // (a projection centuries out for someone who's barely started, or an
+    // implausibly fast one if a backlog got bulk-marked with the same
+    // timestamp) — those aren't useful dates, they're noise, so below we
+    // classify the estimate's reliability and only hand back a date when
+    // it's actually meaningful. Otherwise the caller gets a status + plain
+    // -language reason instead of a number that looks broken.
+    const MIN_DAYS_FOR_ESTIMATE = 1; // any real activity span is enough to show a first estimate
+    const MAX_PLAUSIBLE_LINES_PER_DAY = 50; // generous ceiling for real daily memorization pace — a genuine data-quality guard, not a "too surprising" filter
+    const INACTIVE_AFTER_DAYS = 30; // schedule rows are daily with no built-in rest days, so any sustained gap is a real gap
+
+    let projectedCompletionDate: string | null = null;
+    let paceStatus: string;
+    let paceMessage: string;
+
+    const daysSinceLastActivity = latestCompletedAt
+      ? Math.round((today.getTime() - latestCompletedAt.getTime()) / 86400000)
+      : null;
+
+    if (actualLines === 0) {
+      paceStatus = 'not_started';
+      paceMessage = 'No lessons marked yet for this schedule';
+    } else if (
+      daysSinceLastActivity !== null &&
+      daysSinceLastActivity >= INACTIVE_AFTER_DAYS
+    ) {
+      // Takes priority over the checks below — a stale pace from before a
+      // long gap isn't a meaningful projection regardless of how much
+      // total history exists.
+      paceStatus = 'inactive';
+      paceMessage = `No activity in the last ${daysSinceLastActivity} days`;
+    } else if (!earliestCompletedAt) {
+      // Schedule rows are COMPLETED but carry no completedAt at all —
+      // shouldn't happen via normal marking, flag rather than guess.
+      paceStatus = 'unmarked_dates';
+      paceMessage =
+        'Completed lessons are missing dates — marking may need review';
+    } else {
+      const daysElapsed = Math.max(
+        1,
+        Math.round(
+          (today.getTime() - earliestCompletedAt.getTime()) / 86400000,
+        ) + 1,
+      );
+      const linesPerDay = actualLines / daysElapsed;
+
+      if (daysElapsed < MIN_DAYS_FOR_ESTIMATE) {
+        paceStatus = 'insufficient_data';
+        paceMessage = 'Not enough recent activity yet to estimate a pace';
+      } else if (linesPerDay > MAX_PLAUSIBLE_LINES_PER_DAY) {
+        paceStatus = 'unrealistic_pace';
+        paceMessage = 'Recent marking looks unusually fast — may need review';
+      } else {
+        // Now that pace is measured from real practice history (not the
+        // schedule's nominal start date), a far-out date is genuinely
+        // correct information for a slow-but-real student, not noise to
+        // hide — so it's shown as an actual date rather than a vague "far
+        // behind" placeholder. The UI compares it against the target date
+        // itself to label how far ahead/behind that implies.
+        const remainingLines = Math.max(0, totalLines - actualLines);
+        const daysToFinish = Math.ceil(remainingLines / linesPerDay);
+        const projected = new Date(today.getTime() + daysToFinish * 86400000);
+        projectedCompletionDate = formatDateOnly(projected);
+        paceStatus = 'on_track';
+        paceMessage = '';
+      }
+    }
+
+    return {
+      actualProgressPercentage,
+      expectedProgressPercentage,
+      targetCompletionDate,
+      projectedCompletionDate,
+      paceStatus,
+      paceMessage,
     };
   }
 
@@ -444,12 +806,16 @@ export class StudentSurahProgressService {
     });
     const fallbackIds: string[] = [];
     for (const r of rows) {
-      if (r.surahId && !fallbackIds.includes(r.surahId)) fallbackIds.push(r.surahId);
+      if (r.surahId && !fallbackIds.includes(r.surahId))
+        fallbackIds.push(r.surahId);
     }
     return this.getScheduleOrderedSurahIds(studentId, fallbackIds);
   }
 
-  private async determineTargetSurah(studentId: string, requestedSurahId?: string): Promise<string | null> {
+  private async determineTargetSurah(
+    studentId: string,
+    requestedSurahId?: string,
+  ): Promise<string | null> {
     if (requestedSurahId) return requestedSurahId;
     const orderedSurahIds = await this.getOrderedSurahIds(studentId);
     if (orderedSurahIds.length === 0) return null;
@@ -462,10 +828,16 @@ export class StudentSurahProgressService {
 
   /** Legacy's own (unusual) "next surah" logic: wraps 1 -> 114, otherwise steps backwards through surah_number. Replicated verbatim. */
   private async getNextSurah(currentSurahId: string) {
-    const current = await this.prisma.surah.findUnique({ where: { id: currentSurahId }, select: { number: true } });
+    const current = await this.prisma.surah.findUnique({
+      where: { id: currentSurahId },
+      select: { number: true },
+    });
     if (!current) return null;
     if (current.number === 1) {
-      return this.prisma.surah.findFirst({ where: { number: 114 }, select: SURAH_SELECT });
+      return this.prisma.surah.findFirst({
+        where: { number: 114 },
+        select: SURAH_SELECT,
+      });
     }
     return this.prisma.surah.findFirst({
       where: { number: { lt: current.number } },
@@ -474,45 +846,93 @@ export class StudentSurahProgressService {
     });
   }
 
-  private async getLogicExplanation(studentId: string, requestedSurahId?: string) {
+  private async getLogicExplanation(
+    studentId: string,
+    requestedSurahId?: string,
+  ) {
     if (requestedSurahId) {
-      return { determined_by: 'requested_surah_id', description: 'Surah was explicitly requested via surah_id parameter' };
+      return {
+        determined_by: 'requested_surah_id',
+        description: 'Surah was explicitly requested via surah_id parameter',
+      };
     }
-    const lastCompleted = await this.prisma.studentSurahProgressEntry.findFirst({
-      where: { studentId, status: { in: ['COMPLETED', 'VERIFIED'] } },
-      orderBy: [{ completedAt: 'desc' }, { updatedAt: 'desc' }],
-    });
+    const lastCompleted = await this.prisma.studentSurahProgressEntry.findFirst(
+      {
+        where: { studentId, status: { in: ['COMPLETED', 'VERIFIED'] } },
+        orderBy: [{ completedAt: 'desc' }, { updatedAt: 'desc' }],
+      },
+    );
     if (!lastCompleted || !lastCompleted.surahId) {
-      return { determined_by: 'first_available_surah', description: 'No completed ayahs found, returned first Surah with any progress' };
+      return {
+        determined_by: 'first_available_surah',
+        description:
+          'No completed ayahs found, returned first Surah with any progress',
+      };
     }
     const [total, completedCount] = await Promise.all([
-      this.prisma.studentSurahProgressEntry.count({ where: { studentId, surahId: lastCompleted.surahId } }),
       this.prisma.studentSurahProgressEntry.count({
-        where: { studentId, surahId: lastCompleted.surahId, status: { in: ['COMPLETED', 'VERIFIED'] } },
+        where: { studentId, surahId: lastCompleted.surahId },
+      }),
+      this.prisma.studentSurahProgressEntry.count({
+        where: {
+          studentId,
+          surahId: lastCompleted.surahId,
+          status: { in: ['COMPLETED', 'VERIFIED'] },
+        },
       }),
     ]);
     if (total > 0 && completedCount >= total) {
-      return { determined_by: 'next_surah_logic', description: 'All ayahs of the last completed Surah are finished, returned next Surah in sequence' };
+      return {
+        determined_by: 'next_surah_logic',
+        description:
+          'All ayahs of the last completed Surah are finished, returned next Surah in sequence',
+      };
     }
-    return { determined_by: 'last_completed_surah', description: 'Returned the Surah containing the most recently completed ayah' };
+    return {
+      determined_by: 'last_completed_surah',
+      description:
+        'Returned the Surah containing the most recently completed ayah',
+    };
   }
 
   // ── getStudentSurahProgress ─────────────────────────────────────────
-  async getStudentSurahProgress(branchId: string, studentId: string, query: GetStudentSurahProgressQueryDto) {
+  async getStudentSurahProgress(
+    branchId: string,
+    studentId: string,
+    query: GetStudentSurahProgressQueryDto,
+  ) {
     const student = await this.requireActiveStudent(branchId, studentId);
 
-    const targetSurahId = await this.determineTargetSurah(studentId, query.surah_id);
+    const targetSurahId = await this.determineTargetSurah(
+      studentId,
+      query.surah_id,
+    );
     if (!targetSurahId) {
-      throw new NotFoundException({ status: 'error', message: 'No Surah progress found for this student' });
+      throw new NotFoundException({
+        status: 'error',
+        message: 'No Surah progress found for this student',
+      });
     }
-    const targetSurah = await this.prisma.surah.findUnique({ where: { id: targetSurahId }, select: SURAH_SELECT });
+    const targetSurah = await this.prisma.surah.findUnique({
+      where: { id: targetSurahId },
+      select: SURAH_SELECT,
+    });
     if (!targetSurah) {
-      throw new NotFoundException({ status: 'error', message: 'Target Surah not found' });
+      throw new NotFoundException({
+        status: 'error',
+        message: 'Target Surah not found',
+      });
     }
 
     const surahStats = await this.getSurahStatistics(studentId, targetSurahId);
 
-    let nextSurahData: { id: string; surah_number: number; name_ar: string; name_en: string; total_ayahs: number } | null = null;
+    let nextSurahData: {
+      id: string;
+      surah_number: number;
+      name_ar: string;
+      name_en: string;
+      total_ayahs: number;
+    } | null = null;
     if (surahStats.is_surah_completed) {
       const nextSurah = await this.getNextSurah(targetSurah.id);
       nextSurahData = nextSurah
@@ -527,7 +947,11 @@ export class StudentSurahProgressService {
     }
 
     const entries = await this.prisma.studentSurahProgressEntry.findMany({
-      where: { studentId, surahId: targetSurahId, ...this.typeWhere(query.type) },
+      where: {
+        studentId,
+        surahId: targetSurahId,
+        ...this.typeWhere(query.type),
+      },
       include: ENTRY_INCLUDE,
       // Legacy orders by a join to surah_target_schedules(surah_number, day)
       // then from_ayah; mirrored here via the entry's own `day` column
@@ -543,25 +967,114 @@ export class StudentSurahProgressService {
         next_surah: nextSurahData,
         progress_entries: entries.map(serializeEntry),
         statistics: surahStats,
-        logic_applied: await this.getLogicExplanation(studentId, query.surah_id),
+        logic_applied: await this.getLogicExplanation(
+          studentId,
+          query.surah_id,
+        ),
       },
     };
   }
 
   // ── bulkMarkCompleted ────────────────────────────────────────────────
-  async bulkMarkCompleted(branchId: string, userId: string, dto: BulkMarkCompletedDto) {
+  /**
+   * Reverse of HifdhService.syncProgressEntries (academic/hifdh/hifdh.service.ts,
+   * which pushes a schedule-row completion onto its matching progress
+   * entries). Without this, marking "New Lesson" progress from the mobile
+   * app never resolved the matching schedule row — only the web portal's
+   * Schedule-tab "Mark Completed" button did — so a student could hit their
+   * target in the app and still show up as overdue everywhere that reads
+   * SurahHifdhStudentSchedule.status.
+   *
+   * A schedule row is resolved once every NEW_LESSON progress entry within
+   * its ayah range is COMPLETED/VERIFIED — not as soon as any single one is,
+   * since one schedule row can cover several per-ayah progress entries.
+   */
+  private async syncScheduleEntries(
+    tx: Prisma.TransactionClient,
+    studentId: string,
+    surahIds: string[],
+  ) {
+    const uniqueSurahIds = [...new Set(surahIds)];
+    if (uniqueSurahIds.length === 0) return;
+
+    const candidates = await tx.surahHifdhStudentSchedule.findMany({
+      where: {
+        studentId,
+        surahId: { in: uniqueSurahIds },
+        status: { not: HifdhScheduleStatus.COMPLETED },
+        fromAyah: { not: null },
+        toAyah: { not: null },
+      },
+    });
+
+    for (const schedule of candidates) {
+      if (schedule.fromAyah === null || schedule.toAyah === null) continue;
+      const coveringEntries = await tx.studentSurahProgressEntry.findMany({
+        where: {
+          studentId,
+          surahId: schedule.surahId,
+          type: ProgressEntryType.NEW_LESSON,
+          fromAyah: { gte: schedule.fromAyah, lte: schedule.toAyah },
+        },
+        select: { status: true, completedAt: true },
+      });
+      const fullyCovered =
+        coveringEntries.length > 0 &&
+        coveringEntries.every(
+          (e) =>
+            e.status === ProgressEntryStatus.COMPLETED ||
+            e.status === ProgressEntryStatus.VERIFIED,
+        );
+      if (fullyCovered) {
+        // Use the real completion time of the last-finished covering ayah,
+        // not "now" — this can run retroactively (e.g. the first time this
+        // sync existed, against a student's whole prior history), and
+        // stamping "now" would make every historical completion look like
+        // it happened today, which throws off pace/projection math that
+        // reads completedAt.
+        const completedAt =
+          coveringEntries.reduce<Date | null>((latest, e) => {
+            if (!e.completedAt) return latest;
+            return !latest || e.completedAt > latest ? e.completedAt : latest;
+          }, null) ?? new Date();
+        await tx.surahHifdhStudentSchedule.update({
+          where: { id: schedule.id },
+          data: {
+            status: HifdhScheduleStatus.COMPLETED,
+            completedAt,
+            completionDate: completedAt,
+          },
+        });
+      }
+    }
+  }
+
+  async bulkMarkCompleted(
+    branchId: string,
+    userId: string,
+    dto: BulkMarkCompletedDto,
+    remarkFile?: Express.Multer.File,
+    publicBaseUrl?: string,
+  ) {
+    const remarkFileUrl = remarkFile ? `${publicBaseUrl}/uploads/voice-notes/${remarkFile.filename}` : undefined;
     const entries = await this.prisma.studentSurahProgressEntry.findMany({
       where: { id: { in: dto.ayah_ids }, branchId },
     });
     if (entries.length === 0) {
-      throw new NotFoundException({ status: 'error', message: 'No valid ayah progress records found' });
+      throw new NotFoundException({
+        status: 'error',
+        message: 'No valid ayah progress records found',
+      });
     }
 
-    const completedAt = dto.completed_at ? new Date(dto.completed_at) : new Date();
+    const completedAt = dto.completed_at
+      ? new Date(dto.completed_at)
+      : new Date();
     let updatedCount = 0;
     let skippedCount = 0;
     const errors: string[] = [];
     const updatedCountByStudentId = new Map<string, number>();
+    const touchedSurahsByStudent = new Map<string, Set<string>>();
 
     await this.prisma.$transaction(async (tx) => {
       for (const entry of entries) {
@@ -573,15 +1086,30 @@ export class StudentSurahProgressService {
               completedAt,
               grade: dto.grade ? GRADE_TO_ENUM[dto.grade] : undefined,
               remarks: dto.remarks,
+              ...(remarkFileUrl && { remarkFile: remarkFileUrl }),
               lastUpdatedById: userId,
             },
           });
           updatedCount += 1;
-          updatedCountByStudentId.set(entry.studentId, (updatedCountByStudentId.get(entry.studentId) ?? 0) + 1);
+          updatedCountByStudentId.set(
+            entry.studentId,
+            (updatedCountByStudentId.get(entry.studentId) ?? 0) + 1,
+          );
+          if (entry.surahId) {
+            const surahIds =
+              touchedSurahsByStudent.get(entry.studentId) ?? new Set<string>();
+            surahIds.add(entry.surahId);
+            touchedSurahsByStudent.set(entry.studentId, surahIds);
+          }
         } else {
           skippedCount += 1;
-          errors.push(`Ayah ${entry.fromAyah} is already ${STATUS_TO_LEGACY[entry.status]}`);
+          errors.push(
+            `Ayah ${entry.fromAyah} is already ${STATUS_TO_LEGACY[entry.status]}`,
+          );
         }
+      }
+      for (const [studentId, surahIds] of touchedSurahsByStudent) {
+        await this.syncScheduleEntries(tx, studentId, [...surahIds]);
       }
     });
 
@@ -599,15 +1127,19 @@ export class StudentSurahProgressService {
         updated_count: updatedCount,
         skipped_count: skippedCount,
         total_processed: dto.ayah_ids.length,
-        file_uploaded: false,
-        file_name: null,
+        file_uploaded: Boolean(remarkFile),
+        file_name: remarkFileUrl ?? null,
         errors,
       },
     };
   }
 
   // ── getPendingSurahList ──────────────────────────────────────────────
-  async getPendingSurahList(branchId: string, studentId: string, type?: string) {
+  async getPendingSurahList(
+    branchId: string,
+    studentId: string,
+    type?: string,
+  ) {
     const student = await this.requireActiveStudent(branchId, studentId);
 
     const entries = await this.prisma.studentSurahProgressEntry.findMany({
@@ -625,12 +1157,18 @@ export class StudentSurahProgressService {
     // than the createdAt order the query above returned.
     const fallbackSurahIds: string[] = [];
     for (const e of entries) {
-      if (e.surahId && !fallbackSurahIds.includes(e.surahId)) fallbackSurahIds.push(e.surahId);
+      if (e.surahId && !fallbackSurahIds.includes(e.surahId))
+        fallbackSurahIds.push(e.surahId);
     }
-    const orderedSurahIds = await this.getScheduleOrderedSurahIds(studentId, fallbackSurahIds);
+    const orderedSurahIds = await this.getScheduleOrderedSurahIds(
+      studentId,
+      fallbackSurahIds,
+    );
     const rank = new Map(orderedSurahIds.map((id, i) => [id, i]));
     const sortedEntries = [...entries].sort(
-      (a, b) => (rank.get(a.surahId ?? '') ?? Infinity) - (rank.get(b.surahId ?? '') ?? Infinity),
+      (a, b) =>
+        (rank.get(a.surahId ?? '') ?? Infinity) -
+        (rank.get(b.surahId ?? '') ?? Infinity),
     );
 
     const surahs = sortedEntries
@@ -653,10 +1191,16 @@ export class StudentSurahProgressService {
   }
 
   // ── bulkMarkSurahsAsCompleted ────────────────────────────────────────
-  async bulkMarkSurahsAsCompleted(branchId: string, userId: string, dto: BulkMarkSurahsCompletedDto) {
+  async bulkMarkSurahsAsCompleted(
+    branchId: string,
+    userId: string,
+    dto: BulkMarkSurahsCompletedDto,
+  ) {
     await this.requireActiveStudent(branchId, dto.student_id);
 
-    const surahs = await this.prisma.surah.findMany({ where: { id: { in: dto.surah_ids } } });
+    const surahs = await this.prisma.surah.findMany({
+      where: { id: { in: dto.surah_ids } },
+    });
     const surahById = new Map(surahs.map((s) => [s.id, s]));
 
     const pending = await this.prisma.studentSurahProgressEntry.findMany({
@@ -668,10 +1212,15 @@ export class StudentSurahProgressService {
       },
     });
     if (pending.length === 0) {
-      throw new NotFoundException({ status: 'error', message: 'No pending progress entries found for the specified surahs' });
+      throw new NotFoundException({
+        status: 'error',
+        message: 'No pending progress entries found for the specified surahs',
+      });
     }
 
-    const completedAt = dto.completed_at ? new Date(dto.completed_at) : new Date();
+    const completedAt = dto.completed_at
+      ? new Date(dto.completed_at)
+      : new Date();
     const entriesBySurah = new Map<string, number>();
 
     await this.prisma.$transaction(async (tx) => {
@@ -691,17 +1240,29 @@ export class StudentSurahProgressService {
             ...(dto.type && { type: TYPE_TO_ENUM[dto.type] }),
           },
         });
-        if (entry.surahId) entriesBySurah.set(entry.surahId, (entriesBySurah.get(entry.surahId) ?? 0) + 1);
+        if (entry.surahId)
+          entriesBySurah.set(
+            entry.surahId,
+            (entriesBySurah.get(entry.surahId) ?? 0) + 1,
+          );
       }
+      await this.syncScheduleEntries(tx, dto.student_id, dto.surah_ids);
     });
 
-    await this.notifyProgressMarked(branchId, new Map([[dto.student_id, pending.length]]));
+    await this.notifyProgressMarked(
+      branchId,
+      new Map([[dto.student_id, pending.length]]),
+    );
 
     const surahSummary = dto.surah_ids
       .map((surahId) => {
         const surah = surahById.get(surahId);
         if (!surah) return null;
-        return { surah_id: surah.id, surah_name: surah.nameEnglish, completed_entries: entriesBySurah.get(surahId) ?? 0 };
+        return {
+          surah_id: surah.id,
+          surah_name: surah.nameEnglish,
+          completed_entries: entriesBySurah.get(surahId) ?? 0,
+        };
       })
       .filter(Boolean);
 
@@ -721,25 +1282,46 @@ export class StudentSurahProgressService {
   }
 
   // ── getCompletedSurahList ────────────────────────────────────────────
-  async getCompletedSurahList(branchId: string, studentId: string, type = 'New Lesson') {
+  async getCompletedSurahList(
+    branchId: string,
+    studentId: string,
+    type = 'New Lesson',
+  ) {
     const student = await this.requireActiveStudent(branchId, studentId);
 
     const entries = await this.prisma.studentSurahProgressEntry.findMany({
-      where: { studentId, status: { not: 'NOT_STARTED' }, ...this.typeWhere(type) },
+      where: {
+        studentId,
+        status: { not: 'NOT_STARTED' },
+        ...this.typeWhere(type),
+      },
       include: { surah: { select: SURAH_SELECT } },
     });
 
     const bySurah = new Map<
       string,
-      { surah: NonNullable<(typeof entries)[number]['surah']>; total: number; completed: number; latestCompletedAt: Date | null }
+      {
+        surah: NonNullable<(typeof entries)[number]['surah']>;
+        total: number;
+        completed: number;
+        latestCompletedAt: Date | null;
+      }
     >();
     for (const e of entries) {
       if (!e.surah) continue;
-      const data = bySurah.get(e.surahId!) ?? { surah: e.surah, total: 0, completed: 0, latestCompletedAt: null };
+      const data = bySurah.get(e.surahId!) ?? {
+        surah: e.surah,
+        total: 0,
+        completed: 0,
+        latestCompletedAt: null,
+      };
       data.total += 1;
       if (e.status === 'COMPLETED' || e.status === 'VERIFIED') {
         data.completed += 1;
-        if (e.completedAt && (!data.latestCompletedAt || e.completedAt > data.latestCompletedAt)) {
+        if (
+          e.completedAt &&
+          (!data.latestCompletedAt || e.completedAt > data.latestCompletedAt)
+        ) {
           data.latestCompletedAt = e.completedAt;
         }
       }
@@ -751,7 +1333,12 @@ export class StudentSurahProgressService {
     const completedSurahs = [...bySurah.values()].map((data) => {
       totalCompletedOverall += data.completed;
       totalOverall += data.total;
-      const status = data.completed === data.total && data.total > 0 && data.total === data.surah.totalAyahs ? 'completed' : 'partially completed';
+      const status =
+        data.completed === data.total &&
+        data.total > 0 &&
+        data.total === data.surah.totalAyahs
+          ? 'completed'
+          : 'partially completed';
       return {
         surah_id: data.surah.id,
         surah_number: data.surah.number,
@@ -764,7 +1351,10 @@ export class StudentSurahProgressService {
         status,
         total_entries: data.total,
         completed_entries: data.completed,
-        progress_percentage: data.total > 0 ? Math.round((data.completed / data.total) * 10000) / 100 : 0,
+        progress_percentage:
+          data.total > 0
+            ? Math.round((data.completed / data.total) * 10000) / 100
+            : 0,
       };
     });
     completedSurahs.sort((a, b) => b.surah_number - a.surah_number);
@@ -776,8 +1366,12 @@ export class StudentSurahProgressService {
         surahs: completedSurahs,
         statistics: {
           total_surahs_with_progress: completedSurahs.length,
-          fully_completed_surahs: completedSurahs.filter((s) => s.status === 'completed').length,
-          partially_completed_surahs: completedSurahs.filter((s) => s.status === 'partially completed').length,
+          fully_completed_surahs: completedSurahs.filter(
+            (s) => s.status === 'completed',
+          ).length,
+          partially_completed_surahs: completedSurahs.filter(
+            (s) => s.status === 'partially completed',
+          ).length,
           total_ayahs_completed_overall: totalCompletedOverall,
           total_ayahs_covered_overall: totalOverall,
         },
@@ -787,7 +1381,14 @@ export class StudentSurahProgressService {
   }
 
   // ── storeOldLessonProgress ───────────────────────────────────────────
-  async storeOldLessonProgress(branchId: string, userId: string, dto: StoreOldLessonProgressDto) {
+  async storeOldLessonProgress(
+    branchId: string,
+    userId: string,
+    dto: StoreOldLessonProgressDto,
+    remarkFile?: Express.Multer.File,
+    publicBaseUrl?: string,
+  ) {
+    const remarkFileUrl = remarkFile ? `${publicBaseUrl}/uploads/voice-notes/${remarkFile.filename}` : undefined;
     await this.requireActiveStudent(branchId, dto.student_id);
 
     let surahId: string | undefined;
@@ -795,14 +1396,18 @@ export class StudentSurahProgressService {
     let toAyah: number | undefined;
 
     if (dto.surah_from) {
-      const surahFrom = await this.prisma.surah.findUnique({ where: { number: dto.surah_from } });
+      const surahFrom = await this.prisma.surah.findUnique({
+        where: { number: dto.surah_from },
+      });
       if (surahFrom) {
         surahId = surahFrom.id;
         fromAyah = dto.surah_from_ayah ?? 1;
       }
     }
     if (dto.surah_to) {
-      const surahTo = await this.prisma.surah.findUnique({ where: { number: dto.surah_to } });
+      const surahTo = await this.prisma.surah.findUnique({
+        where: { number: dto.surah_to },
+      });
       if (surahTo) {
         surahId = surahId ?? surahTo.id;
         toAyah = dto.surah_to_ayah ?? surahTo.totalAyahs;
@@ -818,6 +1423,7 @@ export class StudentSurahProgressService {
         completedAt: new Date(dto.completed_at),
         grade: dto.grade ? GRADE_TO_ENUM[dto.grade] : undefined,
         remarks: dto.remarks,
+        ...(remarkFileUrl && { remarkFile: remarkFileUrl }),
         surahId,
         fromAyah,
         toAyah,
@@ -845,7 +1451,7 @@ export class StudentSurahProgressService {
         completed_at: formatDateOnly(entry.completedAt),
         grade: entry.grade ? GRADE_TO_LEGACY[entry.grade] : null,
         remarks: entry.remarks,
-        remark_file_url: null,
+        remark_file_url: entry.remarkFile ?? null,
         surah_from: entry.surahFrom,
         surah_from_ayah: entry.surahFromAyah,
         surah_to: entry.surahTo,
@@ -854,16 +1460,26 @@ export class StudentSurahProgressService {
         juzuh_to: entry.juzuhTo,
         page_from: entry.pageFrom,
         page_to: entry.pageTo,
-        surah_range: entry.surahFrom ? `${entry.surahFrom}${entry.surahTo && entry.surahTo !== entry.surahFrom ? `-${entry.surahTo}` : ''}` : null,
-        juzuh_range: entry.juzuhFrom ? `${entry.juzuhFrom}${entry.juzuhTo && entry.juzuhTo !== entry.juzuhFrom ? `-${entry.juzuhTo}` : ''}` : null,
-        page_range: entry.pageFrom ? `${entry.pageFrom}${entry.pageTo && entry.pageTo !== entry.pageFrom ? `-${entry.pageTo}` : ''}` : null,
+        surah_range: entry.surahFrom
+          ? `${entry.surahFrom}${entry.surahTo && entry.surahTo !== entry.surahFrom ? `-${entry.surahTo}` : ''}`
+          : null,
+        juzuh_range: entry.juzuhFrom
+          ? `${entry.juzuhFrom}${entry.juzuhTo && entry.juzuhTo !== entry.juzuhFrom ? `-${entry.juzuhTo}` : ''}`
+          : null,
+        page_range: entry.pageFrom
+          ? `${entry.pageFrom}${entry.pageTo && entry.pageTo !== entry.pageFrom ? `-${entry.pageTo}` : ''}`
+          : null,
         created_at: formatDateTime(entry.createdAt),
       },
     };
   }
 
   // ── getOldLessonProgressList ─────────────────────────────────────────
-  async getOldLessonProgressList(branchId: string, studentId: string, query: GetOldLessonProgressQueryDto) {
+  async getOldLessonProgressList(
+    branchId: string,
+    studentId: string,
+    query: GetOldLessonProgressQueryDto,
+  ) {
     const student = await this.requireActiveStudent(branchId, studentId);
 
     const where: Prisma.StudentSurahProgressEntryWhereInput = {
@@ -872,8 +1488,12 @@ export class StudentSurahProgressService {
     };
     if (query.completed_at_from || query.completed_at_to) {
       where.completedAt = {
-        ...(query.completed_at_from && { gte: new Date(`${query.completed_at_from}T00:00:00.000Z`) }),
-        ...(query.completed_at_to && { lte: new Date(`${query.completed_at_to}T23:59:59.999Z`) }),
+        ...(query.completed_at_from && {
+          gte: new Date(`${query.completed_at_from}T00:00:00.000Z`),
+        }),
+        ...(query.completed_at_to && {
+          lte: new Date(`${query.completed_at_to}T23:59:59.999Z`),
+        }),
       };
     }
     if (query.surah_from) where.surahFrom = { gte: Number(query.surah_from) };
@@ -886,8 +1506,12 @@ export class StudentSurahProgressService {
 
     const [total, completedCount, verifiedCount] = await Promise.all([
       this.prisma.studentSurahProgressEntry.count({ where }),
-      this.prisma.studentSurahProgressEntry.count({ where: { ...where, status: 'COMPLETED' } }),
-      this.prisma.studentSurahProgressEntry.count({ where: { ...where, status: 'VERIFIED' } }),
+      this.prisma.studentSurahProgressEntry.count({
+        where: { ...where, status: 'COMPLETED' },
+      }),
+      this.prisma.studentSurahProgressEntry.count({
+        where: { ...where, status: 'VERIFIED' },
+      }),
     ]);
 
     const perPage = query.per_page ? Number(query.per_page) : 15;
@@ -904,9 +1528,16 @@ export class StudentSurahProgressService {
     // (not relations) — batch-resolve both ends' names so the mobile app can
     // show "Al-Ikhlas -> An-Nas" instead of "Surah 112 -> Surah 114".
     const surahNumbers = [
-      ...new Set(entries.flatMap((e) => [e.surahFrom, e.surahTo].filter((n): n is number => n != null))),
+      ...new Set(
+        entries.flatMap((e) =>
+          [e.surahFrom, e.surahTo].filter((n): n is number => n != null),
+        ),
+      ),
     ];
-    const surahByNumber = new Map<number, { nameEnglish: string; nameArabic: string }>();
+    const surahByNumber = new Map<
+      number,
+      { nameEnglish: string; nameArabic: string }
+    >();
     if (surahNumbers.length > 0) {
       const surahs = await this.prisma.surah.findMany({
         where: { number: { in: surahNumbers } },
@@ -919,19 +1550,37 @@ export class StudentSurahProgressService {
       ...serializeEntry(entry),
       surah_from: entry.surahFrom,
       surah_from_ayah: entry.surahFromAyah,
-      surah_from_name_en: entry.surahFrom != null ? surahByNumber.get(entry.surahFrom)?.nameEnglish ?? null : null,
-      surah_from_name_ar: entry.surahFrom != null ? surahByNumber.get(entry.surahFrom)?.nameArabic ?? null : null,
+      surah_from_name_en:
+        entry.surahFrom != null
+          ? (surahByNumber.get(entry.surahFrom)?.nameEnglish ?? null)
+          : null,
+      surah_from_name_ar:
+        entry.surahFrom != null
+          ? (surahByNumber.get(entry.surahFrom)?.nameArabic ?? null)
+          : null,
       surah_to: entry.surahTo,
       surah_to_ayah: entry.surahToAyah,
-      surah_to_name_en: entry.surahTo != null ? surahByNumber.get(entry.surahTo)?.nameEnglish ?? null : null,
-      surah_to_name_ar: entry.surahTo != null ? surahByNumber.get(entry.surahTo)?.nameArabic ?? null : null,
-      surah_range: entry.surahFrom ? `${entry.surahFrom}${entry.surahTo && entry.surahTo !== entry.surahFrom ? `-${entry.surahTo}` : ''}` : null,
+      surah_to_name_en:
+        entry.surahTo != null
+          ? (surahByNumber.get(entry.surahTo)?.nameEnglish ?? null)
+          : null,
+      surah_to_name_ar:
+        entry.surahTo != null
+          ? (surahByNumber.get(entry.surahTo)?.nameArabic ?? null)
+          : null,
+      surah_range: entry.surahFrom
+        ? `${entry.surahFrom}${entry.surahTo && entry.surahTo !== entry.surahFrom ? `-${entry.surahTo}` : ''}`
+        : null,
       juzuh_from: entry.juzuhFrom,
       juzuh_to: entry.juzuhTo,
-      juzuh_range: entry.juzuhFrom ? `${entry.juzuhFrom}${entry.juzuhTo && entry.juzuhTo !== entry.juzuhFrom ? `-${entry.juzuhTo}` : ''}` : null,
+      juzuh_range: entry.juzuhFrom
+        ? `${entry.juzuhFrom}${entry.juzuhTo && entry.juzuhTo !== entry.juzuhFrom ? `-${entry.juzuhTo}` : ''}`
+        : null,
       page_from: entry.pageFrom,
       page_to: entry.pageTo,
-      page_range: entry.pageFrom ? `${entry.pageFrom}${entry.pageTo && entry.pageTo !== entry.pageFrom ? `-${entry.pageTo}` : ''}` : null,
+      page_range: entry.pageFrom
+        ? `${entry.pageFrom}${entry.pageTo && entry.pageTo !== entry.pageFrom ? `-${entry.pageTo}` : ''}`
+        : null,
     }));
 
     const lastPage = Math.max(1, Math.ceil(total / perPage));
@@ -950,7 +1599,11 @@ export class StudentSurahProgressService {
           to: Math.min(perPage, total),
           has_more_pages: page < lastPage,
         },
-        statistics: { total_records: total, completed_records: completedCount, verified_records: verifiedCount },
+        statistics: {
+          total_records: total,
+          completed_records: completedCount,
+          verified_records: verifiedCount,
+        },
         filters_applied: {
           type: query.type,
           completed_at_from: query.completed_at_from ?? null,
@@ -972,12 +1625,18 @@ export class StudentSurahProgressService {
     return toAyah - fromAyah + 1;
   }
 
-  private async activeStudentsForReport(branchId: string, halqaId?: string, studentId?: string) {
+  private async activeStudentsForReport(
+    branchId: string,
+    halqaId?: string,
+    studentId?: string,
+  ) {
     return this.prisma.student.findMany({
       where: {
         branchId,
         status: 'ACTIVE',
-        ...(halqaId && { halqaMemberships: { some: { halqaId, removedAt: null } } }),
+        ...(halqaId && {
+          halqaMemberships: { some: { halqaId, removedAt: null } },
+        }),
         ...(studentId && { id: studentId }),
       },
       include: { user: { select: { email: true } } },
@@ -988,21 +1647,29 @@ export class StudentSurahProgressService {
   async getTodayProgress(branchId: string, query: GetTodayProgressQueryDto) {
     const fromDate = query.from_date ?? formatDateOnly(new Date())!;
     const toDate = query.to_date ?? fromDate;
-    const range = { gte: new Date(`${fromDate}T00:00:00.000Z`), lte: new Date(`${toDate}T23:59:59.999Z`) };
+    const range = {
+      gte: new Date(`${fromDate}T00:00:00.000Z`),
+      lte: new Date(`${toDate}T23:59:59.999Z`),
+    };
 
-    const students = await this.activeStudentsForReport(branchId, query.halqa_id, query.student_id);
+    const students = await this.activeStudentsForReport(
+      branchId,
+      query.halqa_id,
+      query.student_id,
+    );
     const studentIds = students.map((s) => s.id);
 
-    const completedRecords = await this.prisma.studentSurahProgressEntry.findMany({
-      where: {
-        branchId,
-        studentId: { in: studentIds },
-        status: { in: ['COMPLETED', 'VERIFIED'] },
-        completedAt: range,
-        ...(query.type && { type: TYPE_TO_ENUM[query.type] }),
-      },
-      include: { surah: { select: SURAH_SELECT } },
-    });
+    const completedRecords =
+      await this.prisma.studentSurahProgressEntry.findMany({
+        where: {
+          branchId,
+          studentId: { in: studentIds },
+          status: { in: ['COMPLETED', 'VERIFIED'] },
+          completedAt: range,
+          ...(query.type && { type: TYPE_TO_ENUM[query.type] }),
+        },
+        include: { surah: { select: SURAH_SELECT } },
+      });
 
     const progressByStudent = new Map<string, typeof completedRecords>();
     for (const r of completedRecords) {
@@ -1013,20 +1680,39 @@ export class StudentSurahProgressService {
 
     const [leaves, exams, holidays] = await Promise.all([
       this.prisma.studentLeave.findMany({
-        where: { studentId: { in: studentIds }, status: 'APPROVED', leaveDate: { gte: new Date(fromDate), lte: new Date(toDate) } },
+        where: {
+          studentId: { in: studentIds },
+          status: 'APPROVED',
+          leaveDate: { gte: new Date(fromDate), lte: new Date(toDate) },
+        },
       }),
       this.prisma.studentExam.findMany({
-        where: { studentId: { in: studentIds }, examDate: { gte: new Date(fromDate), lte: new Date(toDate) } },
+        where: {
+          studentId: { in: studentIds },
+          examDate: { gte: new Date(fromDate), lte: new Date(toDate) },
+        },
       }),
       this.prisma.calendarDay.findMany({
-        where: { branchId, isHoliday: true, date: { gte: new Date(fromDate), lte: new Date(toDate) } },
+        where: {
+          branchId,
+          isHoliday: true,
+          date: { gte: new Date(fromDate), lte: new Date(toDate) },
+        },
         orderBy: { date: 'asc' },
       }),
     ]);
     const leavesByStudent = new Map<string, typeof leaves>();
-    for (const l of leaves) leavesByStudent.set(l.studentId, [...(leavesByStudent.get(l.studentId) ?? []), l]);
+    for (const l of leaves)
+      leavesByStudent.set(l.studentId, [
+        ...(leavesByStudent.get(l.studentId) ?? []),
+        l,
+      ]);
     const examsByStudent = new Map<string, typeof exams>();
-    for (const e of exams) examsByStudent.set(e.studentId, [...(examsByStudent.get(e.studentId) ?? []), e]);
+    for (const e of exams)
+      examsByStudent.set(e.studentId, [
+        ...(examsByStudent.get(e.studentId) ?? []),
+        e,
+      ]);
 
     const completedStudents: Record<string, unknown>[] = [];
     const pendingStudents: Record<string, unknown>[] = [];
@@ -1034,7 +1720,10 @@ export class StudentSurahProgressService {
     for (const student of students) {
       const records = progressByStudent.get(student.id);
       const activities: Record<string, unknown>[] = [];
-      const lessonTypesMap = new Map<string, { type: string; total_ayahs: number; entries_count: number }>();
+      const lessonTypesMap = new Map<
+        string,
+        { type: string; total_ayahs: number; entries_count: number }
+      >();
       const surahsCompleted: Record<string, unknown>[] = [];
       let totalAyahsToday = 0;
 
@@ -1047,14 +1736,28 @@ export class StudentSurahProgressService {
             type: typeLabel,
             description: `Completed ${typeLabel} – Surah ${r.surah?.nameEnglish ?? ''} (verses ${r.fromAyah}-${r.toAyah})`,
             time: r.completedAt ? r.completedAt.toISOString() : null,
-            details: { surah_id: r.surahId, from_ayah: r.fromAyah, to_ayah: r.toAyah, grade: r.grade ? GRADE_TO_LEGACY[r.grade] : null },
+            details: {
+              surah_id: r.surahId,
+              from_ayah: r.fromAyah,
+              to_ayah: r.toAyah,
+              grade: r.grade ? GRADE_TO_LEGACY[r.grade] : null,
+            },
           });
           const key = typeLabel;
-          const entry = lessonTypesMap.get(key) ?? { type: typeLabel, total_ayahs: 0, entries_count: 0 };
+          const entry = lessonTypesMap.get(key) ?? {
+            type: typeLabel,
+            total_ayahs: 0,
+            entries_count: 0,
+          };
           entry.total_ayahs += ayahs;
           entry.entries_count += 1;
           lessonTypesMap.set(key, entry);
-          if (r.surah && !surahsCompleted.some((s) => (s as { id: string }).id === r.surah!.id)) {
+          if (
+            r.surah &&
+            !surahsCompleted.some(
+              (s) => (s as { id: string }).id === r.surah!.id,
+            )
+          ) {
             surahsCompleted.push(serializeSurahBasic(r.surah));
           }
         }
@@ -1076,7 +1779,9 @@ export class StudentSurahProgressService {
           details: { exam_id: exam.id, score: exam.marks ?? null },
         });
       }
-      activities.sort((a, b) => String(a.time ?? '').localeCompare(String(b.time ?? '')));
+      activities.sort((a, b) =>
+        String(a.time ?? '').localeCompare(String(b.time ?? '')),
+      );
 
       const studentData: Record<string, unknown> = {
         student: await this.formatStudentBasic(student),
@@ -1101,20 +1806,47 @@ export class StudentSurahProgressService {
       status: 'success',
       data: {
         date_range: { from_date: fromDate, to_date: toDate },
-        filters: { from_date: fromDate, to_date: toDate, halqa_id: query.halqa_id ?? null, student_id: query.student_id ?? null, type: query.type ?? null },
-        completed: { total_students: completedStudents.length, students: completedStudents },
-        pending: { total_students: pendingStudents.length, students: pendingStudents },
+        filters: {
+          from_date: fromDate,
+          to_date: toDate,
+          halqa_id: query.halqa_id ?? null,
+          student_id: query.student_id ?? null,
+          type: query.type ?? null,
+        },
+        completed: {
+          total_students: completedStudents.length,
+          students: completedStudents,
+        },
+        pending: {
+          total_students: pendingStudents.length,
+          students: pendingStudents,
+        },
         global_events: globalEvents,
       },
     };
   }
 
-  private async targetAndActualAyahs(branchId: string, studentId: string, fromDate: string, toDate: string, type?: string) {
-    const range = { gte: new Date(`${fromDate}T00:00:00.000Z`), lte: new Date(`${toDate}T23:59:59.999Z`) };
+  private async targetAndActualAyahs(
+    branchId: string,
+    studentId: string,
+    fromDate: string,
+    toDate: string,
+    type?: string,
+  ) {
+    const range = {
+      gte: new Date(`${fromDate}T00:00:00.000Z`),
+      lte: new Date(`${toDate}T23:59:59.999Z`),
+    };
     const schedules = await this.prisma.surahHifdhStudentSchedule.findMany({
-      where: { studentId, scheduledDate: { gte: new Date(fromDate), lte: new Date(toDate) } },
+      where: {
+        studentId,
+        scheduledDate: { gte: new Date(fromDate), lte: new Date(toDate) },
+      },
     });
-    const targetAyahs = schedules.reduce((sum, s) => sum + this.ayahSpan(s.fromAyah, s.toAyah), 0);
+    const targetAyahs = schedules.reduce(
+      (sum, s) => sum + this.ayahSpan(s.fromAyah, s.toAyah),
+      0,
+    );
 
     const records = await this.prisma.studentSurahProgressEntry.findMany({
       where: {
@@ -1125,20 +1857,32 @@ export class StudentSurahProgressService {
         ...(type && { type: TYPE_TO_ENUM[type] }),
       },
     });
-    const actualAyahs = records.reduce((sum, r) => sum + this.ayahSpan(r.fromAyah, r.toAyah), 0);
+    const actualAyahs = records.reduce(
+      (sum, r) => sum + this.ayahSpan(r.fromAyah, r.toAyah),
+      0,
+    );
 
     return { targetAyahs, actualAyahs };
   }
 
   // ── studentsWithPendingTargets ───────────────────────────────────────
-  async studentsWithPendingTargets(branchId: string, query: GetStudentsTargetQueryDto) {
+  async studentsWithPendingTargets(
+    branchId: string,
+    query: GetStudentsTargetQueryDto,
+  ) {
     if (!query.from_date || !query.to_date) {
-      throw new BadRequestException({ status: 'error', message: 'from_date and to_date are required' });
+      throw new BadRequestException({
+        status: 'error',
+        message: 'from_date and to_date are required',
+      });
     }
     const minDeficit = query.min_deficit ? Number(query.min_deficit) : 0;
     const limit = query.limit ? Number(query.limit) : 20;
 
-    const students = await this.activeStudentsForReport(branchId, query.halqa_id);
+    const students = await this.activeStudentsForReport(
+      branchId,
+      query.halqa_id,
+    );
     const result: Record<string, unknown>[] = [];
 
     for (const student of students) {
@@ -1154,7 +1898,10 @@ export class StudentSurahProgressService {
       if (deficit > minDeficit) {
         const halqa = await this.studentHalqa(student.id);
         result.push({
-          student: { ...(await this.formatStudentBasic(student)), halqa: halqa ? { id: halqa.id, name: halqa.name } : null },
+          student: {
+            ...(await this.formatStudentBasic(student)),
+            halqa: halqa ? { id: halqa.id, name: halqa.name } : null,
+          },
           target_ayahs: targetAyahs,
           actual_ayahs: actualAyahs,
           deficit_ayahs: deficit,
@@ -1162,14 +1909,23 @@ export class StudentSurahProgressService {
       }
     }
 
-    result.sort((a, b) => (b as { deficit_ayahs: number }).deficit_ayahs - (a as { deficit_ayahs: number }).deficit_ayahs);
+    result.sort(
+      (a, b) =>
+        (b as { deficit_ayahs: number }).deficit_ayahs -
+        (a as { deficit_ayahs: number }).deficit_ayahs,
+    );
     const limited = result.slice(0, limit);
 
     return {
       status: 'success',
       data: {
         period: { from_date: query.from_date, to_date: query.to_date },
-        filters: { halqa_id: query.halqa_id ?? null, type: query.type ?? null, min_deficit: minDeficit, limit },
+        filters: {
+          halqa_id: query.halqa_id ?? null,
+          type: query.type ?? null,
+          min_deficit: minDeficit,
+          limit,
+        },
         total_students_with_pending: limited.length,
         students: limited,
       },
@@ -1177,23 +1933,42 @@ export class StudentSurahProgressService {
   }
 
   // ── getStudentsExceededTarget ────────────────────────────────────────
-  async getStudentsExceededTarget(branchId: string, query: GetStudentsTargetQueryDto) {
+  async getStudentsExceededTarget(
+    branchId: string,
+    query: GetStudentsTargetQueryDto,
+  ) {
     const now = new Date();
-    const fromDate = query.from_date ?? formatDateOnly(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)))!;
+    const fromDate =
+      query.from_date ??
+      formatDateOnly(
+        new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)),
+      )!;
     const toDate = query.to_date ?? formatDateOnly(now)!;
     const minExcess = query.min_excess ? Number(query.min_excess) : 0;
     const limit = query.limit ? Number(query.limit) : 20;
 
-    const students = await this.activeStudentsForReport(branchId, query.halqa_id);
+    const students = await this.activeStudentsForReport(
+      branchId,
+      query.halqa_id,
+    );
     const result: Record<string, unknown>[] = [];
 
     for (const student of students) {
-      const { targetAyahs, actualAyahs } = await this.targetAndActualAyahs(branchId, student.id, fromDate, toDate, query.type);
+      const { targetAyahs, actualAyahs } = await this.targetAndActualAyahs(
+        branchId,
+        student.id,
+        fromDate,
+        toDate,
+        query.type,
+      );
       const excess = actualAyahs - targetAyahs;
       if (excess > minExcess) {
         const halqa = await this.studentHalqa(student.id);
         result.push({
-          student: { ...(await this.formatStudentBasic(student)), halqa: halqa ? { id: halqa.id, name: halqa.name } : null },
+          student: {
+            ...(await this.formatStudentBasic(student)),
+            halqa: halqa ? { id: halqa.id, name: halqa.name } : null,
+          },
           target_ayahs: targetAyahs,
           actual_ayahs: actualAyahs,
           excess_ayahs: excess,
@@ -1201,14 +1976,23 @@ export class StudentSurahProgressService {
       }
     }
 
-    result.sort((a, b) => (b as { excess_ayahs: number }).excess_ayahs - (a as { excess_ayahs: number }).excess_ayahs);
+    result.sort(
+      (a, b) =>
+        (b as { excess_ayahs: number }).excess_ayahs -
+        (a as { excess_ayahs: number }).excess_ayahs,
+    );
     const limited = result.slice(0, limit);
 
     return {
       status: 'success',
       data: {
         period: { from_date: fromDate, to_date: toDate },
-        filters: { halqa_id: query.halqa_id ?? null, type: query.type ?? null, min_excess: minExcess, limit },
+        filters: {
+          halqa_id: query.halqa_id ?? null,
+          type: query.type ?? null,
+          min_excess: minExcess,
+          limit,
+        },
         total_students_exceeded: limited.length,
         students: limited,
       },
@@ -1216,23 +2000,41 @@ export class StudentSurahProgressService {
   }
 
   // ── getFullProgressReport ────────────────────────────────────────────
-  async getFullProgressReport(branchId: string, query: GetFullProgressReportQueryDto) {
+  async getFullProgressReport(
+    branchId: string,
+    query: GetFullProgressReportQueryDto,
+  ) {
     const { from_date: fromDate, to_date: toDate } = query;
     const types = query.types ?? [];
-    const rangeLength = Math.round((new Date(toDate).getTime() - new Date(fromDate).getTime()) / 86400000) + 1;
-    const recentFrom = formatDateOnly(new Date(Date.now() - rangeLength * 86400000))!;
+    const rangeLength =
+      Math.round(
+        (new Date(toDate).getTime() - new Date(fromDate).getTime()) / 86400000,
+      ) + 1;
+    const recentFrom = formatDateOnly(
+      new Date(Date.now() - rangeLength * 86400000),
+    )!;
     const recentTo = formatDateOnly(new Date())!;
 
-    const students = await this.activeStudentsForReport(branchId, query.halqa_id, query.student_id);
+    const students = await this.activeStudentsForReport(
+      branchId,
+      query.halqa_id,
+      query.student_id,
+    );
 
-    const getStudentsWithAllTypes = async (start: string, end: string): Promise<string[] | null> => {
+    const getStudentsWithAllTypes = async (
+      start: string,
+      end: string,
+    ): Promise<string[] | null> => {
       if (types.length === 0) return null;
       const grouped = await this.prisma.studentSurahProgressEntry.groupBy({
         by: ['studentId'],
         where: {
           branchId,
           status: { in: ['COMPLETED', 'VERIFIED'] },
-          completedAt: { gte: new Date(`${start}T00:00:00.000Z`), lte: new Date(`${end}T23:59:59.999Z`) },
+          completedAt: {
+            gte: new Date(`${start}T00:00:00.000Z`),
+            lte: new Date(`${end}T23:59:59.999Z`),
+          },
           type: { in: types.map((t) => TYPE_TO_ENUM[t]) },
         },
         _count: { _all: true },
@@ -1240,31 +2042,45 @@ export class StudentSurahProgressService {
       // groupBy doesn't give distinct-type counts directly; approximate by re-querying distinct types per student.
       const result: string[] = [];
       for (const g of grouped) {
-        const distinctTypes = await this.prisma.studentSurahProgressEntry.findMany({
-          where: {
-            branchId,
-            studentId: g.studentId,
-            status: { in: ['COMPLETED', 'VERIFIED'] },
-            completedAt: { gte: new Date(`${start}T00:00:00.000Z`), lte: new Date(`${end}T23:59:59.999Z`) },
-            type: { in: types.map((t) => TYPE_TO_ENUM[t]) },
-          },
-          distinct: ['type'],
-          select: { type: true },
-        });
+        const distinctTypes =
+          await this.prisma.studentSurahProgressEntry.findMany({
+            where: {
+              branchId,
+              studentId: g.studentId,
+              status: { in: ['COMPLETED', 'VERIFIED'] },
+              completedAt: {
+                gte: new Date(`${start}T00:00:00.000Z`),
+                lte: new Date(`${end}T23:59:59.999Z`),
+              },
+              type: { in: types.map((t) => TYPE_TO_ENUM[t]) },
+            },
+            distinct: ['type'],
+            select: { type: true },
+          });
         if (distinctTypes.length >= types.length) result.push(g.studentId);
       }
       return result;
     };
 
-    const studentsWithAllTypesInRange = await getStudentsWithAllTypes(fromDate, toDate);
-    const studentsWithAllTypesRecent = await getStudentsWithAllTypes(recentFrom, recentTo);
+    const studentsWithAllTypesInRange = await getStudentsWithAllTypes(
+      fromDate,
+      toDate,
+    );
+    const studentsWithAllTypesRecent = await getStudentsWithAllTypes(
+      recentFrom,
+      recentTo,
+    );
     const hasAllTypesRecent = new Set(studentsWithAllTypesRecent ?? []);
-    const isInactiveRecent = (studentId: string) => !hasAllTypesRecent.has(studentId);
+    const isInactiveRecent = (studentId: string) =>
+      !hasAllTypesRecent.has(studentId);
 
     const completedWhere: Prisma.StudentSurahProgressEntryWhereInput = {
       branchId,
       status: { in: ['COMPLETED', 'VERIFIED'] },
-      completedAt: { gte: new Date(`${fromDate}T00:00:00.000Z`), lte: new Date(`${toDate}T23:59:59.999Z`) },
+      completedAt: {
+        gte: new Date(`${fromDate}T00:00:00.000Z`),
+        lte: new Date(`${toDate}T23:59:59.999Z`),
+      },
       ...(query.student_id && { studentId: query.student_id }),
     };
     if (types.length > 0) {
@@ -1276,23 +2092,37 @@ export class StudentSurahProgressService {
     }
     if (query.halqa_id) {
       const memberIds = (
-        await this.prisma.halqaStudent.findMany({ where: { halqaId: query.halqa_id, removedAt: null }, select: { studentId: true } })
+        await this.prisma.halqaStudent.findMany({
+          where: { halqaId: query.halqa_id, removedAt: null },
+          select: { studentId: true },
+        })
       ).map((m) => m.studentId);
-      completedWhere.studentId = completedWhere.studentId ? completedWhere.studentId : { in: memberIds };
+      completedWhere.studentId = completedWhere.studentId
+        ? completedWhere.studentId
+        : { in: memberIds };
     }
 
-    const completedRecords = await this.prisma.studentSurahProgressEntry.findMany({
-      where: completedWhere,
-      include: { surah: { select: SURAH_SELECT } },
-    });
+    const completedRecords =
+      await this.prisma.studentSurahProgressEntry.findMany({
+        where: completedWhere,
+        include: { surah: { select: SURAH_SELECT } },
+      });
 
     const studentsCompletedMap = new Map<string, Record<string, unknown>>();
     let totalAyahs = 0;
     const studentBasicCache = new Map<string, Record<string, unknown>>();
     const getBasic = async (studentId: string) => {
-      if (studentBasicCache.has(studentId)) return studentBasicCache.get(studentId)!;
-      const student = students.find((s) => s.id === studentId) ?? (await this.prisma.student.findUnique({ where: { id: studentId }, include: { user: { select: { email: true } } } }));
-      const basic = student ? await this.formatStudentBasic(student) : { id: studentId };
+      if (studentBasicCache.has(studentId))
+        return studentBasicCache.get(studentId)!;
+      const student =
+        students.find((s) => s.id === studentId) ??
+        (await this.prisma.student.findUnique({
+          where: { id: studentId },
+          include: { user: { select: { email: true } } },
+        }));
+      const basic = student
+        ? await this.formatStudentBasic(student)
+        : { id: studentId };
       studentBasicCache.set(studentId, basic);
       return basic;
     };
@@ -1305,21 +2135,39 @@ export class StudentSurahProgressService {
         studentsCompletedMap.set(sid, {
           student: await getBasic(sid),
           is_inactive_recent: isInactiveRecent(sid),
-          lesson_types: new Map<string, { type: string; total_ayahs: number; entries_count: number }>(),
+          lesson_types: new Map<
+            string,
+            { type: string; total_ayahs: number; entries_count: number }
+          >(),
           total_ayahs_today: 0,
           surahs_completed: [] as Record<string, unknown>[],
         });
       }
       const entry = studentsCompletedMap.get(sid)!;
       entry.total_ayahs_today = (entry.total_ayahs_today as number) + ayahs;
-      const lessonTypes = entry.lesson_types as Map<string, { type: string; total_ayahs: number; entries_count: number }>;
+      const lessonTypes = entry.lesson_types as Map<
+        string,
+        { type: string; total_ayahs: number; entries_count: number }
+      >;
       const typeLabel = record.type ? TYPE_TO_LEGACY[record.type] : 'Lesson';
-      const lt = lessonTypes.get(typeLabel) ?? { type: typeLabel, total_ayahs: 0, entries_count: 0 };
+      const lt = lessonTypes.get(typeLabel) ?? {
+        type: typeLabel,
+        total_ayahs: 0,
+        entries_count: 0,
+      };
       lt.total_ayahs += ayahs;
       lt.entries_count += 1;
       lessonTypes.set(typeLabel, lt);
-      const surahsCompleted = entry.surahs_completed as Record<string, unknown>[];
-      if (record.surah && !surahsCompleted.some((s) => (s as { id: string }).id === record.surah!.id)) {
+      const surahsCompleted = entry.surahs_completed as Record<
+        string,
+        unknown
+      >[];
+      if (
+        record.surah &&
+        !surahsCompleted.some(
+          (s) => (s as { id: string }).id === record.surah!.id,
+        )
+      ) {
         surahsCompleted.push(serializeSurahBasic(record.surah));
       }
     }
@@ -1330,7 +2178,9 @@ export class StudentSurahProgressService {
     }));
 
     const pendingList: Record<string, unknown>[] = [];
-    const studentsWithAllTypesSet = new Set(types.length > 0 ? studentsWithAllTypesInRange ?? [] : []);
+    const studentsWithAllTypesSet = new Set(
+      types.length > 0 ? (studentsWithAllTypesInRange ?? []) : [],
+    );
     for (const student of students) {
       let hasAllRequired: boolean;
       if (types.length === 0) {
@@ -1340,7 +2190,10 @@ export class StudentSurahProgressService {
               branchId,
               studentId: student.id,
               status: { in: ['COMPLETED', 'VERIFIED'] },
-              completedAt: { gte: new Date(`${fromDate}T00:00:00.000Z`), lte: new Date(`${toDate}T23:59:59.999Z`) },
+              completedAt: {
+                gte: new Date(`${fromDate}T00:00:00.000Z`),
+                lte: new Date(`${toDate}T23:59:59.999Z`),
+              },
             },
           })
           .then((c) => c > 0);
@@ -1348,7 +2201,10 @@ export class StudentSurahProgressService {
         hasAllRequired = studentsWithAllTypesSet.has(student.id);
       }
       if (!hasAllRequired) {
-        pendingList.push({ student: await getBasic(student.id), is_inactive_recent: isInactiveRecent(student.id) });
+        pendingList.push({
+          student: await getBasic(student.id),
+          is_inactive_recent: isInactiveRecent(student.id),
+        });
       }
     }
 
@@ -1357,8 +2213,16 @@ export class StudentSurahProgressService {
       data: {
         date_range: { from_date: fromDate, to_date: toDate },
         inactive_lookback_days: rangeLength,
-        filters: { halqa_id: query.halqa_id ?? null, student_id: query.student_id ?? null, types },
-        completed: { total_students: completedList.length, total_ayahs_marked: totalAyahs, students: completedList },
+        filters: {
+          halqa_id: query.halqa_id ?? null,
+          student_id: query.student_id ?? null,
+          types,
+        },
+        completed: {
+          total_students: completedList.length,
+          total_ayahs_marked: totalAyahs,
+          students: completedList,
+        },
         pending: { total_students: pendingList.length, students: pendingList },
       },
     };
@@ -1372,20 +2236,31 @@ export class StudentSurahProgressService {
     const where: Prisma.StudentSurahProgressEntryWhereInput = {
       branchId,
       status: { in: ['COMPLETED', 'VERIFIED'] },
-      completedAt: { gte: new Date(`${query.from_date}T00:00:00.000Z`), lte: new Date(`${query.to_date}T23:59:59.999Z`) },
+      completedAt: {
+        gte: new Date(`${query.from_date}T00:00:00.000Z`),
+        lte: new Date(`${query.to_date}T23:59:59.999Z`),
+      },
       ...(query.student_id && { studentId: query.student_id }),
-      ...(types.length > 0 && { type: { in: types.map((t) => TYPE_TO_ENUM[t]) } }),
+      ...(types.length > 0 && {
+        type: { in: types.map((t) => TYPE_TO_ENUM[t]) },
+      }),
     };
     if (query.halqa_id) {
       const memberIds = (
-        await this.prisma.halqaStudent.findMany({ where: { halqaId: query.halqa_id, removedAt: null }, select: { studentId: true } })
+        await this.prisma.halqaStudent.findMany({
+          where: { halqaId: query.halqa_id, removedAt: null },
+          select: { studentId: true },
+        })
       ).map((m) => m.studentId);
       where.studentId = query.student_id ? query.student_id : { in: memberIds };
     }
 
     const records = await this.prisma.studentSurahProgressEntry.findMany({
       where,
-      include: { student: { include: { user: { select: { email: true } } } }, surah: { select: SURAH_SELECT } },
+      include: {
+        student: { include: { user: { select: { email: true } } } },
+        surah: { select: SURAH_SELECT },
+      },
     });
 
     const studentsData = new Map<
@@ -1394,7 +2269,10 @@ export class StudentSurahProgressService {
         student: Record<string, unknown>;
         total_ayahs: number;
         total_entries: number;
-        lesson_types: Map<string, { type: string; total_ayahs: number; entries_count: number }>;
+        lesson_types: Map<
+          string,
+          { type: string; total_ayahs: number; entries_count: number }
+        >;
         surahs_completed: Record<string, unknown>[];
       }
     >();
@@ -1415,11 +2293,20 @@ export class StudentSurahProgressService {
       data.total_ayahs += ayahs;
       data.total_entries += 1;
       const typeLabel = r.type ? TYPE_TO_LEGACY[r.type] : 'Lesson';
-      const lt = data.lesson_types.get(typeLabel) ?? { type: typeLabel, total_ayahs: 0, entries_count: 0 };
+      const lt = data.lesson_types.get(typeLabel) ?? {
+        type: typeLabel,
+        total_ayahs: 0,
+        entries_count: 0,
+      };
       lt.total_ayahs += ayahs;
       lt.entries_count += 1;
       data.lesson_types.set(typeLabel, lt);
-      if (r.surah && !data.surahs_completed.some((s) => (s as { id: string }).id === r.surah!.id)) {
+      if (
+        r.surah &&
+        !data.surahs_completed.some(
+          (s) => (s as { id: string }).id === r.surah!.id,
+        )
+      ) {
         data.surahs_completed.push(serializeSurahBasic(r.surah));
       }
     }
@@ -1433,19 +2320,34 @@ export class StudentSurahProgressService {
       status: 'success',
       data: {
         date_range: { from_date: query.from_date, to_date: query.to_date },
-        filters: { halqa_id: query.halqa_id ?? null, student_id: query.student_id ?? null, types },
-        top_students: { limit, total_students_with_records: list.length, students: topStudents },
+        filters: {
+          halqa_id: query.halqa_id ?? null,
+          student_id: query.student_id ?? null,
+          types,
+        },
+        top_students: {
+          limit,
+          total_students_with_records: list.length,
+          students: topStudents,
+        },
       },
     };
   }
 
   // ── updateProgress ───────────────────────────────────────────────────
-  async updateProgress(branchId: string, userId: string, dto: UpdateProgressDto) {
+  async updateProgress(
+    branchId: string,
+    userId: string,
+    dto: UpdateProgressDto,
+  ) {
     const entries = await this.prisma.studentSurahProgressEntry.findMany({
       where: { id: { in: dto.progress_ids }, branchId },
     });
     if (entries.length === 0) {
-      throw new NotFoundException({ status: 'error', message: 'No valid progress records found' });
+      throw new NotFoundException({
+        status: 'error',
+        message: 'No valid progress records found',
+      });
     }
 
     let updatedCount = 0;
@@ -1475,7 +2377,9 @@ export class StudentSurahProgressService {
           data: {
             ...(dto.grade !== undefined && { grade: GRADE_TO_ENUM[dto.grade] }),
             ...(dto.remarks !== undefined && { remarks: dto.remarks }),
-            ...(dto.completed_at && { completedAt: new Date(dto.completed_at) }),
+            ...(dto.completed_at && {
+              completedAt: new Date(dto.completed_at),
+            }),
             lastUpdatedById: userId,
           },
         });
@@ -1485,13 +2389,42 @@ export class StudentSurahProgressService {
 
     return {
       status: 'success',
-      message: dto.unmark ? 'Ayahs unmarked successfully' : 'Progress updated successfully',
+      message: dto.unmark
+        ? 'Ayahs unmarked successfully'
+        : 'Progress updated successfully',
       data: { updated_count: updatedCount, progress_ids: dto.progress_ids },
     };
   }
+
+  // ── deleteProgress ───────────────────────────────────────────────────
+  async deleteProgress(branchId: string, id: string) {
+    const entry = await this.prisma.studentSurahProgressEntry.findFirst({
+      where: { id, branchId },
+    });
+    if (!entry) {
+      throw new NotFoundException({
+        status: 'error',
+        message: 'Progress entry not found',
+      });
+    }
+    if (entry.day !== null) {
+      throw new BadRequestException({
+        status: 'error',
+        message:
+          'This entry is part of the fixed lesson schedule and cannot be deleted — unmark it instead.',
+      });
+    }
+    await this.prisma.studentSurahProgressEntry.delete({ where: { id } });
+  }
 }
 
-function serializeSurahBasic(surah: { id: string; number: number; nameArabic: string; nameEnglish: string; totalAyahs?: number }) {
+function serializeSurahBasic(surah: {
+  id: string;
+  number: number;
+  nameArabic: string;
+  nameEnglish: string;
+  totalAyahs?: number;
+}) {
   return {
     id: surah.id,
     surah_number: surah.number,

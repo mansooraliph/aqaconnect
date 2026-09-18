@@ -71,6 +71,12 @@ export class StudentsController {
     }, 'Failed to create student');
   }
 
+  @Get('all')
+  async getAllStudents(@Req() req: AuthedRequest, @Query('search') search?: string) {
+    const branchId = await this.context.resolveBranchId(req.user.userId);
+    return this.handle(() => this.service.getAllStudents(branchId, search ?? ''), 'Failed to retrieve students');
+  }
+
   @Patch('update/:id')
   async updateStudent(@Req() req: AuthedRequest, @Param('id') id: string, @Body() dto: UpdateStudentDto) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
@@ -169,6 +175,15 @@ export class StudentsController {
   async updateStudentEvent(@Req() req: AuthedRequest, @Param('eventId') eventId: string, @Body() dto: UpdateStudentEventDto) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     return this.handle(() => this.service.updateStudentEvent(branchId, eventId, dto), 'Failed to update event record');
+  }
+
+  @Delete('destroy-student-events/:eventId')
+  async deleteStudentEvent(@Req() req: AuthedRequest, @Param('eventId') eventId: string) {
+    const branchId = await this.context.resolveBranchId(req.user.userId);
+    return this.handle(async () => {
+      await this.service.deleteStudentEvent(branchId, eventId);
+      return { status: 'success', message: 'Event deleted successfully' };
+    }, 'Failed to delete event record');
   }
 
   @Get('student-activity')

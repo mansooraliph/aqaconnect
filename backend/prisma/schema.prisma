@@ -124,6 +124,7 @@ model User {
   lastName     String?
   phone        String?
   whatsapp     String?
+  imageUrl     String?
   isActive     Boolean   @default(true)
   branchId     String? // nullable: pure-management users may have no home branch
   branch       Branch?   @relation(fields: [branchId], references: [id])
@@ -1121,6 +1122,7 @@ model StudentEnrollment {
   student                    Student                  @relation(fields: [studentId], references: [id], onDelete: Cascade)
   academicClassSectionYearId String
   academicClassSectionYear   AcademicClassSectionYear @relation(fields: [academicClassSectionYearId], references: [id], onDelete: Cascade)
+  rollNo                     String?
   status                     EnrollmentStatus         @default(ACTIVE)
   enrolledAt                 DateTime                 @default(now())
   transferredFromId          String? // self-relation to the enrollment this one replaced, for transfer history

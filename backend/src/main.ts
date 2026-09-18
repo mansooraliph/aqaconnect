@@ -1,7 +1,9 @@
 import { NestFactory } from '@nestjs/core';
 import { RequestMethod, ValidationPipe } from '@nestjs/common';
 import * as express from 'express';
+import { join } from 'path';
 import { AppModule } from './app.module';
+import { UPLOADS_DIR } from './mobile-app-api/profile/upload-paths';
 
 async function bootstrap() {
   // Body parsing is wired manually (bodyParser: false) so the /iclock/*
@@ -11,6 +13,11 @@ async function bootstrap() {
   app.use('/iclock', express.text({ type: () => true, limit: '5mb' }));
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
+  // Serves uploaded profile avatars back out at /uploads/avatars/<file> —
+  // plain local-disk storage (see ProfileService.editProfile), fine for a
+  // single-instance deployment; move to shared/object storage (S3-compatible)
+  // if this backend is ever scaled to multiple instances behind a load balancer.
+  app.use('/uploads', express.static(join(UPLOADS_DIR, '..')));
 
   // Public legal/account-deletion pages and the /iclock/* device protocol
   // live at clean top-level URLs, not under /api.

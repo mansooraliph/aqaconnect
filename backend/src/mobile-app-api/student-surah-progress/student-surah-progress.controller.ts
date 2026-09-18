@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpException,
   InternalServerErrorException,
@@ -8,12 +9,17 @@ import {
   Post,
   Query,
   Req,
+  UploadedFile,
   UseGuards,
   UseInterceptors,
   UsePipes,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Request } from 'express';
+import { diskStorage } from 'multer';
+import { randomBytes } from 'crypto';
+import { extname } from 'path';
+import { mkdirSync } from 'fs';
 import { StudentSurahProgressService } from './student-surah-progress.service';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
@@ -31,6 +37,18 @@ import { UpdateProgressDto } from './dto/update-progress.dto';
 import { MobileContextService } from '../common/mobile-context.service';
 import { MobileValidationPipe } from '../common/mobile-validation.pipe';
 import { MobileApiLoggingInterceptor } from '../common/mobile-api-logging.interceptor';
+import { VOICE_NOTES_DIR } from './upload-paths';
+
+mkdirSync(VOICE_NOTES_DIR, { recursive: true });
+
+const remarkFileInterceptorOptions = {
+  storage: diskStorage({
+    destination: VOICE_NOTES_DIR,
+    filename: (_req: unknown, file: Express.Multer.File, cb: (error: Error | null, filename: string) => void) =>
+      cb(null, `${randomBytes(16).toString('hex')}${extname(file.originalname)}`),
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+};
 
 interface AuthedRequest extends Request {
   user: { userId: string };
@@ -119,13 +137,20 @@ export class StudentSurahProgressController {
   // ── bulkMarkCompleted ────────────────────────────────────────────────
   // The client only sends multipart/form-data when a remark file is
   // attached (plain JSON otherwise); FileInterceptor must be present
-  // either way so Multer parses the text fields when it does. The file
-  // itself is received and discarded — no file storage exists yet.
+  // either way so Multer parses the text fields when it does.
   @Post('bulk-mark-completed')
-  @UseInterceptors(FileInterceptor('remark_file'))
-  async bulkMarkCompleted(@Req() req: AuthedRequest, @Body() dto: BulkMarkCompletedDto) {
+  @UseInterceptors(FileInterceptor('remark_file', remarkFileInterceptorOptions))
+  async bulkMarkCompleted(
+    @Req() req: AuthedRequest,
+    @Body() dto: BulkMarkCompletedDto,
+    @UploadedFile() remarkFile?: Express.Multer.File,
+  ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
-    return this.handle(() => this.service.bulkMarkCompleted(branchId, req.user.userId, dto), 'Failed to mark ayahs as completed: ');
+    const publicBaseUrl = `${req.protocol}://${req.get('host')}`;
+    return this.handle(
+      () => this.service.bulkMarkCompleted(branchId, req.user.userId, dto, remarkFile, publicBaseUrl),
+      'Failed to mark ayahs as completed: ',
+    );
   }
 
   // ── getPendingSurahList ──────────────────────────────────────────────
@@ -176,10 +201,18 @@ export class StudentSurahProgressController {
   // The client always sends multipart/form-data here (a remark file is
   // optional but the request shape isn't) — see bulkMarkCompleted above.
   @Post('store-old-lesson')
-  @UseInterceptors(FileInterceptor('remark_file'))
-  async storeOldLessonProgress(@Req() req: AuthedRequest, @Body() dto: StoreOldLessonProgressDto) {
+  @UseInterceptors(FileInterceptor('remark_file', remarkFileInterceptorOptions))
+  async storeOldLessonProgress(
+    @Req() req: AuthedRequest,
+    @Body() dto: StoreOldLessonProgressDto,
+    @UploadedFile() remarkFile?: Express.Multer.File,
+  ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
-    return this.handle(() => this.service.storeOldLessonProgress(branchId, req.user.userId, dto), 'Failed to save Old Lesson progress: ');
+    const publicBaseUrl = `${req.protocol}://${req.get('host')}`;
+    return this.handle(
+      () => this.service.storeOldLessonProgress(branchId, req.user.userId, dto, remarkFile, publicBaseUrl),
+      'Failed to save Old Lesson progress: ',
+    );
   }
 
   // ── getOldLessonProgressList ─────────────────────────────────────────
@@ -250,5 +283,20 @@ export class StudentSurahProgressController {
   async updateProgress(@Req() req: AuthedRequest, @Body() dto: UpdateProgressDto) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     return this.handle(() => this.service.updateProgress(branchId, req.user.userId, dto), 'Failed to update progress: ');
+  }
+
+  // ── deleteProgress ───────────────────────────────────────────────────
+  // Only entries not seeded from the master schedule (day IS NULL — e.g.
+  // Old Lesson/Juzh Lesson entries added via storeOldLessonProgress) can be
+  // deleted outright; schedule-seeded entries must be reset via
+  // updateProgress's `unmark` instead, or the ayah's tracking row disappears
+  // from the fixed pacing plan.
+  @Delete('destroy/:id')
+  async deleteProgress(@Req() req: AuthedRequest, @Param('id') id: string) {
+    const branchId = await this.context.resolveBranchId(req.user.userId);
+    return this.handle(async () => {
+      await this.service.deleteProgress(branchId, id);
+      return { status: 'success', message: 'Progress entry deleted successfully' };
+    }, 'Failed to delete progress entry: ');
   }
 }
