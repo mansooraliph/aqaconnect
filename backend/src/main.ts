@@ -10,6 +10,13 @@ async function bootstrap() {
   // biometric-device protocol routes can read their body as raw text —
   // ZKTeco/ESSL terminals POST tab-separated plain text, not JSON.
   const app = await NestFactory.create(AppModule, { bodyParser: false });
+  // Behind nginx, which terminates TLS and forwards plain HTTP internally
+  // (proxy_pass http://127.0.0.1:<port>) — without this, req.protocol always
+  // reads 'http' even for real https:// requests, since nginx does set
+  // X-Forwarded-Proto but Express ignores it unless proxies are trusted.
+  // Port 3017 (etc.) is only bound to localhost, reachable solely via nginx,
+  // so trusting the immediate hop here is safe.
+  app.getHttpAdapter().getInstance().set('trust proxy', true);
   app.use('/iclock', express.text({ type: () => true, limit: '5mb' }));
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));
