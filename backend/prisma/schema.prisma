@@ -945,6 +945,10 @@ model Student {
   dateOfBirth    DateTime?    @db.Date
   guardianName   String?
   guardianPhone  String?
+  fatherName     String?
+  motherName     String?
+  mobile2        String?
+  bloodGroup     String?
   gender         Gender? // legacy Mobile App API: read off `users.gender` (student *is* a User there)
   address        String?
   qualification  String?
