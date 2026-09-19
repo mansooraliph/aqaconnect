@@ -130,6 +130,10 @@ export class AdmissionsService {
           guardianName: admission.guardianName,
           guardianPhone: admission.phone,
           admissionId: admission.id,
+          // Approval is the moment this student actually joins — without
+          // this, students admitted via this flow had a null joiningDate
+          // and were silently dropped from the Admissions-by-Year report.
+          joiningDate: new Date(),
           userId,
         },
       });

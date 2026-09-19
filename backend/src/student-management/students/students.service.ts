@@ -125,6 +125,10 @@ export class StudentsService {
           // below only consumes it transiently (requires halqaId), so without this the
           // value would otherwise be silently dropped when no Halqa is picked yet.
           hifdhStartDate: dto.hifdhStartDate ? new Date(dto.hifdhStartDate) : undefined,
+          // This DTO has no joining-date field of its own — default to "now"
+          // (same convention as the mobile-app-api create path) so the
+          // Admissions-by-Year report doesn't silently drop this student.
+          joiningDate: new Date(),
         },
         include: this.includeClause(),
       });
@@ -167,6 +171,7 @@ export class StudentsService {
           guardianName: dto.guardianName,
           guardianPhone: dto.guardianPhone,
           hifdhStartDate: dto.hifdhStartDate ? new Date(dto.hifdhStartDate) : undefined,
+          joiningDate: new Date(),
           userId: user.id,
         },
         include: this.includeClause(),
