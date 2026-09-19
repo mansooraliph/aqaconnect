@@ -2140,14 +2140,21 @@ export class StudentSurahProgressService {
         gte: new Date(`${fromDate}T00:00:00.000Z`),
         lte: new Date(`${toDate}T23:59:59.999Z`),
       },
-      ...(query.student_id && { studentId: query.student_id }),
+    };
+    // Each active filter (types, halqa, student) narrows the allowed student
+    // set independently — intersect them rather than letting a later filter
+    // silently overwrite an earlier one, which used to make halqa_id a no-op
+    // whenever a lesson type was also selected (the default state), since
+    // completedWhere.studentId was already set by the types filter by then.
+    let allowedStudentIds: Set<string> | null = null;
+    const intersectAllowed = (ids: string[]) => {
+      allowedStudentIds = allowedStudentIds
+        ? new Set(ids.filter((id) => allowedStudentIds!.has(id)))
+        : new Set(ids);
     };
     if (types.length > 0) {
       completedWhere.type = { in: types.map((t) => TYPE_TO_ENUM[t]) };
-      completedWhere.studentId =
-        studentsWithAllTypesInRange && studentsWithAllTypesInRange.length > 0
-          ? { in: studentsWithAllTypesInRange }
-          : '__none__';
+      intersectAllowed(studentsWithAllTypesInRange ?? []);
     }
     if (query.halqa_id) {
       const memberIds = (
@@ -2156,9 +2163,13 @@ export class StudentSurahProgressService {
           select: { studentId: true },
         })
       ).map((m) => m.studentId);
-      completedWhere.studentId = completedWhere.studentId
-        ? completedWhere.studentId
-        : { in: memberIds };
+      intersectAllowed(memberIds);
+    }
+    if (query.student_id) {
+      intersectAllowed([query.student_id]);
+    }
+    if (allowedStudentIds) {
+      completedWhere.studentId = { in: [...allowedStudentIds] };
     }
 
     const completedRecords =
