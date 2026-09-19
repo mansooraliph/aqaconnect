@@ -1072,6 +1072,61 @@ export class StudentSurahProgressService {
     }
   }
 
+  /**
+   * Reverse of syncScheduleEntries() — when a progress entry that was
+   * backing a schedule row's completion gets unmarked, the schedule row
+   * needs to revert too, or it stays falsely "completed" (and out of the
+   * overdue/pending counts) forever even though nothing is actually done.
+   */
+  private async unsyncScheduleEntries(
+    tx: Prisma.TransactionClient,
+    studentId: string,
+    surahIds: string[],
+  ) {
+    const uniqueSurahIds = [...new Set(surahIds)];
+    if (uniqueSurahIds.length === 0) return;
+
+    const candidates = await tx.surahHifdhStudentSchedule.findMany({
+      where: {
+        studentId,
+        surahId: { in: uniqueSurahIds },
+        status: HifdhScheduleStatus.COMPLETED,
+        fromAyah: { not: null },
+        toAyah: { not: null },
+      },
+    });
+
+    for (const schedule of candidates) {
+      if (schedule.fromAyah === null || schedule.toAyah === null) continue;
+      const coveringEntries = await tx.studentSurahProgressEntry.findMany({
+        where: {
+          studentId,
+          surahId: schedule.surahId,
+          type: ProgressEntryType.NEW_LESSON,
+          fromAyah: { gte: schedule.fromAyah, lte: schedule.toAyah },
+        },
+        select: { status: true },
+      });
+      const stillFullyCovered =
+        coveringEntries.length > 0 &&
+        coveringEntries.every(
+          (e) =>
+            e.status === ProgressEntryStatus.COMPLETED ||
+            e.status === ProgressEntryStatus.VERIFIED,
+        );
+      if (!stillFullyCovered) {
+        await tx.surahHifdhStudentSchedule.update({
+          where: { id: schedule.id },
+          data: {
+            status: HifdhScheduleStatus.PENDING,
+            completedAt: null,
+            completionDate: null,
+          },
+        });
+      }
+    }
+  }
+
   async bulkMarkCompleted(
     branchId: string,
     userId: string,
@@ -2458,6 +2513,7 @@ export class StudentSurahProgressService {
     }
 
     let updatedCount = 0;
+    const unmarkedByStudent = new Map<string, Set<string>>();
     await this.prisma.$transaction(async (tx) => {
       for (const entry of entries) {
         if (dto.unmark) {
@@ -2475,6 +2531,11 @@ export class StudentSurahProgressService {
               },
             });
             updatedCount += 1;
+            if (entry.surahId) {
+              const set = unmarkedByStudent.get(entry.studentId) ?? new Set<string>();
+              set.add(entry.surahId);
+              unmarkedByStudent.set(entry.studentId, set);
+            }
           }
           continue;
         }
@@ -2491,6 +2552,10 @@ export class StudentSurahProgressService {
           },
         });
         updatedCount += 1;
+      }
+
+      for (const [studentId, surahIds] of unmarkedByStudent) {
+        await this.unsyncScheduleEntries(tx, studentId, [...surahIds]);
       }
     });
 

@@ -930,21 +930,34 @@ export class MobileStudentsService {
       );
     }
 
-    // 2. Surah Hifdh schedule completions
-    const completions = await this.prisma.surahHifdhStudentSchedule.findMany({
-      where: { studentId, status: 'COMPLETED', updatedAt: { gte: start, lte: end } },
-      include: { surah: { select: { nameEnglish: true } } },
-    });
-    for (const c of completions) {
-      const date = toDateOnly(c.updatedAt);
-      const description = c.surah
-        ? `Completed portion: ${c.surah.nameEnglish} verses ${c.fromAyah} to ${c.toAyah}`
-        : `Completed: ${c.examName ?? 'milestone'}`;
-      push(
-        date,
-        withId({ type: 'surah_schedule_completion', description, time: c.updatedAt.toISOString() }, c.id, 'surah_schedule'),
-      );
-    }
+    // 2. Surah Hifdh schedule completions — deliberately not surfaced in the
+    // activity timeline for now (per product decision): the underlying
+    // schedule-sync (SurahHifdhStudentSchedule status flips) still runs
+    // fine on its own in student-surah-progress.service.ts, this just stops
+    // duplicating it as a separate "Schedule updated" timeline entry, since
+    // the real lesson marking already shows as its own activity.
+    // const completions = await this.prisma.surahHifdhStudentSchedule.findMany({
+    //   where: { studentId, status: 'COMPLETED', updatedAt: { gte: start, lte: end } },
+    //   orderBy: { updatedAt: 'asc' },
+    // });
+    // const completionsByDate = new Map<string, { count: number; latest: Date; firstId: string }>();
+    // for (const c of completions) {
+    //   const date = toDateOnly(c.updatedAt);
+    //   const existing = completionsByDate.get(date);
+    //   if (existing) {
+    //     existing.count += 1;
+    //     if (c.updatedAt > existing.latest) existing.latest = c.updatedAt;
+    //   } else {
+    //     completionsByDate.set(date, { count: 1, latest: c.updatedAt, firstId: c.id });
+    //   }
+    // }
+    // for (const [date, agg] of completionsByDate) {
+    //   const description = agg.count > 1 ? `Schedule updated (${agg.count} entries)` : 'Schedule updated';
+    //   push(
+    //     date,
+    //     withId({ type: 'surah_schedule_completion', description, time: agg.latest.toISOString() }, agg.firstId, 'surah_schedule'),
+    //   );
+    // }
 
     // 3. Attendance (no legacy write-path yet in this schema — empty unless populated elsewhere)
     const attendances = await this.prisma.attendance.findMany({
