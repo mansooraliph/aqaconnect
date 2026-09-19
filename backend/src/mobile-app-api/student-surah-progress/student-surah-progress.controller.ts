@@ -44,8 +44,15 @@ mkdirSync(VOICE_NOTES_DIR, { recursive: true });
 const remarkFileInterceptorOptions = {
   storage: diskStorage({
     destination: VOICE_NOTES_DIR,
-    filename: (_req: unknown, file: Express.Multer.File, cb: (error: Error | null, filename: string) => void) =>
-      cb(null, `${randomBytes(16).toString('hex')}${extname(file.originalname)}`),
+    filename: (
+      _req: unknown,
+      file: Express.Multer.File,
+      cb: (error: Error | null, filename: string) => void,
+    ) =>
+      cb(
+        null,
+        `${randomBytes(16).toString('hex')}${extname(file.originalname)}`,
+      ),
   }),
   limits: { fileSize: 10 * 1024 * 1024 },
 };
@@ -70,7 +77,10 @@ export class StudentSurahProgressController {
     return this.context.resolveOwnStudentId(req.user.userId);
   }
 
-  private async handle<T>(fn: () => Promise<T>, errorPrefix: string | null): Promise<T> {
+  private async handle<T>(
+    fn: () => Promise<T>,
+    errorPrefix: string | null,
+  ): Promise<T> {
     try {
       return await fn();
     } catch (error) {
@@ -85,24 +95,45 @@ export class StudentSurahProgressController {
 
   // ── getSurahProgressList ─────────────────────────────────────────────
   @Get('students/surah-progress-list')
-  async getOwnSurahProgressList(@Req() req: AuthedRequest, @Query() query: TypeFilterQueryDto) {
+  async getOwnSurahProgressList(
+    @Req() req: AuthedRequest,
+    @Query() query: TypeFilterQueryDto,
+  ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     const studentId = await this.ownStudentId(req);
-    return this.handle(() => this.service.getSurahProgressList(branchId, studentId, query.type), 'Failed to retrieve Surah progress list: ');
+    return this.handle(
+      () => this.service.getSurahProgressList(branchId, studentId, query.type),
+      'Failed to retrieve Surah progress list: ',
+    );
   }
 
   @Get('students/surah-progress-list/:studentId')
-  async getSurahProgressList(@Req() req: AuthedRequest, @Param('studentId') studentId: string, @Query() query: TypeFilterQueryDto) {
+  async getSurahProgressList(
+    @Req() req: AuthedRequest,
+    @Param('studentId') studentId: string,
+    @Query() query: TypeFilterQueryDto,
+  ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
-    return this.handle(() => this.service.getSurahProgressList(branchId, studentId, query.type), 'Failed to retrieve Surah progress list: ');
+    return this.handle(
+      () => this.service.getSurahProgressList(branchId, studentId, query.type),
+      'Failed to retrieve Surah progress list: ',
+    );
   }
 
   // ── getSurahDetails ──────────────────────────────────────────────────
   @Get('students/surahs/:surahId/details')
-  async getOwnSurahDetails(@Req() req: AuthedRequest, @Param('surahId') surahId: string, @Query() query: TypeFilterQueryDto) {
+  async getOwnSurahDetails(
+    @Req() req: AuthedRequest,
+    @Param('surahId') surahId: string,
+    @Query() query: TypeFilterQueryDto,
+  ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     const studentId = await this.ownStudentId(req);
-    return this.handle(() => this.service.getSurahDetails(branchId, surahId, studentId, query.type), 'Failed to retrieve Surah details: ');
+    return this.handle(
+      () =>
+        this.service.getSurahDetails(branchId, surahId, studentId, query.type),
+      'Failed to retrieve Surah details: ',
+    );
   }
 
   @Get('students/surahs/:surahId/details/:studentId')
@@ -113,15 +144,25 @@ export class StudentSurahProgressController {
     @Query() query: TypeFilterQueryDto,
   ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
-    return this.handle(() => this.service.getSurahDetails(branchId, surahId, studentId, query.type), 'Failed to retrieve Surah details: ');
+    return this.handle(
+      () =>
+        this.service.getSurahDetails(branchId, surahId, studentId, query.type),
+      'Failed to retrieve Surah details: ',
+    );
   }
 
   // ── getStudentSurahProgress ──────────────────────────────────────────
   @Get('student')
-  async getOwnStudentSurahProgress(@Req() req: AuthedRequest, @Query() query: GetStudentSurahProgressQueryDto) {
+  async getOwnStudentSurahProgress(
+    @Req() req: AuthedRequest,
+    @Query() query: GetStudentSurahProgressQueryDto,
+  ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     const studentId = await this.ownStudentId(req);
-    return this.handle(() => this.service.getStudentSurahProgress(branchId, studentId, query), 'Failed to retrieve student Surah progress: ');
+    return this.handle(
+      () => this.service.getStudentSurahProgress(branchId, studentId, query),
+      'Failed to retrieve student Surah progress: ',
+    );
   }
 
   @Get('student/:studentId')
@@ -131,7 +172,10 @@ export class StudentSurahProgressController {
     @Query() query: GetStudentSurahProgressQueryDto,
   ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
-    return this.handle(() => this.service.getStudentSurahProgress(branchId, studentId, query), 'Failed to retrieve student Surah progress: ');
+    return this.handle(
+      () => this.service.getStudentSurahProgress(branchId, studentId, query),
+      'Failed to retrieve student Surah progress: ',
+    );
   }
 
   // ── bulkMarkCompleted ────────────────────────────────────────────────
@@ -148,51 +192,92 @@ export class StudentSurahProgressController {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     const publicBaseUrl = `${req.protocol}://${req.get('host')}`;
     return this.handle(
-      () => this.service.bulkMarkCompleted(branchId, req.user.userId, dto, remarkFile, publicBaseUrl),
+      () =>
+        this.service.bulkMarkCompleted(
+          branchId,
+          req.user.userId,
+          dto,
+          remarkFile,
+          publicBaseUrl,
+        ),
       'Failed to mark ayahs as completed: ',
     );
   }
 
   // ── getPendingSurahList ──────────────────────────────────────────────
   @Get('pending-surah')
-  async getOwnPendingSurahList(@Req() req: AuthedRequest, @Query() query: TypeFilterQueryDto) {
+  async getOwnPendingSurahList(
+    @Req() req: AuthedRequest,
+    @Query() query: TypeFilterQueryDto,
+  ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     const studentId = await this.ownStudentId(req);
-    return this.handle(() => this.service.getPendingSurahList(branchId, studentId, query.type), 'Failed to retrieve pending surah list: ');
+    return this.handle(
+      () => this.service.getPendingSurahList(branchId, studentId, query.type),
+      'Failed to retrieve pending surah list: ',
+    );
   }
 
   @Get('pending-surah/:studentId')
-  async getPendingSurahList(@Req() req: AuthedRequest, @Param('studentId') studentId: string, @Query() query: TypeFilterQueryDto) {
+  async getPendingSurahList(
+    @Req() req: AuthedRequest,
+    @Param('studentId') studentId: string,
+    @Query() query: TypeFilterQueryDto,
+  ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
-    return this.handle(() => this.service.getPendingSurahList(branchId, studentId, query.type), 'Failed to retrieve pending surah list: ');
+    return this.handle(
+      () => this.service.getPendingSurahList(branchId, studentId, query.type),
+      'Failed to retrieve pending surah list: ',
+    );
   }
 
   // ── bulkMarkSurahsAsCompleted ────────────────────────────────────────
   @Post('student/bulk-mark-surah-completed')
-  async bulkMarkSurahsAsCompleted(@Req() req: AuthedRequest, @Body() dto: BulkMarkSurahsCompletedDto) {
+  async bulkMarkSurahsAsCompleted(
+    @Req() req: AuthedRequest,
+    @Body() dto: BulkMarkSurahsCompletedDto,
+  ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     return this.handle(
-      () => this.service.bulkMarkSurahsAsCompleted(branchId, req.user.userId, dto),
+      () =>
+        this.service.bulkMarkSurahsAsCompleted(branchId, req.user.userId, dto),
       'Failed to bulk mark surahs as completed: ',
     );
   }
 
   // ── getCompletedSurahList ────────────────────────────────────────────
   @Get('students/completed-surahs')
-  async getOwnCompletedSurahList(@Req() req: AuthedRequest, @Query() query: TypeFilterQueryDto) {
+  async getOwnCompletedSurahList(
+    @Req() req: AuthedRequest,
+    @Query() query: TypeFilterQueryDto,
+  ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     const studentId = await this.ownStudentId(req);
     return this.handle(
-      () => this.service.getCompletedSurahList(branchId, studentId, query.type ?? 'New Lesson'),
+      () =>
+        this.service.getCompletedSurahList(
+          branchId,
+          studentId,
+          query.type ?? 'New Lesson',
+        ),
       'Failed to retrieve completed Surah list: ',
     );
   }
 
   @Get('students/completed-surahs/:studentId')
-  async getCompletedSurahList(@Req() req: AuthedRequest, @Param('studentId') studentId: string, @Query() query: TypeFilterQueryDto) {
+  async getCompletedSurahList(
+    @Req() req: AuthedRequest,
+    @Param('studentId') studentId: string,
+    @Query() query: TypeFilterQueryDto,
+  ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     return this.handle(
-      () => this.service.getCompletedSurahList(branchId, studentId, query.type ?? 'New Lesson'),
+      () =>
+        this.service.getCompletedSurahList(
+          branchId,
+          studentId,
+          query.type ?? 'New Lesson',
+        ),
       'Failed to retrieve completed Surah list: ',
     );
   }
@@ -210,14 +295,24 @@ export class StudentSurahProgressController {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     const publicBaseUrl = `${req.protocol}://${req.get('host')}`;
     return this.handle(
-      () => this.service.storeOldLessonProgress(branchId, req.user.userId, dto, remarkFile, publicBaseUrl),
+      () =>
+        this.service.storeOldLessonProgress(
+          branchId,
+          req.user.userId,
+          dto,
+          remarkFile,
+          publicBaseUrl,
+        ),
       'Failed to save Old Lesson progress: ',
     );
   }
 
   // ── getOldLessonProgressList ─────────────────────────────────────────
   @Get('students/old-lesson-progress')
-  async getOwnOldLessonProgressList(@Req() req: AuthedRequest, @Query() query: GetOldLessonProgressQueryDto) {
+  async getOwnOldLessonProgressList(
+    @Req() req: AuthedRequest,
+    @Query() query: GetOldLessonProgressQueryDto,
+  ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     const studentId = await this.ownStudentId(req);
     return this.handle(
@@ -241,48 +336,92 @@ export class StudentSurahProgressController {
 
   // ── getTodayProgress ─────────────────────────────────────────────────
   @Get('students/today-progress')
-  async getTodayProgress(@Req() req: AuthedRequest, @Query() query: GetTodayProgressQueryDto) {
+  async getTodayProgress(
+    @Req() req: AuthedRequest,
+    @Query() query: GetTodayProgressQueryDto,
+  ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
-    return this.handle(() => this.service.getTodayProgress(branchId, query), "Failed to retrieve today's progress: ");
+    return this.handle(
+      () => this.service.getTodayProgress(branchId, req.user.userId, query),
+      "Failed to retrieve today's progress: ",
+    );
   }
 
   // ── getStudentsExceededTarget ────────────────────────────────────────
   @Get('students/exceeded-target')
-  async getStudentsExceededTarget(@Req() req: AuthedRequest, @Query() query: GetStudentsTargetQueryDto) {
+  async getStudentsExceededTarget(
+    @Req() req: AuthedRequest,
+    @Query() query: GetStudentsTargetQueryDto,
+  ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     return this.handle(
-      () => this.service.getStudentsExceededTarget(branchId, query),
+      () =>
+        this.service.getStudentsExceededTarget(
+          branchId,
+          req.user.userId,
+          query,
+        ),
       'Failed to retrieve students exceeded target: ',
     );
   }
 
   // ── studentsWithPendingTargets ───────────────────────────────────────
   @Get('students/pending-targets')
-  async studentsWithPendingTargets(@Req() req: AuthedRequest, @Query() query: GetStudentsTargetQueryDto) {
+  async studentsWithPendingTargets(
+    @Req() req: AuthedRequest,
+    @Query() query: GetStudentsTargetQueryDto,
+  ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     // Legacy's own catch-all here has no message prefix — replicated as-is.
-    return this.handle(() => this.service.studentsWithPendingTargets(branchId, query), null);
+    return this.handle(
+      () =>
+        this.service.studentsWithPendingTargets(
+          branchId,
+          req.user.userId,
+          query,
+        ),
+      null,
+    );
   }
 
   // ── getFullProgressReport ────────────────────────────────────────────
   @Get('students/reports')
-  async getFullProgressReport(@Req() req: AuthedRequest, @Query() query: GetFullProgressReportQueryDto) {
+  async getFullProgressReport(
+    @Req() req: AuthedRequest,
+    @Query() query: GetFullProgressReportQueryDto,
+  ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
-    return this.handle(() => this.service.getFullProgressReport(branchId, query), 'Failed: ');
+    return this.handle(
+      () =>
+        this.service.getFullProgressReport(branchId, req.user.userId, query),
+      'Failed: ',
+    );
   }
 
   // ── getTopStudents ───────────────────────────────────────────────────
   @Get('students/top')
-  async getTopStudents(@Req() req: AuthedRequest, @Query() query: GetTopStudentsQueryDto) {
+  async getTopStudents(
+    @Req() req: AuthedRequest,
+    @Query() query: GetTopStudentsQueryDto,
+  ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
-    return this.handle(() => this.service.getTopStudents(branchId, query), 'Failed to retrieve top students: ');
+    return this.handle(
+      () => this.service.getTopStudents(branchId, req.user.userId, query),
+      'Failed to retrieve top students: ',
+    );
   }
 
   // ── updateProgress ───────────────────────────────────────────────────
   @Post('update')
-  async updateProgress(@Req() req: AuthedRequest, @Body() dto: UpdateProgressDto) {
+  async updateProgress(
+    @Req() req: AuthedRequest,
+    @Body() dto: UpdateProgressDto,
+  ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
-    return this.handle(() => this.service.updateProgress(branchId, req.user.userId, dto), 'Failed to update progress: ');
+    return this.handle(
+      () => this.service.updateProgress(branchId, req.user.userId, dto),
+      'Failed to update progress: ',
+    );
   }
 
   // ── deleteProgress ───────────────────────────────────────────────────
@@ -296,7 +435,10 @@ export class StudentSurahProgressController {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     return this.handle(async () => {
       await this.service.deleteProgress(branchId, id);
-      return { status: 'success', message: 'Progress entry deleted successfully' };
+      return {
+        status: 'success',
+        message: 'Progress entry deleted successfully',
+      };
     }, 'Failed to delete progress entry: ');
   }
 }

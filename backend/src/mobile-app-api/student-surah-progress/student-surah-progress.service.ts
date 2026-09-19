@@ -14,6 +14,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../../notifications/notifications.service';
+import { MobileContextService } from '../common/mobile-context.service';
 import { BulkMarkCompletedDto } from './dto/bulk-mark-completed.dto';
 import { BulkMarkSurahsCompletedDto } from './dto/bulk-mark-surahs-completed.dto';
 import { StoreOldLessonProgressDto } from './dto/store-old-lesson-progress.dto';
@@ -187,7 +188,29 @@ export class StudentSurahProgressService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
+    private readonly context: MobileContextService,
   ) {}
+
+  /**
+   * Mirrors MobileHalqasService.index()'s scoping: a Teacher caller must
+   * only ever see their own halqa's students in these branch-wide reports.
+   * Returns null for non-Teacher callers (no restriction — Branch
+   * Admin/Management/Super Admin see the whole branch, same as today), or
+   * the (possibly empty) list of halqa ids the caller actually teaches.
+   */
+  private async ownHalqaIdsIfTeacher(userId: string): Promise<string[] | null> {
+    const isTeacherRole = await this.context.hasRole(userId, 'Teacher');
+    if (!isTeacherRole) return null;
+    const ownTeacher = await this.prisma.teacher.findUnique({
+      where: { userId },
+    });
+    if (!ownTeacher) return [];
+    const halqas = await this.prisma.halqa.findMany({
+      where: { teacherId: ownTeacher.id },
+      select: { id: true },
+    });
+    return halqas.map((h) => h.id);
+  }
 
   /** Notifies each affected student's linked login that their recitation/Hifdh progress was updated by a teacher. */
   private async notifyProgressMarked(
@@ -1056,7 +1079,9 @@ export class StudentSurahProgressService {
     remarkFile?: Express.Multer.File,
     publicBaseUrl?: string,
   ) {
-    const remarkFileUrl = remarkFile ? `${publicBaseUrl}/uploads/voice-notes/${remarkFile.filename}` : undefined;
+    const remarkFileUrl = remarkFile
+      ? `${publicBaseUrl}/uploads/voice-notes/${remarkFile.filename}`
+      : undefined;
     const entries = await this.prisma.studentSurahProgressEntry.findMany({
       where: { id: { in: dto.ayah_ids }, branchId },
     });
@@ -1388,7 +1413,9 @@ export class StudentSurahProgressService {
     remarkFile?: Express.Multer.File,
     publicBaseUrl?: string,
   ) {
-    const remarkFileUrl = remarkFile ? `${publicBaseUrl}/uploads/voice-notes/${remarkFile.filename}` : undefined;
+    const remarkFileUrl = remarkFile
+      ? `${publicBaseUrl}/uploads/voice-notes/${remarkFile.filename}`
+      : undefined;
     await this.requireActiveStudent(branchId, dto.student_id);
 
     let surahId: string | undefined;
@@ -1627,16 +1654,35 @@ export class StudentSurahProgressService {
 
   private async activeStudentsForReport(
     branchId: string,
-    halqaId?: string,
-    studentId?: string,
+    halqaId: string | undefined,
+    studentId: string | undefined,
+    userId: string,
   ) {
+    const ownHalqaIds = await this.ownHalqaIdsIfTeacher(userId);
+    // A Teacher caller is restricted to their own halqa(s) regardless of
+    // what halqa_id they pass — an explicit id outside that set (or no
+    // teacher-owned halqas at all) resolves to "no students", not "every
+    // student in the branch".
+    const effectiveHalqaIds =
+      ownHalqaIds === null
+        ? undefined
+        : halqaId
+          ? ownHalqaIds.filter((id) => id === halqaId)
+          : ownHalqaIds;
+
     return this.prisma.student.findMany({
       where: {
         branchId,
         status: 'ACTIVE',
-        ...(halqaId && {
-          halqaMemberships: { some: { halqaId, removedAt: null } },
-        }),
+        ...(effectiveHalqaIds !== undefined
+          ? {
+              halqaMemberships: {
+                some: { halqaId: { in: effectiveHalqaIds }, removedAt: null },
+              },
+            }
+          : halqaId && {
+              halqaMemberships: { some: { halqaId, removedAt: null } },
+            }),
         ...(studentId && { id: studentId }),
       },
       include: { user: { select: { email: true } } },
@@ -1644,7 +1690,11 @@ export class StudentSurahProgressService {
   }
 
   // ── getTodayProgress ─────────────────────────────────────────────────
-  async getTodayProgress(branchId: string, query: GetTodayProgressQueryDto) {
+  async getTodayProgress(
+    branchId: string,
+    userId: string,
+    query: GetTodayProgressQueryDto,
+  ) {
     const fromDate = query.from_date ?? formatDateOnly(new Date())!;
     const toDate = query.to_date ?? fromDate;
     const range = {
@@ -1656,6 +1706,7 @@ export class StudentSurahProgressService {
       branchId,
       query.halqa_id,
       query.student_id,
+      userId,
     );
     const studentIds = students.map((s) => s.id);
 
@@ -1868,6 +1919,7 @@ export class StudentSurahProgressService {
   // ── studentsWithPendingTargets ───────────────────────────────────────
   async studentsWithPendingTargets(
     branchId: string,
+    userId: string,
     query: GetStudentsTargetQueryDto,
   ) {
     if (!query.from_date || !query.to_date) {
@@ -1882,6 +1934,8 @@ export class StudentSurahProgressService {
     const students = await this.activeStudentsForReport(
       branchId,
       query.halqa_id,
+      undefined,
+      userId,
     );
     const result: Record<string, unknown>[] = [];
 
@@ -1935,6 +1989,7 @@ export class StudentSurahProgressService {
   // ── getStudentsExceededTarget ────────────────────────────────────────
   async getStudentsExceededTarget(
     branchId: string,
+    userId: string,
     query: GetStudentsTargetQueryDto,
   ) {
     const now = new Date();
@@ -1950,6 +2005,8 @@ export class StudentSurahProgressService {
     const students = await this.activeStudentsForReport(
       branchId,
       query.halqa_id,
+      undefined,
+      userId,
     );
     const result: Record<string, unknown>[] = [];
 
@@ -2002,6 +2059,7 @@ export class StudentSurahProgressService {
   // ── getFullProgressReport ────────────────────────────────────────────
   async getFullProgressReport(
     branchId: string,
+    userId: string,
     query: GetFullProgressReportQueryDto,
   ) {
     const { from_date: fromDate, to_date: toDate } = query;
@@ -2019,6 +2077,7 @@ export class StudentSurahProgressService {
       branchId,
       query.halqa_id,
       query.student_id,
+      userId,
     );
 
     const getStudentsWithAllTypes = async (
@@ -2229,7 +2288,11 @@ export class StudentSurahProgressService {
   }
 
   // ── getTopStudents ───────────────────────────────────────────────────
-  async getTopStudents(branchId: string, query: GetTopStudentsQueryDto) {
+  async getTopStudents(
+    branchId: string,
+    userId: string,
+    query: GetTopStudentsQueryDto,
+  ) {
     const types = query.types ?? [];
     const limit = query.limit ? Number(query.limit) : 10;
 
@@ -2240,19 +2303,37 @@ export class StudentSurahProgressService {
         gte: new Date(`${query.from_date}T00:00:00.000Z`),
         lte: new Date(`${query.to_date}T23:59:59.999Z`),
       },
-      ...(query.student_id && { studentId: query.student_id }),
       ...(types.length > 0 && {
         type: { in: types.map((t) => TYPE_TO_ENUM[t]) },
       }),
     };
-    if (query.halqa_id) {
+
+    // A Teacher caller is restricted to their own halqa's students
+    // regardless of what halqa_id/student_id they pass — an id outside
+    // that set resolves to "no results", not "every student in the branch".
+    const ownHalqaIds = await this.ownHalqaIdsIfTeacher(userId);
+    const effectiveHalqaIds =
+      ownHalqaIds === null
+        ? query.halqa_id
+          ? [query.halqa_id]
+          : null
+        : query.halqa_id
+          ? ownHalqaIds.filter((id) => id === query.halqa_id)
+          : ownHalqaIds;
+
+    if (effectiveHalqaIds !== null) {
       const memberIds = (
         await this.prisma.halqaStudent.findMany({
-          where: { halqaId: query.halqa_id, removedAt: null },
+          where: { halqaId: { in: effectiveHalqaIds }, removedAt: null },
           select: { studentId: true },
         })
       ).map((m) => m.studentId);
-      where.studentId = query.student_id ? query.student_id : { in: memberIds };
+      where.studentId =
+        query.student_id && !memberIds.includes(query.student_id)
+          ? { in: [] }
+          : (query.student_id ?? { in: memberIds });
+    } else if (query.student_id) {
+      where.studentId = query.student_id;
     }
 
     const records = await this.prisma.studentSurahProgressEntry.findMany({
