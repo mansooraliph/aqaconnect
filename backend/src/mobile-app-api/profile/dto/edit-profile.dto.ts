@@ -31,4 +31,31 @@ export class EditProfileDto {
   @IsOptional()
   @IsDateString()
   joining_date?: string;
+
+  // Student-only fields — silently ignored for teacher/employee callers
+  // (see ProfileService.editProfile, which only writes these on the
+  // Student branch).
+  @IsOptional()
+  @IsString()
+  father_name?: string;
+
+  @IsOptional()
+  @IsString()
+  mother_name?: string;
+
+  @IsOptional()
+  @IsString()
+  guardian_name?: string;
+
+  @IsOptional()
+  @IsString()
+  mobile_2?: string;
+
+  @IsOptional()
+  @IsString()
+  whatsapp?: string;
+
+  @IsOptional()
+  @IsString()
+  blood_group?: string;
 }

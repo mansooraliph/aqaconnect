@@ -72,6 +72,12 @@ export class ProfileService {
         designation_id: null,
         designation: null,
         joining_date: student.joiningDate,
+        father_name: student.fatherName,
+        mother_name: student.motherName,
+        guardian_name: student.guardianName,
+        mobile_2: student.mobile2,
+        whatsapp: student.user?.whatsapp ?? null,
+        blood_group: student.bloodGroup,
       };
     }
 
@@ -138,6 +144,7 @@ export class ProfileService {
           email: dto.email,
           phone: dto.phone_number,
           ...(imageUrl && { imageUrl }),
+          ...(dto.whatsapp !== undefined && { whatsapp: dto.whatsapp }),
         },
       });
       await this.prisma.student.update({
@@ -153,6 +160,13 @@ export class ProfileService {
           joiningDate: dto.joining_date
             ? new Date(dto.joining_date)
             : undefined,
+          ...(dto.father_name !== undefined && { fatherName: dto.father_name }),
+          ...(dto.mother_name !== undefined && { motherName: dto.mother_name }),
+          ...(dto.guardian_name !== undefined && { guardianName: dto.guardian_name }),
+          ...(dto.father_name !== undefined &&
+            dto.guardian_name === undefined && { guardianName: dto.father_name }),
+          ...(dto.mobile_2 !== undefined && { mobile2: dto.mobile_2 }),
+          ...(dto.blood_group !== undefined && { bloodGroup: dto.blood_group }),
         },
       });
       return this.getProfile(branchId, userId);
