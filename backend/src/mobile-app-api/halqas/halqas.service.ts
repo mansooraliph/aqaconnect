@@ -1,7 +1,12 @@
-import { Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { ActiveStatus, type Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MobileContextService } from '../common/mobile-context.service';
+import { parseDdMmYyyy } from '../../common/date';
 import { StoreHalqaDto } from './dto/store-halqa.dto';
 import { UpdateHalqaDto } from './dto/update-halqa.dto';
 import { AssignStudentsDto } from './dto/assign-students.dto';
@@ -28,13 +33,19 @@ function toLegacyStatus(status: ActiveStatus): string {
   return status === 'ACTIVE' ? 'active' : 'inactive';
 }
 
-function fullName(user: { firstName: string; lastName: string | null } | null | undefined): string {
+function fullName(
+  user: { firstName: string; lastName: string | null } | null | undefined,
+): string {
   if (!user) return '';
   return [user.firstName, user.lastName].filter(Boolean).join(' ');
 }
 
 const HALQA_INCLUDE = {
-  teacher: { include: { user: { select: { firstName: true, lastName: true, email: true } } } },
+  teacher: {
+    include: {
+      user: { select: { firstName: true, lastName: true, email: true } },
+    },
+  },
   currentClass: { select: { id: true, name: true } },
   addedBy: { select: { firstName: true, lastName: true } },
   lastUpdatedBy: { select: { firstName: true, lastName: true } },
@@ -50,7 +61,9 @@ export class MobileHalqasService {
   ) {}
 
   private async studentCount(halqaId: string): Promise<number> {
-    return this.prisma.halqaStudent.count({ where: { halqaId, removedAt: null } });
+    return this.prisma.halqaStudent.count({
+      where: { halqaId, removedAt: null },
+    });
   }
 
   private formatHalqaListItem(halqa: HalqaRow, studentCount: number) {
@@ -73,20 +86,29 @@ export class MobileHalqasService {
 
   async index(branchId: string, userId: string) {
     const isTeacherRole = await this.context.hasRole(userId, 'Teacher');
-    const ownTeacher = isTeacherRole ? await this.prisma.teacher.findUnique({ where: { userId } }) : null;
+    const ownTeacher = isTeacherRole
+      ? await this.prisma.teacher.findUnique({ where: { userId } })
+      : null;
 
     const where = { branchId, ...(ownTeacher && { teacherId: ownTeacher.id }) };
 
-    const [totalHalqas, activeHalqas, inactiveHalqas, halqas, caller] = await Promise.all([
-      this.prisma.halqa.count({ where }),
-      this.prisma.halqa.count({ where: { ...where, status: 'ACTIVE' } }),
-      this.prisma.halqa.count({ where: { ...where, status: 'INACTIVE' } }),
-      this.prisma.halqa.findMany({ where, include: HALQA_INCLUDE, orderBy: { createdAt: 'desc' } }),
-      this.prisma.user.findUniqueOrThrow({ where: { id: userId } }),
-    ]);
+    const [totalHalqas, activeHalqas, inactiveHalqas, halqas, caller] =
+      await Promise.all([
+        this.prisma.halqa.count({ where }),
+        this.prisma.halqa.count({ where: { ...where, status: 'ACTIVE' } }),
+        this.prisma.halqa.count({ where: { ...where, status: 'INACTIVE' } }),
+        this.prisma.halqa.findMany({
+          where,
+          include: HALQA_INCLUDE,
+          orderBy: { createdAt: 'desc' },
+        }),
+        this.prisma.user.findUniqueOrThrow({ where: { id: userId } }),
+      ]);
 
     const data = await Promise.all(
-      halqas.map(async (halqa) => this.formatHalqaListItem(halqa, await this.studentCount(halqa.id))),
+      halqas.map(async (halqa) =>
+        this.formatHalqaListItem(halqa, await this.studentCount(halqa.id)),
+      ),
     );
 
     return {
@@ -102,7 +124,10 @@ export class MobileHalqasService {
   }
 
   private async requireHalqa(branchId: string, id: string) {
-    const halqa = await this.prisma.halqa.findFirst({ where: { id, branchId }, include: HALQA_INCLUDE });
+    const halqa = await this.prisma.halqa.findFirst({
+      where: { id, branchId },
+      include: HALQA_INCLUDE,
+    });
     if (!halqa) {
       throw new NotFoundException('Halqa not found');
     }
@@ -134,19 +159,23 @@ export class MobileHalqasService {
       orderBy: { student: { name: 'asc' } },
     });
 
-    const studentsData = memberships.map(({ student, isTemporary, restoreToHalqa }) => ({
-      id: student.id,
-      name: student.name,
-      email: student.user?.email ?? null,
-      mobile: student.user?.phone ?? null,
-      country_phonecode: null, // legacy: users.country_phonecode — no Country concept in this schema
-      gender: student.gender ? student.gender.toLowerCase() : null,
-      status: toLegacyStatus(student.status),
-      image_url: null, // legacy: asset($student->image_url) — no avatar/upload subsystem in this schema
-      created_at: formatDateTime(student.createdAt),
-      is_temporary: isTemporary,
-      restore_to_halqa: restoreToHalqa ? { id: restoreToHalqa.id, name: restoreToHalqa.name } : null,
-    }));
+    const studentsData = memberships.map(
+      ({ student, isTemporary, restoreToHalqa }) => ({
+        id: student.id,
+        name: student.name,
+        email: student.user?.email ?? null,
+        mobile: student.user?.phone ?? null,
+        country_phonecode: null, // legacy: users.country_phonecode — no Country concept in this schema
+        gender: student.gender ? student.gender.toLowerCase() : null,
+        status: toLegacyStatus(student.status),
+        image_url: null, // legacy: asset($student->image_url) — no avatar/upload subsystem in this schema
+        created_at: formatDateTime(student.createdAt),
+        is_temporary: isTemporary,
+        restore_to_halqa: restoreToHalqa
+          ? { id: restoreToHalqa.id, name: restoreToHalqa.name }
+          : null,
+      }),
+    );
 
     return {
       status: 'success',
@@ -157,9 +186,15 @@ export class MobileHalqasService {
           status: toLegacyStatus(halqa.status),
           start_date: halqa.startDate ? formatDate(halqa.startDate) : null,
           teacher: halqa.teacher
-            ? { id: halqa.teacherId, name: fullName(halqa.teacher.user), email: halqa.teacher.user?.email ?? null }
+            ? {
+                id: halqa.teacherId,
+                name: fullName(halqa.teacher.user),
+                email: halqa.teacher.user?.email ?? null,
+              }
             : null,
-          current_class: halqa.currentClass ? { id: halqa.currentClass.id, name: halqa.currentClass.name } : null,
+          current_class: halqa.currentClass
+            ? { id: halqa.currentClass.id, name: halqa.currentClass.name }
+            : null,
         },
         students: studentsData,
         meta: {
@@ -170,8 +205,13 @@ export class MobileHalqasService {
     };
   }
 
-  private async assertTeacherBelongsToBranch(branchId: string, teacherId: string) {
-    const teacher = await this.prisma.teacher.findFirst({ where: { id: teacherId, branchId } });
+  private async assertTeacherBelongsToBranch(
+    branchId: string,
+    teacherId: string,
+  ) {
+    const teacher = await this.prisma.teacher.findFirst({
+      where: { id: teacherId, branchId },
+    });
     if (!teacher) {
       throw new UnprocessableEntityException({
         status: 'error',
@@ -182,18 +222,30 @@ export class MobileHalqasService {
 
   private async assertClassBelongsToBranch(branchId: string, classId?: string) {
     if (!classId) return;
-    const academicClass = await this.prisma.academicClass.findFirst({ where: { id: classId, branchId } });
+    const academicClass = await this.prisma.academicClass.findFirst({
+      where: { id: classId, branchId },
+    });
     if (!academicClass) {
-      throw new UnprocessableEntityException({ status: 'error', message: 'The selected current class is invalid.' });
+      throw new UnprocessableEntityException({
+        status: 'error',
+        message: 'The selected current class is invalid.',
+      });
     }
   }
 
-  private async assertNameAvailable(branchId: string, name: string, excludeId?: string) {
+  private async assertNameAvailable(
+    branchId: string,
+    name: string,
+    excludeId?: string,
+  ) {
     const existing = await this.prisma.halqa.findFirst({
       where: { branchId, name, ...(excludeId && { id: { not: excludeId } }) },
     });
     if (existing) {
-      throw new UnprocessableEntityException({ status: 'error', message: 'The name has already been taken.' });
+      throw new UnprocessableEntityException({
+        status: 'error',
+        message: 'The name has already been taken.',
+      });
     }
   }
 
@@ -207,7 +259,9 @@ export class MobileHalqasService {
         branchId,
         name: dto.name,
         teacherId: dto.teacher_id,
-        startDate: dto.start_date ? new Date(dto.start_date) : undefined,
+        startDate: dto.start_date
+          ? parseDdMmYyyy(dto.start_date, 'start_date')
+          : undefined,
         status: dto.status === 'inactive' ? 'INACTIVE' : 'ACTIVE',
         currentClassId: dto.current_class,
         addedById: userId,
@@ -223,20 +277,34 @@ export class MobileHalqasService {
     return this.requireHalqa(branchId, id);
   }
 
-  async update(branchId: string, userId: string, id: string, dto: UpdateHalqaDto) {
+  async update(
+    branchId: string,
+    userId: string,
+    id: string,
+    dto: UpdateHalqaDto,
+  ) {
     await this.requireHalqa(branchId, id);
-    if (dto.name !== undefined) await this.assertNameAvailable(branchId, dto.name, id);
-    if (dto.teacher_id !== undefined) await this.assertTeacherBelongsToBranch(branchId, dto.teacher_id);
-    if (dto.current_class !== undefined) await this.assertClassBelongsToBranch(branchId, dto.current_class);
+    if (dto.name !== undefined)
+      await this.assertNameAvailable(branchId, dto.name, id);
+    if (dto.teacher_id !== undefined)
+      await this.assertTeacherBelongsToBranch(branchId, dto.teacher_id);
+    if (dto.current_class !== undefined)
+      await this.assertClassBelongsToBranch(branchId, dto.current_class);
 
     return this.prisma.halqa.update({
       where: { id },
       data: {
         ...(dto.name !== undefined && { name: dto.name }),
         ...(dto.teacher_id !== undefined && { teacherId: dto.teacher_id }),
-        ...(dto.start_date !== undefined && { startDate: new Date(dto.start_date) }),
-        ...(dto.status !== undefined && { status: dto.status === 'inactive' ? 'INACTIVE' : 'ACTIVE' }),
-        ...(dto.current_class !== undefined && { currentClassId: dto.current_class }),
+        ...(dto.start_date !== undefined && {
+          startDate: parseDdMmYyyy(dto.start_date, 'start_date'),
+        }),
+        ...(dto.status !== undefined && {
+          status: dto.status === 'inactive' ? 'INACTIVE' : 'ACTIVE',
+        }),
+        ...(dto.current_class !== undefined && {
+          currentClassId: dto.current_class,
+        }),
         lastUpdatedById: userId,
       },
       include: HALQA_INCLUDE,
@@ -262,8 +330,14 @@ export class MobileHalqasService {
     });
   }
 
-  async assignStudents(branchId: string, userId: string, dto: AssignStudentsDto) {
-    const halqa = await this.prisma.halqa.findFirst({ where: { id: dto.halqa_id, branchId } });
+  async assignStudents(
+    branchId: string,
+    userId: string,
+    dto: AssignStudentsDto,
+  ) {
+    const halqa = await this.prisma.halqa.findFirst({
+      where: { id: dto.halqa_id, branchId },
+    });
     if (!halqa) {
       throw new NotFoundException({
         status: 'error',
@@ -292,33 +366,55 @@ export class MobileHalqasService {
       // lingering temporary flag/target instead.
       const priorMemberships = isTemporary
         ? await tx.halqaStudent.findMany({
-            where: { studentId: { in: validIds }, removedAt: null, NOT: { halqaId: dto.halqa_id } },
+            where: {
+              studentId: { in: validIds },
+              removedAt: null,
+              NOT: { halqaId: dto.halqa_id },
+            },
             select: { studentId: true, halqaId: true },
           })
         : [];
-      const restoreTargetByStudent = new Map(priorMemberships.map((m) => [m.studentId, m.halqaId]));
+      const restoreTargetByStudent = new Map(
+        priorMemberships.map((m) => [m.studentId, m.halqaId]),
+      );
 
       // Legacy overwrites `student_details.halqa_id` unconditionally — same
       // effect here: close out any other active membership, then (re)open
       // one for the target Halqa.
       await tx.halqaStudent.updateMany({
-        where: { studentId: { in: validIds }, removedAt: null, NOT: { halqaId: dto.halqa_id } },
+        where: {
+          studentId: { in: validIds },
+          removedAt: null,
+          NOT: { halqaId: dto.halqa_id },
+        },
         data: { removedAt: new Date() },
       });
 
       for (const studentId of validIds) {
-        const restoreToHalqaId = isTemporary ? (restoreTargetByStudent.get(studentId) ?? null) : null;
+        const restoreToHalqaId = isTemporary
+          ? (restoreTargetByStudent.get(studentId) ?? null)
+          : null;
         const existing = await tx.halqaStudent.findUnique({
           where: { halqaId_studentId: { halqaId: dto.halqa_id, studentId } },
         });
         if (existing) {
           await tx.halqaStudent.update({
             where: { id: existing.id },
-            data: { removedAt: null, assignedAt: new Date(), isTemporary, restoreToHalqaId },
+            data: {
+              removedAt: null,
+              assignedAt: new Date(),
+              isTemporary,
+              restoreToHalqaId,
+            },
           });
         } else {
           await tx.halqaStudent.create({
-            data: { halqaId: dto.halqa_id, studentId, isTemporary, restoreToHalqaId },
+            data: {
+              halqaId: dto.halqa_id,
+              studentId,
+              isTemporary,
+              restoreToHalqaId,
+            },
           });
         }
       }
@@ -338,7 +434,11 @@ export class MobileHalqasService {
     };
   }
 
-  async restoreStudents(branchId: string, userId: string, dto: RestoreStudentsDto) {
+  async restoreStudents(
+    branchId: string,
+    userId: string,
+    dto: RestoreStudentsDto,
+  ) {
     const memberships = await this.prisma.halqaStudent.findMany({
       where: {
         studentId: { in: dto.student_ids },
@@ -350,7 +450,8 @@ export class MobileHalqasService {
     if (memberships.length === 0) {
       throw new NotFoundException({
         status: 'error',
-        message: 'None of the given students are currently temporarily assigned.',
+        message:
+          'None of the given students are currently temporarily assigned.',
       });
     }
 
@@ -361,20 +462,36 @@ export class MobileHalqasService {
       for (const m of memberships) {
         await tx.halqaStudent.update({
           where: { id: m.id },
-          data: { removedAt: new Date(), isTemporary: false, restoreToHalqaId: null },
+          data: {
+            removedAt: new Date(),
+            isTemporary: false,
+            restoreToHalqaId: null,
+          },
         });
 
         if (m.restoreToHalqaId) {
           const existing = await tx.halqaStudent.findUnique({
-            where: { halqaId_studentId: { halqaId: m.restoreToHalqaId, studentId: m.studentId } },
+            where: {
+              halqaId_studentId: {
+                halqaId: m.restoreToHalqaId,
+                studentId: m.studentId,
+              },
+            },
           });
           if (existing) {
             await tx.halqaStudent.update({
               where: { id: existing.id },
-              data: { removedAt: null, assignedAt: new Date(), isTemporary: false, restoreToHalqaId: null },
+              data: {
+                removedAt: null,
+                assignedAt: new Date(),
+                isTemporary: false,
+                restoreToHalqaId: null,
+              },
             });
           } else {
-            await tx.halqaStudent.create({ data: { halqaId: m.restoreToHalqaId, studentId: m.studentId } });
+            await tx.halqaStudent.create({
+              data: { halqaId: m.restoreToHalqaId, studentId: m.studentId },
+            });
           }
           restoredIds.push(m.studentId);
         } else {
@@ -389,7 +506,10 @@ export class MobileHalqasService {
     return {
       status: 'success',
       message: `${restoredIds.length + unassignedIds.length} student(s) restored.`,
-      data: { restored_student_ids: restoredIds, unassigned_student_ids: unassignedIds },
+      data: {
+        restored_student_ids: restoredIds,
+        unassigned_student_ids: unassignedIds,
+      },
     };
   }
 
@@ -409,14 +529,19 @@ export class MobileHalqasService {
       student_name: m.student.name,
       student_image_url: null,
       current_halqa: { id: m.halqa.id, name: m.halqa.name },
-      restore_to_halqa: m.restoreToHalqa ? { id: m.restoreToHalqa.id, name: m.restoreToHalqa.name } : null,
+      restore_to_halqa: m.restoreToHalqa
+        ? { id: m.restoreToHalqa.id, name: m.restoreToHalqa.name }
+        : null,
       assigned_at: formatDateTime(m.assignedAt),
     }));
 
     return { status: 'success', data };
   }
 
-  async getUnassignedStudents(branchId: string, query: GetUnassignedStudentsQueryDto) {
+  async getUnassignedStudents(
+    branchId: string,
+    query: GetUnassignedStudentsQueryDto,
+  ) {
     const search = query.search ?? '';
     const perPage = query.per_page ? Number(query.per_page) : 15;
     const page = query.page ? Number(query.page) : 1;
@@ -430,7 +555,9 @@ export class MobileHalqasService {
           { name: { contains: search, mode: 'insensitive' as const } },
           { studentCode: { contains: search, mode: 'insensitive' as const } },
           { guardianName: { contains: search, mode: 'insensitive' as const } },
-          { user: { email: { contains: search, mode: 'insensitive' as const } } },
+          {
+            user: { email: { contains: search, mode: 'insensitive' as const } },
+          },
         ],
       }),
     };
