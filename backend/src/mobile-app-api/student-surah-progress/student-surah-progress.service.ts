@@ -1858,6 +1858,7 @@ export class StudentSurahProgressService {
               from_ayah: r.fromAyah,
               to_ayah: r.toAyah,
               grade: r.grade ? GRADE_TO_LEGACY[r.grade] : null,
+              remark_file_url: r.remarkFile ?? null,
             },
           });
           const key = typeLabel;
@@ -1875,7 +1876,14 @@ export class StudentSurahProgressService {
               (s) => (s as { id: string }).id === r.surah!.id,
             )
           ) {
-            surahsCompleted.push(serializeSurahBasic(r.surah));
+            // One recording covers every ayah marked in the same batch, so
+            // the first entry with a remark file for this surah today
+            // represents that recording for the whole card — no need to
+            // carry (or repeat) it per ayah at this summary-card level.
+            surahsCompleted.push({
+              ...serializeSurahBasic(r.surah),
+              remark_file_url: r.remarkFile ?? null,
+            });
           }
         }
       }
