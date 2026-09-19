@@ -1757,10 +1757,21 @@ export class StudentSurahProgressService {
       lte: new Date(`${toDate}T23:59:59.999Z`),
     };
 
+    // A Student caller always gets their own record, regardless of what
+    // student_id they pass — the mobile app's "My Today's Progress" widget
+    // was sending the auth User id there instead of the Student id (two
+    // different rows), which silently matched nothing. Resolving it
+    // server-side fixes that and also stops a student from being able to
+    // query another student's today-progress by passing an arbitrary id.
+    const isStudentRole = await this.context.hasRole(userId, 'Student');
+    const effectiveStudentId = isStudentRole
+      ? await this.context.resolveOwnStudentId(userId)
+      : query.student_id;
+
     const students = await this.activeStudentsForReport(
       branchId,
       query.halqa_id,
-      query.student_id,
+      effectiveStudentId,
       userId,
     );
     const studentIds = students.map((s) => s.id);
