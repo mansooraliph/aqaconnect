@@ -9,12 +9,17 @@ import {
   Patch,
   Post,
   Req,
+  UploadedFile,
   UseGuards,
   UseInterceptors,
   UsePipes,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Request } from 'express';
+import { diskStorage } from 'multer';
+import { randomBytes } from 'crypto';
+import { extname } from 'path';
+import { mkdirSync } from 'fs';
 import { TeachersService } from './teachers.service';
 import { StoreTeacherDto } from './dto/store-teacher.dto';
 import { UpdateTeacherDto } from './dto/update-teacher.dto';
@@ -24,6 +29,18 @@ import { Reply } from '../common/reply';
 import { MobileApiLoggingInterceptor } from '../common/mobile-api-logging.interceptor';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
+import { UPLOADS_DIR } from '../profile/upload-paths';
+
+mkdirSync(UPLOADS_DIR, { recursive: true });
+
+const avatarUploadOptions = {
+  storage: diskStorage({
+    destination: UPLOADS_DIR,
+    filename: (_req, file, cb) =>
+      cb(null, `${randomBytes(16).toString('hex')}${extname(file.originalname)}`),
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 },
+};
 
 interface AuthedRequest extends Request {
   user: { userId: string };
@@ -57,14 +74,18 @@ export class TeachersController {
 
   // The client only sends multipart/form-data when a photo is attached
   // (plain JSON otherwise); FileInterceptor must be present either way so
-  // Multer parses the text fields when it does. The photo itself is
-  // received and discarded — no avatar storage exists yet.
+  // Multer parses the text fields when it does.
   @Post('store')
-  @UseInterceptors(FileInterceptor('image'))
-  async store(@Req() req: AuthedRequest, @Body() dto: StoreTeacherDto) {
+  @UseInterceptors(FileInterceptor('image', avatarUploadOptions))
+  async store(
+    @Req() req: AuthedRequest,
+    @Body() dto: StoreTeacherDto,
+    @UploadedFile() image?: Express.Multer.File,
+  ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
+    const publicBaseUrl = `${req.protocol}://${req.get('host')}`;
     try {
-      const teacher = await this.service.store(branchId, dto);
+      const teacher = await this.service.store(branchId, dto, image, publicBaseUrl);
       return Reply.successWithData('Record saved successfully.', { user: teacher });
     } catch (error) {
       // Unexpected errors (e.g. a failed transaction) must surface as a
@@ -77,11 +98,17 @@ export class TeachersController {
   }
 
   @Patch('update/:id')
-  @UseInterceptors(FileInterceptor('image'))
-  async update(@Req() req: AuthedRequest, @Param('id') id: string, @Body() dto: UpdateTeacherDto) {
+  @UseInterceptors(FileInterceptor('image', avatarUploadOptions))
+  async update(
+    @Req() req: AuthedRequest,
+    @Param('id') id: string,
+    @Body() dto: UpdateTeacherDto,
+    @UploadedFile() image?: Express.Multer.File,
+  ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
+    const publicBaseUrl = `${req.protocol}://${req.get('host')}`;
     try {
-      const teacher = await this.service.update(branchId, id, dto);
+      const teacher = await this.service.update(branchId, id, dto, image, publicBaseUrl);
       return Reply.successWithData('Record updated successfully.', { user: teacher });
     } catch (error) {
       if (error instanceof HttpException) throw error;

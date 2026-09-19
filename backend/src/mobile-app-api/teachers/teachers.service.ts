@@ -19,6 +19,7 @@ const includeClause = {
       lastName: true,
       phone: true,
       isActive: true,
+      imageUrl: true,
     },
   },
   employee: { include: { department: true, designation: true } },
@@ -119,7 +120,12 @@ export class TeachersService {
     }
   }
 
-  async store(branchId: string, dto: StoreTeacherDto) {
+  async store(
+    branchId: string,
+    dto: StoreTeacherDto,
+    image?: Express.Multer.File,
+    publicBaseUrl?: string,
+  ) {
     await this.assertUsernameAvailable(dto.username);
     if (dto.email) {
       await this.assertEmailAvailable(dto.email);
@@ -129,6 +135,7 @@ export class TeachersService {
     const { firstName, lastName } = splitName(dto.name);
     const passwordHash = await bcrypt.hash(dto.password ?? randomPassword(), SALT_ROUNDS);
     const employeeCode = await this.nextEmployeeCode(branchId);
+    const imageUrl = image ? `${publicBaseUrl}/uploads/avatars/${image.filename}` : undefined;
 
     const teacherId = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
@@ -140,6 +147,7 @@ export class TeachersService {
           phone: dto.mobile,
           email: dto.email,
           branchId,
+          ...(imageUrl && { imageUrl }),
         },
       });
 
@@ -172,7 +180,13 @@ export class TeachersService {
     return this.prisma.teacher.findUniqueOrThrow({ where: { id: teacherId }, include: includeClause });
   }
 
-  async update(branchId: string, id: string, dto: UpdateTeacherDto) {
+  async update(
+    branchId: string,
+    id: string,
+    dto: UpdateTeacherDto,
+    image?: Express.Multer.File,
+    publicBaseUrl?: string,
+  ) {
     const existing = await this.findOne(branchId, id);
     if (dto.username !== undefined) {
       await this.assertUsernameAvailable(dto.username, existing.userId);
@@ -184,6 +198,7 @@ export class TeachersService {
 
     const nameParts = dto.name !== undefined ? splitName(dto.name) : undefined;
     const passwordHash = dto.password ? await bcrypt.hash(dto.password, SALT_ROUNDS) : undefined;
+    const imageUrl = image ? `${publicBaseUrl}/uploads/avatars/${image.filename}` : undefined;
 
     await this.prisma.$transaction(async (tx) => {
       await tx.user.update({
@@ -194,6 +209,7 @@ export class TeachersService {
           ...(dto.mobile !== undefined && { phone: dto.mobile }),
           ...(dto.email !== undefined && { email: dto.email }),
           ...(passwordHash && { passwordHash }),
+          ...(imageUrl && { imageUrl }),
         },
       });
 
