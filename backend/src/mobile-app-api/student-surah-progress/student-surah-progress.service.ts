@@ -2165,6 +2165,21 @@ export class StudentSurahProgressService {
       ).map((m) => m.studentId);
       intersectAllowed(memberIds);
     }
+    // A Teacher caller is always restricted to their own halqa(s), even
+    // with no explicit halqa_id (the "All Halqas" filter option) — without
+    // this, the completed/"Recited" tab fell back to branch-wide with no
+    // halqa restriction at all whenever the caller didn't pass one, leaking
+    // other halqas' students into a teacher's "All" view.
+    const ownHalqaIds = await this.ownHalqaIdsIfTeacher(userId);
+    if (ownHalqaIds !== null) {
+      const ownMemberIds = (
+        await this.prisma.halqaStudent.findMany({
+          where: { halqaId: { in: ownHalqaIds }, removedAt: null },
+          select: { studentId: true },
+        })
+      ).map((m) => m.studentId);
+      intersectAllowed(ownMemberIds);
+    }
     if (query.student_id) {
       intersectAllowed([query.student_id]);
     }
