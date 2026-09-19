@@ -79,6 +79,7 @@ function ExamTypesTab() {
       type: 'select',
       required: true,
       editOnly: true, // Create DTO doesn't accept status — new exam types default to ACTIVE server-side
+      placeholder: 'Select status',
       options: [
         { label: 'Active', value: 'ACTIVE' },
         { label: 'Inactive', value: 'INACTIVE' },
@@ -390,6 +391,7 @@ function ExamsTab() {
       label: 'Status',
       type: 'select',
       required: true,
+      placeholder: 'Select status',
       options: [
         { label: 'Active', value: 'ACTIVE' },
         { label: 'Inactive', value: 'INACTIVE' },

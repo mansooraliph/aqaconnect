@@ -149,6 +149,7 @@ export function HalqasPage() {
       label: 'Status',
       type: 'select',
       required: true,
+      placeholder: 'Select status',
       options: [
         { label: 'Active', value: 'ACTIVE' },
         { label: 'Inactive', value: 'INACTIVE' },

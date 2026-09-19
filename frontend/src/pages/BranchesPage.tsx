@@ -33,6 +33,7 @@ const STATUS_FIELD: FieldDef = {
   label: 'Status',
   type: 'select',
   required: true,
+  placeholder: 'Select status',
   options: [
     { label: 'Active', value: 'true' },
     { label: 'Inactive', value: 'false' },

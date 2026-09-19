@@ -162,7 +162,7 @@ function LeaveRequestsTab({
   const [actionLoading, setActionLoading] = useState(false);
 
   const applyFields: FieldDef[] = [
-    { name: 'employeeId', label: 'Employee', type: 'select', required: true, options: employeeOptions },
+    { name: 'employeeId', label: 'Employee', type: 'select', required: true, placeholder: 'Select employee', options: employeeOptions },
     { name: 'leaveType', label: 'Leave type', type: 'text', required: true },
     { name: 'startDate', label: 'Start date', type: 'date', required: true },
     { name: 'endDate', label: 'End date', type: 'date', required: true },
@@ -371,8 +371,8 @@ function LeaveQuotasTab({
   const [submitting, setSubmitting] = useState(false);
 
   const createFields: FieldDef[] = [
-    { name: 'employeeId', label: 'Employee', type: 'select', required: true, options: employeeOptions },
-    { name: 'leaveTypeId', label: 'Leave type', type: 'select', required: true, options: leaveTypeOptions },
+    { name: 'employeeId', label: 'Employee', type: 'select', required: true, placeholder: 'Select employee', options: employeeOptions },
+    { name: 'leaveTypeId', label: 'Leave type', type: 'select', required: true, placeholder: 'Select leave type', options: leaveTypeOptions },
     { name: 'academicYearId', label: 'Academic year', type: 'select', options: academicYearOptions },
     { name: 'totalDays', label: 'Total days', type: 'number', required: true },
   ];
@@ -420,7 +420,7 @@ function LeaveQuotasTab({
   const [bulkSubmitting, setBulkSubmitting] = useState(false);
 
   const bulkFields: FieldDef[] = [
-    { name: 'leaveTypeId', label: 'Leave type', type: 'select', required: true, options: leaveTypeOptions },
+    { name: 'leaveTypeId', label: 'Leave type', type: 'select', required: true, placeholder: 'Select leave type', options: leaveTypeOptions },
     { name: 'academicYearId', label: 'Academic year', type: 'select', options: academicYearOptions },
     {
       name: 'totalDays',

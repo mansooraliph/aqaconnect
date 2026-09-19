@@ -74,7 +74,7 @@ export function SurahAyahPageLinesPage() {
   };
 
   const FIELDS: FieldDef[] = [
-    { name: 'surahId', label: 'Surah', type: 'select', required: true, options: surahOptions },
+    { name: 'surahId', label: 'Surah', type: 'select', required: true, placeholder: 'Select a surah', options: surahOptions },
     { name: 'ayahNumber', label: 'Ayah number', type: 'number', required: true },
     { name: 'juzNumber', label: 'Juz number', type: 'number' },
     { name: 'pageNumber', label: 'Page number', type: 'number', required: true },

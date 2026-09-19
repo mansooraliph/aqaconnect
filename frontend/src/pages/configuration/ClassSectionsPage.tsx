@@ -50,6 +50,7 @@ export function ClassSectionsPage() {
       label: 'Academic class',
       type: 'select',
       required: true,
+      placeholder: 'Select a class',
       options: (classesQuery.data ?? []).map((cls) => ({ label: cls.name, value: cls.id })),
     },
     {
@@ -57,6 +58,7 @@ export function ClassSectionsPage() {
       label: 'Academic section',
       type: 'select',
       required: true,
+      placeholder: 'Select a section',
       options: (sectionsQuery.data ?? []).map((section) => ({ label: section.name, value: section.id })),
     },
     { name: 'capacity', label: 'Capacity', type: 'number' },

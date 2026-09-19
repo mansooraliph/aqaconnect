@@ -185,7 +185,7 @@ function OrgUnitTree({ path, viewPermission, managePermission }: OrgUnitTreeProp
     .map((item) => ({ label: item.name, value: item.id }));
 
   const editFields: FieldDef[] = editing
-    ? [...FIELDS, { name: 'status', label: 'Status', type: 'select', required: true, options: [
+    ? [...FIELDS, { name: 'status', label: 'Status', type: 'select', required: true, placeholder: 'Select status', options: [
         { label: 'Active', value: 'ACTIVE' },
         { label: 'Inactive', value: 'INACTIVE' },
       ] }]

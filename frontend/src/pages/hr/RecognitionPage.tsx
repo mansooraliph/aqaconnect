@@ -123,7 +123,7 @@ function AppreciationsTab({
   const [submitting, setSubmitting] = useState(false);
 
   const fields: FieldDef[] = [
-    { name: 'employeeId', label: 'Employee', type: 'select', required: true, options: employeeOptions },
+    { name: 'employeeId', label: 'Employee', type: 'select', required: true, placeholder: 'Select employee', options: employeeOptions },
     { name: 'title', label: 'Title', type: 'text', required: true },
     { name: 'note', label: 'Note', type: 'textarea' },
   ];
@@ -212,7 +212,7 @@ function AwardsTab({
   const [savingId, setSavingId] = useState<string | null>(null);
 
   const fields: FieldDef[] = [
-    { name: 'employeeId', label: 'Employee', type: 'select', required: true, options: employeeOptions },
+    { name: 'employeeId', label: 'Employee', type: 'select', required: true, placeholder: 'Select employee', options: employeeOptions },
     { name: 'title', label: 'Title', type: 'text', required: true },
     { name: 'description', label: 'Description', type: 'textarea' },
   ];

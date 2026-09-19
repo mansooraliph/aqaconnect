@@ -99,12 +99,13 @@ export function EnrollmentsPage() {
   const [creating, setCreating] = useState(false);
 
   const createFields: FieldDef[] = [
-    { name: 'studentId', label: 'Student', type: 'select', required: true, options: studentOptions },
+    { name: 'studentId', label: 'Student', type: 'select', required: true, placeholder: 'Select student', options: studentOptions },
     {
       name: 'academicClassSectionYearId',
       label: 'Class section year',
       type: 'select',
       required: true,
+      placeholder: 'Select class section year',
       options: classSectionYearOptions,
     },
   ];

@@ -69,7 +69,7 @@ export function StudentLeavesPage() {
   const [applying, setApplying] = useState(false);
 
   const applyFields: FieldDef[] = [
-    { name: 'studentId', label: 'Student', type: 'select', required: true, options: studentOptions },
+    { name: 'studentId', label: 'Student', type: 'select', required: true, placeholder: 'Select student', options: studentOptions },
     { name: 'startDate', label: 'Start date', type: 'date', required: true },
     { name: 'endDate', label: 'End date', type: 'date', required: true },
     { name: 'reason', label: 'Reason', type: 'textarea', required: true },

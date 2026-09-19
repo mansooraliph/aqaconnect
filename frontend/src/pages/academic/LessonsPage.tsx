@@ -52,6 +52,7 @@ const EDIT_LESSON_FIELDS: FieldDef[] = [
     label: 'Status',
     type: 'select',
     required: true,
+    placeholder: 'Select status',
     options: [
       { label: 'Active', value: 'ACTIVE' },
       { label: 'Inactive', value: 'INACTIVE' },
