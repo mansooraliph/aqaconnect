@@ -104,7 +104,7 @@ export class StudentsController {
   @Get('admission-year-reports')
   async admissionYearReport(@Req() req: AuthedRequest, @Query() query: AdmissionYearReportQueryDto) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
-    return this.handle(() => this.service.admissionYearReport(branchId, query), null);
+    return this.handle(() => this.service.admissionYearReport(branchId, req.user.userId, query), null);
   }
 
   @Delete('destroy/:id')

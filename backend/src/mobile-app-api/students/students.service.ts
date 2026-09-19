@@ -4,6 +4,7 @@ import { randomBytes } from 'crypto';
 import { Gender, StudentExamOutcome, ProgressEntryGrade, ProgressEntryStatus, ProgressEntryType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { HifdhService } from '../../academic/hifdh/hifdh.service';
+import { MobileContextService } from '../common/mobile-context.service';
 import { CreateStudentDto } from './dto/create-student.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
 import { ClassSectionYearsQueryDto } from './dto/class-section-years-query.dto';
@@ -72,7 +73,26 @@ export class MobileStudentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly hifdh: HifdhService,
+    private readonly context: MobileContextService,
   ) {}
+
+  /**
+   * Mirrors StudentSurahProgressService's scoping: a Teacher caller must
+   * only ever see their own halqa's students in branch-wide reports.
+   * Returns null for non-Teacher callers (no restriction), or the
+   * (possibly empty) list of halqa ids the caller actually teaches.
+   */
+  private async ownHalqaIdsIfTeacher(userId: string): Promise<string[] | null> {
+    const isTeacherRole = await this.context.hasRole(userId, 'Teacher');
+    if (!isTeacherRole) return null;
+    const ownTeacher = await this.prisma.teacher.findUnique({ where: { userId } });
+    if (!ownTeacher) return [];
+    const halqas = await this.prisma.halqa.findMany({
+      where: { teacherId: ownTeacher.id },
+      select: { id: true },
+    });
+    return halqas.map((h) => h.id);
+  }
 
   private async nextStudentCode(branchId: string): Promise<string> {
     const count = await this.prisma.student.count({ where: { branchId } });
@@ -545,10 +565,20 @@ export class MobileStudentsService {
     };
   }
 
-  async admissionYearReport(branchId: string, query: AdmissionYearReportQueryDto) {
+  async admissionYearReport(branchId: string, userId: string, query: AdmissionYearReportQueryDto) {
+    // Mirrors the scoping already applied to the other branch-wide report
+    // endpoints: a Teacher caller only sees their own halqa's students,
+    // not every admission in the branch.
+    const ownHalqaIds = await this.ownHalqaIdsIfTeacher(userId);
+
     const students = await this.prisma.student.findMany({
       where: {
         branchId,
+        ...(ownHalqaIds !== null && {
+          halqaMemberships: {
+            some: { halqaId: { in: ownHalqaIds }, removedAt: null },
+          },
+        }),
         ...(query.year && {
           joiningDate: {
             gte: new Date(Date.UTC(Number(query.year), 0, 1)),
