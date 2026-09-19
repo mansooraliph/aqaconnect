@@ -274,7 +274,12 @@ export class MobileHalqasService {
   }
 
   async show(branchId: string, id: string) {
-    return this.requireHalqa(branchId, id);
+    const halqa = await this.requireHalqa(branchId, id);
+    // Unlike index() (which runs every row through formatHalqaListItem),
+    // this returns the raw Prisma row — student_count was never merged in,
+    // so the mobile detail screen always rendered 0 regardless of the
+    // real count.
+    return { ...halqa, student_count: await this.studentCount(halqa.id) };
   }
 
   async update(
