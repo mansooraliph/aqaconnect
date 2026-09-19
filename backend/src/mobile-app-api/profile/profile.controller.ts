@@ -19,6 +19,7 @@ import { extname } from 'path';
 import { mkdirSync } from 'fs';
 import { ProfileService } from './profile.service';
 import { EditProfileDto } from './dto/edit-profile.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { MobileContextService } from '../common/mobile-context.service';
 import { MobileValidationPipe } from '../common/mobile-validation.pipe';
 import { Reply } from '../common/reply';
@@ -62,7 +63,11 @@ export class ProfileController {
     FileInterceptor('image', {
       storage: diskStorage({
         destination: UPLOADS_DIR,
-        filename: (_req, file, cb) => cb(null, `${randomBytes(16).toString('hex')}${extname(file.originalname)}`),
+        filename: (_req, file, cb) =>
+          cb(
+            null,
+            `${randomBytes(16).toString('hex')}${extname(file.originalname)}`,
+          ),
       }),
       limits: { fileSize: 5 * 1024 * 1024 },
     }),
@@ -74,7 +79,24 @@ export class ProfileController {
   ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     const publicBaseUrl = `${req.protocol}://${req.get('host')}`;
-    const profile = await this.service.editProfile(branchId, req.user.userId, dto, image, publicBaseUrl);
+    const profile = await this.service.editProfile(
+      branchId,
+      req.user.userId,
+      dto,
+      image,
+      publicBaseUrl,
+    );
     return Reply.dataOnly({ error: false, data: profile });
+  }
+
+  @Post('change-password')
+  @RequirePermission('mobile_api.profile.edit')
+  @HttpCode(HttpStatus.OK)
+  async changePassword(
+    @Req() req: AuthedRequest,
+    @Body() dto: ChangePasswordDto,
+  ) {
+    await this.service.changePassword(req.user.userId, dto);
+    return Reply.success('Password changed successfully. Please log in again.');
   }
 }

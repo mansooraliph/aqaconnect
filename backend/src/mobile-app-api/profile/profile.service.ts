@@ -1,7 +1,16 @@
-import { ConflictException, ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { Gender } from '@prisma/client';
+import * as bcrypt from 'bcrypt';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EditProfileDto } from './dto/edit-profile.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
+
+const SALT_ROUNDS = 10;
 
 function splitName(name: string): { firstName: string; lastName?: string } {
   const [firstName, ...rest] = name.trim().split(/\s+/);
@@ -25,7 +34,9 @@ export class ProfileService {
     if (employee) {
       return {
         id: employee.user.id,
-        name: [employee.user.firstName, employee.user.lastName].filter(Boolean).join(' '),
+        name: [employee.user.firstName, employee.user.lastName]
+          .filter(Boolean)
+          .join(' '),
         email: employee.user.email,
         phone_number: employee.user.phone,
         image: employee.user.imageUrl,
@@ -64,7 +75,9 @@ export class ProfileService {
       };
     }
 
-    throw new ForbiddenException('No employee or student record linked to your account in this branch');
+    throw new ForbiddenException(
+      'No employee or student record linked to your account in this branch',
+    );
   }
 
   async editProfile(
@@ -74,19 +87,31 @@ export class ProfileService {
     image?: Express.Multer.File,
     publicBaseUrl?: string,
   ) {
-    const existingEmailOwner = await this.prisma.user.findUnique({ where: { email: dto.email } });
+    const existingEmailOwner = await this.prisma.user.findUnique({
+      where: { email: dto.email },
+    });
     if (existingEmailOwner && existingEmailOwner.id !== userId) {
       throw new ConflictException('That email is already in use.');
     }
 
-    const imageUrl = image ? `${publicBaseUrl}/uploads/avatars/${image.filename}` : undefined;
+    const imageUrl = image
+      ? `${publicBaseUrl}/uploads/avatars/${image.filename}`
+      : undefined;
 
-    const employee = await this.prisma.employee.findFirst({ where: { branchId, userId } });
+    const employee = await this.prisma.employee.findFirst({
+      where: { branchId, userId },
+    });
     if (employee) {
       const { firstName, lastName } = splitName(dto.name);
       await this.prisma.user.update({
         where: { id: userId },
-        data: { firstName, lastName, email: dto.email, phone: dto.phone_number, ...(imageUrl && { imageUrl }) },
+        data: {
+          firstName,
+          lastName,
+          email: dto.email,
+          phone: dto.phone_number,
+          ...(imageUrl && { imageUrl }),
+        },
       });
       await this.prisma.employee.update({
         where: { id: employee.id },
@@ -94,8 +119,12 @@ export class ProfileService {
           gender: toGender(dto.gender),
           address: dto.address,
           qualification: dto.qualification,
-          dateOfBirth: dto.date_of_birth ? new Date(dto.date_of_birth) : undefined,
-          dateOfJoining: dto.joining_date ? new Date(dto.joining_date) : undefined,
+          dateOfBirth: dto.date_of_birth
+            ? new Date(dto.date_of_birth)
+            : undefined,
+          dateOfJoining: dto.joining_date
+            ? new Date(dto.joining_date)
+            : undefined,
         },
       });
       return this.getProfile(branchId, userId);
@@ -105,7 +134,11 @@ export class ProfileService {
     if (student) {
       await this.prisma.user.update({
         where: { id: userId },
-        data: { email: dto.email, phone: dto.phone_number, ...(imageUrl && { imageUrl }) },
+        data: {
+          email: dto.email,
+          phone: dto.phone_number,
+          ...(imageUrl && { imageUrl }),
+        },
       });
       await this.prisma.student.update({
         where: { id: student.id },
@@ -114,13 +147,49 @@ export class ProfileService {
           gender: toGender(dto.gender),
           address: dto.address,
           qualification: dto.qualification,
-          dateOfBirth: dto.date_of_birth ? new Date(dto.date_of_birth) : undefined,
-          joiningDate: dto.joining_date ? new Date(dto.joining_date) : undefined,
+          dateOfBirth: dto.date_of_birth
+            ? new Date(dto.date_of_birth)
+            : undefined,
+          joiningDate: dto.joining_date
+            ? new Date(dto.joining_date)
+            : undefined,
         },
       });
       return this.getProfile(branchId, userId);
     }
 
-    throw new ForbiddenException('No employee or student record linked to your account in this branch');
+    throw new ForbiddenException(
+      'No employee or student record linked to your account in this branch',
+    );
+  }
+
+  /** Self-service change-password — verifies the caller's current password
+   *  before overwriting it, unlike the admin-initiated reset-password
+   *  endpoints (which set a new password directly with no such check). */
+  async changePassword(userId: string, dto: ChangePasswordDto) {
+    const user = await this.prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+    });
+    const matches = await bcrypt.compare(
+      dto.current_password,
+      user.passwordHash,
+    );
+    if (!matches) {
+      throw new UnauthorizedException('Current password is incorrect');
+    }
+
+    const passwordHash = await bcrypt.hash(dto.new_password, SALT_ROUNDS);
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: userId },
+        data: { passwordHash },
+      }),
+      // Force re-login everywhere else: a changed password shouldn't leave
+      // other sessions/devices still logged in on the old one.
+      this.prisma.refreshToken.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
   }
 }
