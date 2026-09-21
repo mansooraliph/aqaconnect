@@ -23,6 +23,7 @@ import { GetTodayProgressQueryDto } from './dto/get-today-progress-query.dto';
 import { GetStudentsTargetQueryDto } from './dto/get-students-target-query.dto';
 import { GetFullProgressReportQueryDto } from './dto/get-full-progress-report-query.dto';
 import { GetTopStudentsQueryDto } from './dto/get-top-students-query.dto';
+import { GetAttendanceReportQueryDto } from './dto/get-attendance-report-query.dto';
 import { UpdateProgressDto } from './dto/update-progress.dto';
 import { GetStudentSurahProgressQueryDto } from './dto/get-student-surah-progress-query.dto';
 
@@ -1707,7 +1708,8 @@ export class StudentSurahProgressService {
     return toAyah - fromAyah + 1;
   }
 
-  private async activeStudentsForReport(
+  /** Public: reused by other mobile-api services (e.g. exam report) that need the same teacher/halqa/student scoping. */
+  async activeStudentsForReport(
     branchId: string,
     halqaId: string | undefined,
     studentId: string | undefined,
@@ -2336,7 +2338,28 @@ export class StudentSurahProgressService {
       lesson_types: [...(entry.lesson_types as Map<string, unknown>).values()],
     }));
 
+    // Students on approved leave for this date range shouldn't be counted
+    // as "not recited" — they're a separate bucket entirely, since they
+    // weren't expected to recite in the first place.
+    const approvedLeaves = await this.prisma.studentLeave.findMany({
+      where: {
+        studentId: { in: students.map((s) => s.id) },
+        status: 'APPROVED',
+        leaveDate: {
+          gte: new Date(`${fromDate}T00:00:00.000Z`),
+          lte: new Date(`${toDate}T23:59:59.999Z`),
+        },
+      },
+    });
+    const leaveByStudent = new Map<string, (typeof approvedLeaves)[number]>();
+    for (const leave of approvedLeaves) {
+      if (!leaveByStudent.has(leave.studentId)) {
+        leaveByStudent.set(leave.studentId, leave);
+      }
+    }
+
     const pendingList: Record<string, unknown>[] = [];
+    const onLeaveList: Record<string, unknown>[] = [];
     const studentsWithAllTypesSet = new Set(
       types.length > 0 ? (studentsWithAllTypesInRange ?? []) : [],
     );
@@ -2359,7 +2382,17 @@ export class StudentSurahProgressService {
       } else {
         hasAllRequired = studentsWithAllTypesSet.has(student.id);
       }
-      if (!hasAllRequired) {
+      if (hasAllRequired) continue;
+
+      const leave = leaveByStudent.get(student.id);
+      if (leave) {
+        onLeaveList.push({
+          student: await getBasic(student.id),
+          leave_date: formatDateOnly(leave.leaveDate),
+          reason: leave.reason,
+          is_half_day: leave.isHalfDay,
+        });
+      } else {
         pendingList.push({
           student: await getBasic(student.id),
           is_inactive_recent: isInactiveRecent(student.id),
@@ -2383,6 +2416,132 @@ export class StudentSurahProgressService {
           students: completedList,
         },
         pending: { total_students: pendingList.length, students: pendingList },
+        on_leave: {
+          total_students: onLeaveList.length,
+          students: onLeaveList,
+        },
+      },
+    };
+  }
+
+  // ── getAttendanceReport ──────────────────────────────────────────────
+  /**
+   * There's no dedicated "mark attendance" flow for students in this app —
+   * the Attendance table stays essentially unused for them. So attendance
+   * here is derived the same way Recitation Attendance already frames it:
+   * a school day counts as Present if the student completed any lesson
+   * that day, Leave if they had an approved leave, otherwise Absent.
+   * Holidays are excluded from the day count entirely. Percentage is
+   * present / (present + absent) — leave days aren't held against them.
+   */
+  async getAttendanceReport(
+    branchId: string,
+    userId: string,
+    query: GetAttendanceReportQueryDto,
+  ) {
+    const { from_date: fromDate, to_date: toDate } = query;
+    const students = await this.activeStudentsForReport(
+      branchId,
+      query.halqa_id,
+      query.student_id,
+      userId,
+    );
+    const studentIds = students.map((s) => s.id);
+    const start = new Date(`${fromDate}T00:00:00.000Z`);
+    const end = new Date(`${toDate}T23:59:59.999Z`);
+
+    const [presentEntries, leaves, holidays] = await Promise.all([
+      this.prisma.studentSurahProgressEntry.findMany({
+        where: {
+          branchId,
+          studentId: { in: studentIds },
+          status: { in: ['COMPLETED', 'VERIFIED'] },
+          completedAt: { gte: start, lte: end },
+        },
+        select: { studentId: true, completedAt: true },
+      }),
+      this.prisma.studentLeave.findMany({
+        where: {
+          studentId: { in: studentIds },
+          status: 'APPROVED',
+          leaveDate: { gte: start, lte: end },
+        },
+      }),
+      this.prisma.calendarDay.findMany({
+        where: { branchId, isHoliday: true, date: { gte: start, lte: end } },
+      }),
+    ]);
+
+    const holidayDates = new Set(
+      holidays.map((h) => formatDateOnly(h.date)!),
+    );
+
+    const presentByStudent = new Map<string, Set<string>>();
+    for (const e of presentEntries) {
+      if (!e.completedAt) continue;
+      const d = formatDateOnly(e.completedAt)!;
+      if (holidayDates.has(d)) continue;
+      const set = presentByStudent.get(e.studentId) ?? new Set<string>();
+      set.add(d);
+      presentByStudent.set(e.studentId, set);
+    }
+
+    const leaveByStudent = new Map<string, Set<string>>();
+    for (const l of leaves) {
+      const d = formatDateOnly(l.leaveDate)!;
+      if (holidayDates.has(d)) continue;
+      const set = leaveByStudent.get(l.studentId) ?? new Set<string>();
+      set.add(d);
+      leaveByStudent.set(l.studentId, set);
+    }
+
+    const schoolDays: string[] = [];
+    for (
+      const d = new Date(start);
+      d <= end;
+      d.setUTCDate(d.getUTCDate() + 1)
+    ) {
+      const dateStr = formatDateOnly(d)!;
+      if (!holidayDates.has(dateStr)) schoolDays.push(dateStr);
+    }
+
+    const results = await Promise.all(
+      students.map(async (student) => {
+        const presentDates = presentByStudent.get(student.id) ?? new Set();
+        const leaveDates = leaveByStudent.get(student.id) ?? new Set();
+        let present = 0;
+        let absent = 0;
+        let leave = 0;
+        for (const day of schoolDays) {
+          if (presentDates.has(day)) present += 1;
+          else if (leaveDates.has(day)) leave += 1;
+          else absent += 1;
+        }
+        const denominator = present + absent;
+        const attendancePercentage =
+          denominator > 0
+            ? Math.round((present / denominator) * 10000) / 100
+            : 0;
+        return {
+          student: await this.formatStudentBasic(student),
+          total_present: present,
+          total_absent: absent,
+          total_leave: leave,
+          attendance_percentage: attendancePercentage,
+        };
+      }),
+    );
+
+    return {
+      status: 'success',
+      data: {
+        date_range: { from_date: fromDate, to_date: toDate },
+        total_school_days: schoolDays.length,
+        filters: {
+          halqa_id: query.halqa_id ?? null,
+          student_id: query.student_id ?? null,
+        },
+        students: results,
       },
     };
   }

@@ -19,6 +19,7 @@ import { AddStudentExamDto } from './dto/add-student-exam.dto';
 import { UpdateStudentExamDto } from './dto/update-student-exam.dto';
 import { AddStudentEventDto } from './dto/add-student-event.dto';
 import { UpdateStudentEventDto } from './dto/update-student-event.dto';
+import { GetExamReportQueryDto } from './dto/get-exam-report-query.dto';
 import { REPORTS_DIR } from './report-upload-paths';
 
 const SALT_ROUNDS = 10;
@@ -1380,6 +1381,72 @@ export class MobileStudentsService {
 
       doc.end();
     });
+  }
+
+  // ── getExamReport ─────────────────────────────────────────────────────
+  async getExamReport(
+    branchId: string,
+    userId: string,
+    query: GetExamReportQueryDto,
+  ) {
+    const students = await this.surahProgress.activeStudentsForReport(
+      branchId,
+      query.halqa_id,
+      query.student_id,
+      userId,
+    );
+    const studentIds = students.map((s) => s.id);
+    const studentById = new Map(students.map((s) => [s.id, s]));
+
+    const exams = await this.prisma.studentExam.findMany({
+      where: {
+        branchId,
+        studentId: { in: studentIds },
+        examDate: {
+          gte: new Date(`${query.from_date}T00:00:00.000Z`),
+          lte: new Date(`${query.to_date}T23:59:59.999Z`),
+        },
+      },
+      orderBy: { examDate: 'desc' },
+    });
+
+    const results = exams.map((e) => {
+      const student = studentById.get(e.studentId);
+      return {
+        id: e.id,
+        student: student
+          ? {
+              id: student.id,
+              name: student.name,
+              student_id: student.studentCode,
+            }
+          : { id: e.studentId },
+        exam_date: toDateOnly(e.examDate),
+        result: e.result ? EXAM_RESULT_DISPLAY[e.result] : null,
+        marks: e.marks,
+        remarks: e.remarks,
+      };
+    });
+
+    const passCount = results.filter((r) => r.result === 'Pass').length;
+    const failCount = results.filter((r) => r.result === 'fail').length;
+
+    return {
+      status: 'success',
+      data: {
+        date_range: { from_date: query.from_date, to_date: query.to_date },
+        filters: {
+          halqa_id: query.halqa_id ?? null,
+          student_id: query.student_id ?? null,
+        },
+        summary: {
+          total_exams: results.length,
+          pass_count: passCount,
+          fail_count: failCount,
+        },
+        exams: results,
+      },
+    };
   }
 }
 

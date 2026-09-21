@@ -32,6 +32,7 @@ import { AddStudentExamDto } from './dto/add-student-exam.dto';
 import { UpdateStudentExamDto } from './dto/update-student-exam.dto';
 import { AddStudentEventDto } from './dto/add-student-event.dto';
 import { UpdateStudentEventDto } from './dto/update-student-event.dto';
+import { GetExamReportQueryDto } from './dto/get-exam-report-query.dto';
 import { MobileContextService } from '../common/mobile-context.service';
 import { MobileValidationPipe } from '../common/mobile-validation.pipe';
 import { MobileApiLoggingInterceptor } from '../common/mobile-api-logging.interceptor';
@@ -139,6 +140,15 @@ export class StudentsController {
           publicBaseUrl,
         ),
       'Failed to generate activity report PDF',
+    );
+  }
+
+  @Get('exam-report')
+  async getExamReport(@Req() req: AuthedRequest, @Query() query: GetExamReportQueryDto) {
+    const branchId = await this.context.resolveBranchId(req.user.userId);
+    return this.handle(
+      () => this.service.getExamReport(branchId, req.user.userId, query),
+      'Failed to generate exam report',
     );
   }
 
