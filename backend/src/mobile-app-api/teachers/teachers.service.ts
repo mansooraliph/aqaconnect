@@ -76,6 +76,17 @@ export class TeachersService {
   }
 
   private async assertUsernameAvailable(username: string, excludeUserId?: string) {
+    // A blank username would pass this uniqueness check cleanly on the
+    // first attempt (nothing else has claimed '' yet) and get persisted,
+    // leaving the account unable to log in at all — this is a presence
+    // check the DTO should already enforce, but guard here too in case a
+    // future DTO regresses.
+    if (!username?.trim()) {
+      throw new UnprocessableEntityException({
+        status: 'error',
+        message: 'Username is required.',
+      });
+    }
     const existing = await this.prisma.user.findUnique({ where: { username } });
     if (existing && existing.id !== excludeUserId) {
       throw new UnprocessableEntityException({
