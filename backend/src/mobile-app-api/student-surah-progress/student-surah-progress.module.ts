@@ -9,5 +9,6 @@ import { NotificationsModule } from '../../notifications/notifications.module';
   imports: [MobileAppApiCommonModule, RbacModule, NotificationsModule],
   controllers: [StudentSurahProgressController],
   providers: [StudentSurahProgressService],
+  exports: [StudentSurahProgressService],
 })
 export class StudentSurahProgressModule {}

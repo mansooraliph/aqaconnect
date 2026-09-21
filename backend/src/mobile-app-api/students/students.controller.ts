@@ -126,6 +126,22 @@ export class StudentsController {
     );
   }
 
+  @Get('activity-report/pdf')
+  async getStudentActivityReportPdf(@Req() req: AuthedRequest, @Query() query: ActivityQueryDto) {
+    const branchId = await this.context.resolveBranchId(req.user.userId);
+    const studentId = await this.resolveActivityReportStudentId(req.user.userId, query.student_id);
+    const publicBaseUrl = `${req.protocol}://${req.get('host')}`;
+    return this.handle(
+      () =>
+        this.service.getStudentActivityReportPdf(
+          branchId,
+          { ...query, student_id: studentId },
+          publicBaseUrl,
+        ),
+      'Failed to generate activity report PDF',
+    );
+  }
+
   /**
    * Self-service safety: a Student caller is always resolved to their own
    * linked Student record, regardless of what (or whether any) student_id

@@ -1,10 +1,14 @@
 import { BadRequestException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
+import { mkdirSync, createWriteStream } from 'fs';
+import { join } from 'path';
+import PDFDocument from 'pdfkit';
 import { Gender, StudentExamOutcome, ProgressEntryGrade, ProgressEntryStatus, ProgressEntryType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { HifdhService } from '../../academic/hifdh/hifdh.service';
 import { MobileContextService } from '../common/mobile-context.service';
+import { StudentSurahProgressService } from '../student-surah-progress/student-surah-progress.service';
 import { CreateStudentDto } from './dto/create-student.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
 import { ClassSectionYearsQueryDto } from './dto/class-section-years-query.dto';
@@ -15,6 +19,7 @@ import { AddStudentExamDto } from './dto/add-student-exam.dto';
 import { UpdateStudentExamDto } from './dto/update-student-exam.dto';
 import { AddStudentEventDto } from './dto/add-student-event.dto';
 import { UpdateStudentEventDto } from './dto/update-student-event.dto';
+import { REPORTS_DIR } from './report-upload-paths';
 
 const SALT_ROUNDS = 10;
 
@@ -74,6 +79,7 @@ export class MobileStudentsService {
     private readonly prisma: PrismaService,
     private readonly hifdh: HifdhService,
     private readonly context: MobileContextService,
+    private readonly surahProgress: StudentSurahProgressService,
   ) {}
 
   /**
@@ -1245,6 +1251,134 @@ export class MobileStudentsService {
     return this.buildActivityTimeline(branchId, query.student_id, query, {
       includeIdAndType: true,
       includeExams: true,
+    });
+  }
+
+  // ── getStudentActivityReportPdf ──────────────────────────────────────
+  /**
+   * Downloadable PDF summary: overall (line-weighted) progress plus the
+   * day-by-day activity log for a date range. No explicit range → defaults
+   * to the branch's current academic year (not "since joining", unlike the
+   * plain activity-report endpoint) so "no range selected" reads as "this
+   * year's report".
+   */
+  async getStudentActivityReportPdf(
+    branchId: string,
+    query: ActivityQueryDto & { student_id: string },
+    publicBaseUrl: string,
+  ) {
+    let effectiveQuery = query;
+    if (!query.start_date && !query.end_date && !query.year && !query.month) {
+      const currentYear = await this.prisma.academicYear.findFirst({
+        where: { branchId, isCurrent: true },
+      });
+      if (currentYear) {
+        effectiveQuery = {
+          ...query,
+          start_date: toDateOnly(currentYear.startDate),
+          end_date: toDateOnly(currentYear.endDate),
+        };
+      }
+    }
+
+    const [timeline, progress] = await Promise.all([
+      this.buildActivityTimeline(branchId, query.student_id, effectiveQuery, {
+        includeIdAndType: false,
+        includeExams: true,
+      }),
+      this.surahProgress.getSurahProgressList(branchId, query.student_id),
+    ]);
+
+    mkdirSync(REPORTS_DIR, { recursive: true });
+    const fileName = `${query.student_id}-${randomBytes(6).toString('hex')}.pdf`;
+    const filePath = join(REPORTS_DIR, fileName);
+    await this.renderActivityReportPdf(
+      filePath,
+      timeline.data,
+      progress.data.statistics,
+    );
+
+    return {
+      status: 'success',
+      data: {
+        url: `${publicBaseUrl}/uploads/reports/${fileName}`,
+        from_date: timeline.data.date_range.start,
+        to_date: timeline.data.date_range.end,
+      },
+    };
+  }
+
+  private renderActivityReportPdf(
+    filePath: string,
+    timelineData: {
+      student: { name: string; student_id: string };
+      date_range: { start: string | null; end: string | null };
+      activities: {
+        date: string;
+        activities: Record<string, unknown>[] | undefined;
+      }[];
+    },
+    statistics: Record<string, unknown>,
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ margin: 40 });
+      const stream = createWriteStream(filePath);
+      doc.pipe(stream);
+      stream.on('finish', resolve);
+      stream.on('error', reject);
+
+      doc.fontSize(18).fillColor('#1B5E20').text('Student Activity Report', {
+        align: 'center',
+      });
+      doc.moveDown(0.5);
+      doc
+        .fontSize(11)
+        .fillColor('#333')
+        .text(`Student: ${timelineData.student.name}`)
+        .text(`Student ID: ${timelineData.student.student_id}`)
+        .text(
+          `Period: ${timelineData.date_range.start ?? '—'} to ${timelineData.date_range.end ?? '—'}`,
+        );
+      doc.moveDown();
+
+      doc
+        .fontSize(13)
+        .fillColor('#000')
+        .text('Overall Progress', { underline: true });
+      doc.moveDown(0.3);
+      doc
+        .fontSize(11)
+        .fillColor('#333')
+        .text(`Overall progress: ${statistics.overall_progress_percentage}%`)
+        .text(
+          `Surahs — Completed: ${statistics.completed_surahs}, In Progress: ${statistics.in_progress_surahs}, Not Started: ${statistics.not_started_surahs} (Total tracked: ${statistics.total_surahs})`,
+        );
+      doc.moveDown();
+
+      doc
+        .fontSize(13)
+        .fillColor('#000')
+        .text('Activity Log', { underline: true });
+      doc.moveDown(0.3);
+
+      if (timelineData.activities.length === 0) {
+        doc
+          .fontSize(11)
+          .fillColor('#777')
+          .text('No activity recorded in this period.');
+      }
+      for (const day of timelineData.activities) {
+        doc.fontSize(12).fillColor('#1B5E20').text(day.date);
+        for (const act of day.activities ?? []) {
+          doc
+            .fontSize(10)
+            .fillColor('#444')
+            .text(`  •  ${(act as { description?: string }).description ?? ''}`);
+        }
+        doc.moveDown(0.4);
+      }
+
+      doc.end();
     });
   }
 }
