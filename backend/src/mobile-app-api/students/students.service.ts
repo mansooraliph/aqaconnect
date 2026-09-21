@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
-import { mkdirSync, createWriteStream } from 'fs';
+import { mkdirSync, createWriteStream, existsSync } from 'fs';
 import { join } from 'path';
 import PDFDocument from 'pdfkit';
 import { Gender, StudentExamOutcome, ProgressEntryGrade, ProgressEntryStatus, ProgressEntryType } from '@prisma/client';
@@ -23,6 +23,12 @@ import { GetExamReportQueryDto } from './dto/get-exam-report-query.dto';
 import { REPORTS_DIR } from './report-upload-paths';
 
 const SALT_ROUNDS = 10;
+
+// Bundled fallback used in the report header when a branch hasn't uploaded
+// its own logo via Branch Settings.
+const DEFAULT_LOGO_PATH = join(process.cwd(), 'assets', 'aqa-logo.jpg');
+const BRAND_COLOR = '#1B5E20';
+const BRAND_COLOR_LIGHT = '#E8F5E9';
 
 const LESSON_TYPE_LABEL: Record<ProgressEntryType, string> = {
   NEW_LESSON: 'New Lesson',
@@ -1282,22 +1288,51 @@ export class MobileStudentsService {
       }
     }
 
-    const [timeline, progress] = await Promise.all([
+    const [timeline, progress, branch, branchSettings, studentDetails] = await Promise.all([
       this.buildActivityTimeline(branchId, query.student_id, effectiveQuery, {
         includeIdAndType: false,
         includeExams: true,
       }),
       this.surahProgress.getSurahProgressList(branchId, query.student_id),
+      this.prisma.branch.findUnique({ where: { id: branchId } }),
+      this.prisma.branchSettings.findUnique({ where: { branchId } }),
+      this.getStudentDetails(branchId, query.student_id),
     ]);
 
     mkdirSync(REPORTS_DIR, { recursive: true });
     const fileName = `${query.student_id}-${randomBytes(6).toString('hex')}.pdf`;
     const filePath = join(REPORTS_DIR, fileName);
-    await this.renderActivityReportPdf(
-      filePath,
-      timeline.data,
-      progress.data.statistics,
-    );
+
+    const academyName = branchSettings?.displayName || branch?.name || 'Academy';
+    const logoPath = this.resolveReportLogoPath(branchSettings?.logoUrl);
+    // getStudentDetails' shape isn't formally typed (built from ad-hoc object
+    // literals) — read it loosely rather than fighting inferred field types.
+    const details = studentDetails.data as {
+      student: { gender: string | null };
+      student_details: { guardian_name: string | null; father_name: string | null; joining_date: string | null };
+      halqa: { name?: string; teacher?: { name?: string } } | null;
+      enrollment: { academic_class?: { name?: string }; academic_section?: { name?: string } } | null;
+    };
+
+    await this.renderActivityReportPdf(filePath, {
+      academyName,
+      logoPath,
+      generatedAt: new Date(),
+      student: {
+        name: timeline.data.student.name,
+        student_id: timeline.data.student.student_id,
+        gender: details.student.gender,
+        guardian_name: details.student_details.guardian_name ?? details.student_details.father_name,
+        joining_date: details.student_details.joining_date,
+        halqa_name: details.halqa?.name ?? null,
+        teacher_name: details.halqa?.teacher?.name ?? null,
+        academic_class: details.enrollment?.academic_class?.name ?? null,
+        academic_section: details.enrollment?.academic_section?.name ?? null,
+      },
+      dateRange: timeline.data.date_range,
+      activities: timeline.data.activities,
+      statistics: progress.data.statistics,
+    });
 
     return {
       status: 'success',
@@ -1309,78 +1344,199 @@ export class MobileStudentsService {
     };
   }
 
+  /** Local-disk logo path for the report header, or null to fall back to a text-only header. */
+  private resolveReportLogoPath(logoUrl: string | null | undefined): string | null {
+    if (logoUrl && !/^https?:\/\//i.test(logoUrl)) {
+      const candidate = join(process.cwd(), logoUrl.replace(/^\/+/, ''));
+      if (existsSync(candidate)) return candidate;
+    }
+    return existsSync(DEFAULT_LOGO_PATH) ? DEFAULT_LOGO_PATH : null;
+  }
+
   private renderActivityReportPdf(
     filePath: string,
-    timelineData: {
-      student: { name: string; student_id: string };
-      date_range: { start: string | null; end: string | null };
-      activities: {
-        date: string;
-        activities: Record<string, unknown>[] | undefined;
-      }[];
+    report: {
+      academyName: string;
+      logoPath: string | null;
+      generatedAt: Date;
+      student: {
+        name: string;
+        student_id: string;
+        gender: string | null;
+        guardian_name: string | null;
+        joining_date: string | null;
+        halqa_name: string | null;
+        teacher_name: string | null;
+        academic_class: string | null;
+        academic_section: string | null;
+      };
+      dateRange: { start: string | null; end: string | null };
+      activities: { date: string; activities: Record<string, unknown>[] | undefined }[];
+      statistics: Record<string, unknown>;
     },
-    statistics: Record<string, unknown>,
   ): Promise<void> {
     return new Promise((resolve, reject) => {
-      const doc = new PDFDocument({ margin: 40 });
+      const doc = new PDFDocument({ margin: 0, bufferPages: true, size: 'A4' });
       const stream = createWriteStream(filePath);
       doc.pipe(stream);
       stream.on('finish', resolve);
       stream.on('error', reject);
 
-      doc.fontSize(18).fillColor('#1B5E20').text('Student Activity Report', {
-        align: 'center',
-      });
-      doc.moveDown(0.5);
-      doc
-        .fontSize(11)
-        .fillColor('#333')
-        .text(`Student: ${timelineData.student.name}`)
-        .text(`Student ID: ${timelineData.student.student_id}`)
-        .text(
-          `Period: ${timelineData.date_range.start ?? '—'} to ${timelineData.date_range.end ?? '—'}`,
-        );
-      doc.moveDown();
+      const pageWidth = doc.page.width;
+      const margin = 40;
+      const contentWidth = pageWidth - margin * 2;
 
-      doc
-        .fontSize(13)
-        .fillColor('#000')
-        .text('Overall Progress', { underline: true });
-      doc.moveDown(0.3);
-      doc
-        .fontSize(11)
-        .fillColor('#333')
-        .text(`Overall progress: ${statistics.overall_progress_percentage}%`)
-        .text(
-          `Surahs — Completed: ${statistics.completed_surahs}, In Progress: ${statistics.in_progress_surahs}, Not Started: ${statistics.not_started_surahs} (Total tracked: ${statistics.total_surahs})`,
-        );
-      doc.moveDown();
+      // ── Header band ──────────────────────────────────────────────────
+      const headerHeight = report.logoPath ? 110 : 90;
+      doc.rect(0, 0, pageWidth, headerHeight).fill(BRAND_COLOR);
 
-      doc
-        .fontSize(13)
-        .fillColor('#000')
-        .text('Activity Log', { underline: true });
-      doc.moveDown(0.3);
-
-      if (timelineData.activities.length === 0) {
-        doc
-          .fontSize(11)
-          .fillColor('#777')
-          .text('No activity recorded in this period.');
-      }
-      for (const day of timelineData.activities) {
-        doc.fontSize(12).fillColor('#1B5E20').text(day.date);
-        for (const act of day.activities ?? []) {
-          doc
-            .fontSize(10)
-            .fillColor('#444')
-            .text(`  •  ${(act as { description?: string }).description ?? ''}`);
+      let textStartY = 24;
+      if (report.logoPath) {
+        try {
+          doc.image(report.logoPath, pageWidth / 2 - 28, 14, { width: 56, height: 56 });
+          textStartY = 74;
+        } catch {
+          // Corrupt/unreadable logo file — fall back to a text-only header.
         }
+      }
+      doc
+        .fillColor('#FFFFFF')
+        .fontSize(20)
+        .text(report.academyName, margin, textStartY, { align: 'center', width: contentWidth });
+      doc
+        .fillColor('#DCEDC8')
+        .fontSize(11)
+        .text('Student Progress Report', margin, textStartY + 24, { align: 'center', width: contentWidth });
+
+      doc.y = headerHeight + 24;
+
+      // ── Student details card ────────────────────────────────────────
+      const cardTop = doc.y;
+      const rows: [string, string][] = [
+        ['Student Name', report.student.name],
+        ['Student ID', report.student.student_id],
+        ['Halqa', report.student.halqa_name ?? '—'],
+        ['Teacher', report.student.teacher_name ?? '—'],
+        ['Class', [report.student.academic_class, report.student.academic_section].filter(Boolean).join(' - ') || '—'],
+        ['Gender', report.student.gender ?? '—'],
+        ["Guardian's Name", report.student.guardian_name ?? '—'],
+        ['Joining Date', report.student.joining_date ?? '—'],
+      ];
+      const colWidth = contentWidth / 2;
+      const rowHeight = 22;
+      const cardHeight = Math.ceil(rows.length / 2) * rowHeight + 24;
+      doc.roundedRect(margin, cardTop, contentWidth, cardHeight, 6).fillAndStroke('#FAFAFA', '#E0E0E0');
+
+      rows.forEach(([label, value], i) => {
+        const col = i % 2;
+        const row = Math.floor(i / 2);
+        const x = margin + 16 + col * colWidth;
+        const y = cardTop + 14 + row * rowHeight;
+        doc.fontSize(8.5).fillColor('#888').text(label.toUpperCase(), x, y);
+        doc.fontSize(11).fillColor('#222').text(value, x, y + 11, { width: colWidth - 24 });
+      });
+      doc.y = cardTop + cardHeight + 16;
+
+      doc
+        .fontSize(9.5)
+        .fillColor('#666')
+        .text(`Report Period: ${report.dateRange.start ?? '—'}  to  ${report.dateRange.end ?? '—'}`, margin, doc.y, {
+          width: contentWidth,
+          align: 'center',
+        });
+      doc.moveDown(1.2);
+
+      // ── Overall progress ─────────────────────────────────────────────
+      this.sectionHeading(doc, 'Overall Progress', margin, contentWidth);
+
+      const stats = report.statistics as {
+        overall_progress_percentage?: number;
+        completed_surahs?: number;
+        in_progress_surahs?: number;
+        not_started_surahs?: number;
+        total_surahs?: number;
+      };
+      const pct = Math.max(0, Math.min(100, Number(stats.overall_progress_percentage ?? 0)));
+
+      const barY = doc.y + 4;
+      const barHeight = 14;
+      doc.roundedRect(margin, barY, contentWidth, barHeight, 7).fill('#E0E0E0');
+      if (pct > 0) {
+        doc.roundedRect(margin, barY, contentWidth * (pct / 100), barHeight, 7).fill(BRAND_COLOR);
+      }
+      doc
+        .fontSize(9)
+        .fillColor(pct > 50 ? '#FFFFFF' : '#333')
+        .text(`${pct}%`, margin, barY + 3, { width: contentWidth, align: 'center' });
+      doc.y = barY + barHeight + 14;
+
+      const chipData: [string, string | number][] = [
+        ['Completed', stats.completed_surahs ?? 0],
+        ['In Progress', stats.in_progress_surahs ?? 0],
+        ['Not Started', stats.not_started_surahs ?? 0],
+        ['Total Tracked', stats.total_surahs ?? 0],
+      ];
+      const chipWidth = contentWidth / chipData.length;
+      const chipY = doc.y;
+      chipData.forEach(([label, value], i) => {
+        const x = margin + i * chipWidth;
+        doc.roundedRect(x + 4, chipY, chipWidth - 8, 44, 5).fillAndStroke(BRAND_COLOR_LIGHT, '#C8E6C9');
+        doc.fontSize(15).fillColor(BRAND_COLOR).text(String(value), x + 4, chipY + 8, { width: chipWidth - 8, align: 'center' });
+        doc.fontSize(8).fillColor('#555').text(label, x + 4, chipY + 27, { width: chipWidth - 8, align: 'center' });
+      });
+      doc.y = chipY + 44 + 20;
+
+      // ── Activity log ─────────────────────────────────────────────────
+      this.sectionHeading(doc, 'Activity Log', margin, contentWidth);
+      doc.moveDown(0.3);
+
+      if (report.activities.length === 0) {
+        doc.fontSize(10.5).fillColor('#888').text('No activity recorded in this period.', margin);
+      }
+      for (const day of report.activities) {
+        if (doc.y > doc.page.height - 100) doc.addPage();
+
+        doc.fontSize(11).fillColor(BRAND_COLOR).text(day.date, margin, doc.y);
+        const lineY = doc.y + 2;
+        doc.moveTo(margin, lineY).lineTo(pageWidth - margin, lineY).strokeColor('#E0E0E0').lineWidth(1).stroke();
         doc.moveDown(0.4);
+
+        for (const act of day.activities ?? []) {
+          if (doc.y > doc.page.height - 60) doc.addPage();
+          doc
+            .fontSize(9.5)
+            .fillColor('#444')
+            .text(`•  ${(act as { description?: string }).description ?? ''}`, margin + 10, doc.y, {
+              width: contentWidth - 10,
+            });
+        }
+        doc.moveDown(0.6);
+      }
+
+      // ── Footer on every page ────────────────────────────────────────
+      const range = doc.bufferedPageRange();
+      for (let i = range.start; i < range.start + range.count; i++) {
+        doc.switchToPage(i);
+        doc
+          .fontSize(8)
+          .fillColor('#999')
+          .text(
+            `Generated on ${report.generatedAt.toLocaleString()}  •  Page ${i + 1} of ${range.count}`,
+            margin,
+            doc.page.height - 30,
+            { width: contentWidth, align: 'center' },
+          );
       }
 
       doc.end();
     });
+  }
+
+  private sectionHeading(doc: PDFKit.PDFDocument, title: string, margin: number, contentWidth: number): void {
+    doc.fontSize(13).fillColor('#000').text(title, margin, doc.y);
+    const y = doc.y + 2;
+    doc.moveTo(margin, y).lineTo(margin + contentWidth, y).strokeColor(BRAND_COLOR).lineWidth(1.5).stroke();
+    doc.moveDown(0.5);
   }
 
   // ── getExamReport ─────────────────────────────────────────────────────
