@@ -108,4 +108,13 @@ export class NotificationsService {
     const userIds = students.map((student) => student.userId).filter((id): id is string => id !== null);
     return this.notifyUsers(branchId, userIds, payload);
   }
+
+  /** Notifies every active teacher in the branch. */
+  async notifyBranchTeachers(branchId: string, payload: NotifyPayload) {
+    const teachers = await this.prisma.teacher.findMany({
+      where: { branchId, status: 'ACTIVE' },
+      select: { userId: true },
+    });
+    return this.notifyUsers(branchId, teachers.map((teacher) => teacher.userId), payload);
+  }
 }

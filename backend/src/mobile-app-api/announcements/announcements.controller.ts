@@ -1,6 +1,8 @@
-import { Controller, Get, Req, UseGuards, UseInterceptors, UsePipes } from '@nestjs/common';
+import { Body, Controller, Get, Post, Req, UseGuards, UseInterceptors, UsePipes } from '@nestjs/common';
 import { Request } from 'express';
 import { PrismaService } from '../../prisma/prisma.service';
+import { MobileAnnouncementsService } from './announcements.service';
+import { CreateAnnouncementDto } from './dto/create-announcement.dto';
 import { MobileContextService } from '../common/mobile-context.service';
 import { MobileValidationPipe } from '../common/mobile-validation.pipe';
 import { Reply } from '../common/reply';
@@ -20,6 +22,7 @@ interface AuthedRequest extends Request {
 export class MobileAnnouncementsController {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly service: MobileAnnouncementsService,
     private readonly context: MobileContextService,
   ) {}
 
@@ -31,5 +34,13 @@ export class MobileAnnouncementsController {
       orderBy: { publishedAt: 'desc' },
     });
     return Reply.dataOnly({ error: false, data });
+  }
+
+  @Post('store')
+  @RequirePermission('mobile_api.announcements.manage')
+  async store(@Req() req: AuthedRequest, @Body() dto: CreateAnnouncementDto) {
+    const branchId = await this.context.resolveBranchId(req.user.userId);
+    const announcement = await this.service.create(branchId, req.user.userId, dto);
+    return Reply.successWithData('Announcement created successfully.', { announcement });
   }
 }

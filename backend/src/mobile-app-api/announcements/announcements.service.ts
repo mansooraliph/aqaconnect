@@ -1,32 +1,24 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { NotificationType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { CreateAnnouncementDto } from './dto/create-announcement.dto';
 
 @Injectable()
-export class AnnouncementsService {
+export class MobileAnnouncementsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationsService,
   ) {}
 
-  list(branchId: string) {
-    return this.prisma.announcement.findMany({
-      where: { branchId },
-      orderBy: { publishedAt: 'desc' },
-    });
-  }
-
   async create(branchId: string, createdById: string, dto: CreateAnnouncementDto) {
-    const audience = dto.audience ?? 'ALL';
     const announcement = await this.prisma.announcement.create({
       data: {
         branchId,
         title: dto.title,
         description: dto.description,
         icon: dto.icon,
-        audience,
+        audience: dto.audience,
         createdById,
       },
     });
@@ -38,21 +30,13 @@ export class AnnouncementsService {
       data: { announcementId: announcement.id },
     };
 
-    if (audience === 'ALL' || audience === 'TEACHERS') {
+    if (dto.audience === 'ALL' || dto.audience === 'TEACHERS') {
       await this.notifications.notifyBranchTeachers(branchId, payload);
     }
-    if (audience === 'ALL' || audience === 'STUDENTS') {
+    if (dto.audience === 'ALL' || dto.audience === 'STUDENTS') {
       await this.notifications.notifyBranchStudents(branchId, payload);
     }
 
     return announcement;
-  }
-
-  async delete(branchId: string, id: string) {
-    const existing = await this.prisma.announcement.findFirst({ where: { id, branchId } });
-    if (!existing) {
-      throw new NotFoundException('Announcement not found');
-    }
-    await this.prisma.announcement.delete({ where: { id } });
   }
 }

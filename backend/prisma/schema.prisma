@@ -780,22 +780,27 @@ model Holiday {
   @@index([branchId])
 }
 
-// Read-only feed surfaced on the mobile teacher-dashboard. No admin CRUD UI
-// yet — rows are seeded/managed directly until that's actually needed.
 model Announcement {
-  id          String   @id @default(cuid())
+  id          String               @id @default(cuid())
   branchId    String
-  branch      Branch   @relation(fields: [branchId], references: [id], onDelete: Cascade)
+  branch      Branch               @relation(fields: [branchId], references: [id], onDelete: Cascade)
   title       String
   description String?
   icon        String?
-  publishedAt DateTime @default(now())
+  audience    AnnouncementAudience @default(ALL)
+  publishedAt DateTime             @default(now())
   createdById String?
-  createdBy   User?    @relation("AnnouncementCreatedBy", fields: [createdById], references: [id])
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdBy   User?                @relation("AnnouncementCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
 
   @@index([branchId, publishedAt])
+}
+
+enum AnnouncementAudience {
+  ALL
+  TEACHERS
+  STUDENTS
 }
 
 model Appreciation {

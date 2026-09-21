@@ -19,7 +19,6 @@ export class CreateAnnouncementDto {
   @IsString()
   icon?: string;
 
-  @IsOptional()
   @IsEnum(AnnouncementAudienceDto)
-  audience?: AnnouncementAudienceDto;
+  audience: AnnouncementAudienceDto;
 }

@@ -43,6 +43,7 @@ const PERMISSIONS: { key: string; module: string; description: string }[] = [
   { key: 'mobile_api.leaves.approve', module: 'mobile_api', description: 'Mobile app: approve/reject staff leave requests' },
   { key: 'mobile_api.notifications.access', module: 'mobile_api', description: 'Mobile app: device-token registration and in-app notification inbox' },
   { key: 'mobile_api.announcements.access', module: 'mobile_api', description: 'Mobile app: read-only branch announcements feed' },
+  { key: 'mobile_api.announcements.manage', module: 'mobile_api', description: 'Mobile app: create branch announcements' },
 
   // Communication
   { key: 'communication.announcements.view', module: 'communication', description: 'View announcements' },
@@ -262,6 +263,8 @@ const ROLES: {
       'mobile_api.attendance.approve',
       'mobile_api.leaves.access',
       'mobile_api.leaves.approve',
+      'mobile_api.announcements.access',
+      'mobile_api.announcements.manage',
     ],
   },
   {
