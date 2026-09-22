@@ -5,9 +5,43 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { GenerateSchedulesDto } from './dto/generate-schedules.dto';
 import { RescheduleDto } from './dto/reschedule.dto';
 
+function formatDateOnly(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
 @Injectable()
 export class HifdhService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Returns the dates of the first `count` non-holiday days starting at (and
+   * including) `startDate`, skipping any date marked `CalendarDay.isHoliday`
+   * for the branch — the same "holiday" definition getAttendanceReport uses.
+   * A target schedule's dayNumber then indexes into this array (dayNumber 1
+   * = the 1st working day) instead of being added as a raw calendar offset,
+   * so marked holidays no longer land a lesson on a day off.
+   */
+  private async buildWorkingDayDates(branchId: string, startDate: Date, count: number): Promise<Date[]> {
+    const holidayRows = await this.prisma.calendarDay.findMany({
+      where: { branchId, isHoliday: true, date: { gte: startDate } },
+      select: { date: true },
+    });
+    const holidayDates = new Set(holidayRows.map((h) => formatDateOnly(h.date)));
+
+    const dates: Date[] = [];
+    const cursor = new Date(startDate);
+    const maxIterations = count + holidayDates.size + 366; // generous safety net, not a real bound
+    for (let i = 0; dates.length < count && i < maxIterations; i++) {
+      if (!holidayDates.has(formatDateOnly(cursor))) {
+        dates.push(new Date(cursor));
+      }
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    if (dates.length < count) {
+      throw new BadRequestException('Could not resolve schedule dates — check the branch calendar for gaps');
+    }
+    return dates;
+  }
 
   /** Resolves the caller's own Teacher.id from their userId, if they have a Teacher profile. */
   async resolveOwnTeacherId(userId: string): Promise<string | undefined> {
@@ -119,6 +153,8 @@ export class HifdhService {
     }
 
     const startDate = new Date(dto.startDate);
+    const maxDayNumber = Math.max(...targets.map((t) => t.dayNumber));
+    const workingDayDates = await this.buildWorkingDayDates(branchId, startDate, maxDayNumber);
     const created: Prisma.SurahHifdhStudentScheduleGetPayload<Record<string, never>>[] = [];
 
     await this.prisma.$transaction(async (tx) => {
@@ -132,8 +168,7 @@ export class HifdhService {
         const scheduleNo = (maxScheduleNo._max.scheduleNo ?? 0) + 1;
 
         for (const target of targets) {
-          const scheduledDate = new Date(startDate);
-          scheduledDate.setUTCDate(scheduledDate.getUTCDate() + (target.dayNumber - 1));
+          const scheduledDate = workingDayDates[target.dayNumber - 1];
 
           const existing = await tx.surahHifdhStudentSchedule.findFirst({
             where: { studentId: student.id, surahTargetId: target.id },
@@ -177,12 +212,12 @@ export class HifdhService {
    * triggered automatically when a new student is assigned to a Halqa at
    * creation time (see StudentsService.create / AdmissionsService.approve),
    * not called directly from a controller. Only HIFDH-stage target rows are
-   * used (legacy hardcodes `stage = 'Hifdh'`). scheduledDate is literally
-   * `startDate + (dayNumber - 1) days` with no holiday-skipping applied —
-   * legacy computes a holiday-aware date via getNextWorkingDay() but never
-   * actually uses it for the persisted row, so this replicates the real
-   * (buggy) behavior, not the apparent intent. Never throws: a failure here
-   * must not block student creation, matching legacy's own try/catch.
+   * used (legacy hardcodes `stage = 'Hifdh'`). scheduledDate skips any date
+   * marked `CalendarDay.isHoliday` for the branch (see buildWorkingDayDates)
+   * — legacy computed a holiday-aware date via getNextWorkingDay() but never
+   * actually applied it to the persisted row; this fixes that rather than
+   * replicating the bug. Never throws: a failure here must not block student
+   * creation, matching legacy's own try/catch.
    */
   async generateInitialSchedulesForStudent(
     studentId: string,
@@ -199,6 +234,8 @@ export class HifdhService {
 
       const base = startDate ? new Date(startDate) : new Date();
       const baseUtc = new Date(Date.UTC(base.getFullYear(), base.getMonth(), base.getDate()));
+      const maxDayNumber = Math.max(...targets.map((t) => t.dayNumber));
+      const workingDayDates = await this.buildWorkingDayDates(branchId, baseUtc, maxDayNumber);
       // One row per individual ayah (legacy's own per-ayah granularity, see
       // StudentSurahProgressEntry) — deduped across target rows so an ayah
       // revisited by a later HIFDH-stage row (e.g. a revision pass) doesn't
@@ -207,8 +244,7 @@ export class HifdhService {
       const progressEntries: { surahId: string; fromAyah: number; toAyah: number; day: number }[] = [];
 
       for (const target of targets) {
-        const scheduledDate = new Date(baseUtc);
-        scheduledDate.setUTCDate(scheduledDate.getUTCDate() + (target.dayNumber - 1));
+        const scheduledDate = workingDayDates[target.dayNumber - 1];
 
         await this.prisma.surahHifdhStudentSchedule.create({
           data: {

@@ -788,6 +788,10 @@ model Announcement {
   description String?
   icon        String?
   audience    AnnouncementAudience @default(ALL)
+  // Only meaningful when audience = STUDENTS. Empty = every branch student;
+  // non-empty = only students currently on the roster of these Halqas
+  // (how a teacher's own announcements are scoped to their own students).
+  targetHalqaIds String[]          @default([])
   publishedAt DateTime             @default(now())
   createdById String?
   createdBy   User?                @relation("AnnouncementCreatedBy", fields: [createdById], references: [id])

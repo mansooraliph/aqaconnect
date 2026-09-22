@@ -29,8 +29,9 @@ export class MobileAnnouncementsController {
   @Get()
   async list(@Req() req: AuthedRequest) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
+    const where = await this.service.buildVisibilityFilter(branchId, req.user.userId);
     const data = await this.prisma.announcement.findMany({
-      where: { branchId },
+      where,
       orderBy: { publishedAt: 'desc' },
     });
     return Reply.dataOnly({ error: false, data });

@@ -72,8 +72,10 @@ export class DashboardService {
     // Legacy fetches up to 5 announcements but only ever surfaces the first
     // (dead code in the source) — replicated as a single object, not an
     // array, matching the mobile client's Dart model for this shape.
+    // Only branch-wide/teacher-audience announcements — never another
+    // teacher's Halqa-scoped student announcements.
     const [latestAnnouncement] = await this.prisma.announcement.findMany({
-      where: { branchId: teacher.branchId },
+      where: { branchId: teacher.branchId, audience: { in: ['ALL', 'TEACHERS'] } },
       orderBy: { publishedAt: 'desc' },
       take: 1,
     });
