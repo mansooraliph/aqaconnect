@@ -14,6 +14,7 @@ interface AcademicYear {
   startDate: string;
   endDate: string;
   isCurrent: boolean;
+  isCustomized: boolean;
 }
 
 const FIELDS: FieldDef[] = [
@@ -57,6 +58,16 @@ export function AcademicYearsPage() {
               Make current
             </Button>
           )
+        ),
+    },
+    {
+      header: 'Source',
+      accessorKey: 'isCustomized',
+      cell: ({ row }) =>
+        row.original.isCustomized ? (
+          <Badge tone="amber">Customized</Badge>
+        ) : (
+          <Badge tone="gray">Default</Badge>
         ),
     },
   ];

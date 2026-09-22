@@ -30,6 +30,8 @@ export interface NavItem {
   key: string;
   label: string;
   permission: string;
+  /** Renders a small uppercase divider label above this item — set on the first item of a sub-section within a module. */
+  sectionLabel?: string;
 }
 
 function initials(name: string | undefined): string {
@@ -71,6 +73,16 @@ export const MODULES: ModuleDef[] = [
       { key: '/configuration/target-schedules', label: 'Target Schedules', permission: 'configuration.target_schedules.view' },
       { key: '/configuration/calendar', label: 'Calendar', permission: 'configuration.calendar.view' },
       { key: '/configuration/settings', label: 'Branch Settings', permission: 'configuration.branch_settings.view' },
+      // Super-Admin-only sub-section: gated on the `.manage` permission (not
+      // `.view`, which Management also holds) so these two items disappear
+      // for everyone except the role that actually maintains these globally.
+      {
+        key: '/configuration/master-academic-years',
+        label: 'Master Academic Years',
+        permission: 'master_academic_years.manage',
+        sectionLabel: 'Masters',
+      },
+      { key: '/configuration/master-calendar', label: 'Master Calendar', permission: 'master_calendar.manage' },
     ],
   },
   {
@@ -286,21 +298,51 @@ export function AppLayout() {
                 <ChevronLeft className="h-4 w-4" />
                 {activeModule.label}
               </button>
-              {activeModule.items.map((item) => {
-                const selected = location.pathname === item.key;
-                return (
-                  <button
-                    key={item.key}
-                    onClick={() => navigate(item.key)}
-                    className={cn(
-                      'rounded-card px-3 py-2 pl-9 text-left text-sm transition-colors',
-                      selected ? 'bg-white/10 text-white' : 'text-white/70 hover:bg-white/5 hover:text-white',
-                    )}
-                  >
-                    {item.label}
-                  </button>
+              {(() => {
+                // Any item after a sectionLabel item belongs to that same
+                // sub-menu until the next sectionLabel (or the list ends) —
+                // groups them under one boxed "sub-menu" instead of a plain
+                // divider, so it reads as an actual menu, not just a label.
+                const rows: { label?: string; items: NavItem[] }[] = [];
+                for (const item of activeModule.items) {
+                  if (item.sectionLabel) {
+                    rows.push({ label: item.sectionLabel, items: [item] });
+                  } else if (rows.length > 0 && rows[rows.length - 1].label) {
+                    rows[rows.length - 1].items.push(item);
+                  } else {
+                    rows.push({ items: [item] });
+                  }
+                }
+
+                const renderButton = (item: NavItem) => {
+                  const selected = location.pathname === item.key;
+                  return (
+                    <button
+                      key={item.key}
+                      onClick={() => navigate(item.key)}
+                      className={cn(
+                        'w-full rounded-card px-3 py-2 pl-9 text-left text-sm transition-colors',
+                        selected ? 'bg-white/10 text-white' : 'text-white/70 hover:bg-white/5 hover:text-white',
+                      )}
+                    >
+                      {item.label}
+                    </button>
+                  );
+                };
+
+                return rows.map((row, i) =>
+                  row.label ? (
+                    <div key={row.label} className="mt-3 ml-3 rounded-card border border-white/10 bg-white/[0.03] py-1">
+                      <div className="px-3 pb-1 pt-1 text-xs font-semibold uppercase tracking-wide text-white/40">
+                        {row.label}
+                      </div>
+                      {row.items.map(renderButton)}
+                    </div>
+                  ) : (
+                    <div key={i}>{row.items.map(renderButton)}</div>
+                  ),
                 );
-              })}
+              })()}
             </div>
           )}
         </nav>

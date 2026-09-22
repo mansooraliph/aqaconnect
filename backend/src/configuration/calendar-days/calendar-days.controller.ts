@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } f
 import { CalendarDaysService } from './calendar-days.service';
 import { GenerateCalendarDaysDto } from './dto/generate-calendar-days.dto';
 import { UpdateCalendarDayDto } from './dto/update-calendar-day.dto';
+import { CreateCalendarDayDto } from './dto/create-calendar-day.dto';
 import { InitiateDaysDto } from './dto/initiate-days.dto';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
@@ -48,6 +49,13 @@ export class CalendarDaysController {
   @RequirePermission('configuration.calendar.manage')
   generate(@Param('branchId') branchId: string, @Body() dto: GenerateCalendarDaysDto) {
     return this.service.generate(branchId, dto);
+  }
+
+  /** Adds a single ad-hoc day (e.g. a branch-only event) — for dates not already covered by a generated year. */
+  @Post()
+  @RequirePermission('configuration.calendar.manage')
+  create(@Param('branchId') branchId: string, @Body() dto: CreateCalendarDayDto) {
+    return this.service.create(branchId, dto);
   }
 
   @Post('initiate-days')

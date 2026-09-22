@@ -1,6 +1,6 @@
 import { IsBoolean, IsOptional, IsString } from 'class-validator';
 
-export class UpdateCalendarDayDto {
+export class UpdateMasterCalendarDayDto {
   @IsOptional()
   @IsBoolean()
   isWorkingDay?: boolean;

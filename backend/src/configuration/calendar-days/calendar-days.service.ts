@@ -2,42 +2,14 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from '../../prisma/prisma.service';
 import { GenerateCalendarDaysDto } from './dto/generate-calendar-days.dto';
 import { UpdateCalendarDayDto } from './dto/update-calendar-day.dto';
+import { CreateCalendarDayDto } from './dto/create-calendar-day.dto';
 import { InitiateDaysDto } from './dto/initiate-days.dto';
 import { fetchIslamicHolidaysForYear } from './islamic-holidays';
-
-const WEEKDAY_NUMBERS: Record<string, number> = {
-  sunday: 0,
-  monday: 1,
-  tuesday: 2,
-  wednesday: 3,
-  thursday: 4,
-  friday: 5,
-  saturday: 6,
-};
+import { DAY_NAMES, allDatesOfYear, isoWeekNumber, specificWeekendDates, weekdayDates } from './calendar-generation.util';
 
 @Injectable()
 export class CalendarDaysService {
   constructor(private readonly prisma: PrismaService) {}
-
-  private static readonly DAY_NAMES = [
-    'Sunday',
-    'Monday',
-    'Tuesday',
-    'Wednesday',
-    'Thursday',
-    'Friday',
-    'Saturday',
-  ];
-
-  /** ISO-8601 week number for a UTC date-only value. */
-  private isoWeekNumber(date: Date): number {
-    const target = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-    const dayNumber = (target.getUTCDay() + 6) % 7; // Monday = 0
-    target.setUTCDate(target.getUTCDate() - dayNumber + 3); // nearest Thursday
-    const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
-    const diffDays = (target.getTime() - firstThursday.getTime()) / 86_400_000;
-    return 1 + Math.round(diffDays / 7);
-  }
 
   private monthRange(month?: number, year?: number) {
     if (year === undefined) return undefined;
@@ -69,6 +41,7 @@ export class CalendarDaysService {
     return day;
   }
 
+  /** Any branch-initiated edit marks the row customized so a later master-calendar publish never overwrites it. */
   async update(branchId: string, id: string, dto: UpdateCalendarDayDto) {
     await this.findOne(branchId, id);
     return this.prisma.calendarDay.update({
@@ -77,7 +50,41 @@ export class CalendarDaysService {
         ...(dto.isWorkingDay !== undefined && { isWorkingDay: dto.isWorkingDay }),
         ...(dto.isHoliday !== undefined && { isHoliday: dto.isHoliday }),
         ...(dto.holidayName !== undefined && { holidayName: dto.holidayName }),
+        ...(dto.isEvent !== undefined && { isEvent: dto.isEvent }),
+        ...(dto.eventName !== undefined && { eventName: dto.eventName }),
         ...(dto.note !== undefined && { note: dto.note }),
+        isCustomized: true,
+      },
+    });
+  }
+
+  /**
+   * Lets a branch add a single ad-hoc day that isn't already a generated row
+   * (e.g. a branch-only event, or a date outside any generated range) —
+   * always customized, since it's branch-authored by definition.
+   */
+  async create(branchId: string, dto: CreateCalendarDayDto) {
+    const date = new Date(`${dto.date}T00:00:00.000Z`);
+    const existing = await this.prisma.calendarDay.findUnique({ where: { branchId_date: { branchId, date } } });
+    if (existing) {
+      throw new BadRequestException('A calendar day already exists for this date — edit it instead');
+    }
+
+    const dayOfWeek = date.getUTCDay();
+    return this.prisma.calendarDay.create({
+      data: {
+        branchId,
+        date,
+        dayName: DAY_NAMES[dayOfWeek],
+        weekNumber: isoWeekNumber(date),
+        year: date.getUTCFullYear(),
+        isWorkingDay: dto.isWorkingDay ?? true,
+        isHoliday: dto.isHoliday ?? false,
+        holidayName: dto.holidayName,
+        isEvent: dto.isEvent ?? false,
+        eventName: dto.eventName,
+        note: dto.note,
+        isCustomized: true,
       },
     });
   }
@@ -128,8 +135,8 @@ export class CalendarDaysService {
             branchId,
             academicYearId: dto.academicYearId,
             date,
-            dayName: CalendarDaysService.DAY_NAMES[dayOfWeek],
-            weekNumber: this.isoWeekNumber(date),
+            dayName: DAY_NAMES[dayOfWeek],
+            weekNumber: isoWeekNumber(date),
             year: date.getUTCFullYear(),
             isWorkingDay,
           },
@@ -160,20 +167,9 @@ export class CalendarDaysService {
 
   // ── "Initiate Days" — matches the legacy CalendarDayController@generateDays ──
 
-  private allDatesOfYear(year: number): Date[] {
-    const dates: Date[] = [];
-    const cursor = new Date(Date.UTC(year, 0, 1));
-    const end = new Date(Date.UTC(year, 11, 31));
-    while (cursor.getTime() <= end.getTime()) {
-      dates.push(new Date(cursor.getTime()));
-      cursor.setUTCDate(cursor.getUTCDate() + 1);
-    }
-    return dates;
-  }
-
   /** Generates every day of the calendar year, skipping dates that already exist for this branch. */
   private async generateDaysForYear(branchId: string, year: number): Promise<number> {
-    const allDates = this.allDatesOfYear(year);
+    const allDates = allDatesOfYear(year);
     const existing = await this.prisma.calendarDay.findMany({
       where: { branchId, date: { gte: allDates[0], lte: allDates[allDates.length - 1] } },
       select: { date: true },
@@ -188,8 +184,8 @@ export class CalendarDaysService {
         return {
           branchId,
           date,
-          dayName: CalendarDaysService.DAY_NAMES[dayOfWeek],
-          weekNumber: this.isoWeekNumber(date),
+          dayName: DAY_NAMES[dayOfWeek],
+          weekNumber: isoWeekNumber(date),
           year,
           isWorkingDay: true,
           isHoliday: false,
@@ -201,10 +197,9 @@ export class CalendarDaysService {
 
   /** Marks every occurrence of a weekday in the year as a holiday (row must already exist). */
   private async markWeekdayAsHoliday(branchId: string, year: number, weekday: string, holidayName: string): Promise<number> {
-    const weekdayNumber = WEEKDAY_NUMBERS[weekday];
-    if (weekdayNumber === undefined) return 0;
+    const dates = weekdayDates(year, weekday);
+    if (dates.length === 0) return 0;
 
-    const dates = this.allDatesOfYear(year).filter((d) => d.getUTCDay() === weekdayNumber);
     const result = await this.prisma.calendarDay.updateMany({
       where: { branchId, date: { in: dates } },
       data: { isHoliday: true, isWorkingDay: false, holidayName },
@@ -212,7 +207,7 @@ export class CalendarDaysService {
     return result.count;
   }
 
-  /** Groups Saturdays/Sundays per month and marks only the requested nth pair (1st/2nd/3rd/4th/last). */
+  /** Marks only the requested nth Saturday/Sunday pair (1st/2nd/3rd/4th/last) per month as a holiday. */
   private async markSpecificWeekendsAsHoliday(
     branchId: string,
     year: number,
@@ -220,48 +215,13 @@ export class CalendarDaysService {
     holidayName: string,
   ): Promise<number> {
     let updated = 0;
-
-    for (let month = 0; month < 12; month++) {
-      const monthDates = this.allDatesOfYear(year).filter((d) => d.getUTCMonth() === month);
-      const saturdays = monthDates.filter((d) => d.getUTCDay() === 6);
-      const sundays = monthDates.filter((d) => d.getUTCDay() === 0);
-      const pairs: Date[][] = saturdays
-        .map((sat, i) => (sundays[i] ? [sat, sundays[i]] : null))
-        .filter((p): p is Date[] => p !== null);
-
-      for (const selection of weekendSelections) {
-        let pair: Date[] | undefined;
-        switch (selection) {
-          case '1st':
-            pair = pairs[0];
-            break;
-          case '2nd':
-            pair = pairs[1];
-            break;
-          case '3rd':
-            pair = pairs[2];
-            break;
-          case '4th':
-            pair = pairs[3];
-            break;
-          case 'last':
-            pair = pairs.length >= 5 ? pairs[pairs.length - 1] : undefined;
-            break;
-        }
-        if (!pair) continue;
-
-        const result = await this.prisma.calendarDay.updateMany({
-          where: { branchId, date: { in: pair } },
-          data: {
-            isHoliday: true,
-            isWorkingDay: false,
-            holidayName: `${holidayName} (${selection[0].toUpperCase()}${selection.slice(1)} Weekend)`,
-          },
-        });
-        updated += result.count;
-      }
+    for (const { date, label } of specificWeekendDates(year, weekendSelections)) {
+      const result = await this.prisma.calendarDay.updateMany({
+        where: { branchId, date },
+        data: { isHoliday: true, isWorkingDay: false, holidayName: `${holidayName} (${label})` },
+      });
+      updated += result.count;
     }
-
     return updated;
   }
 
@@ -283,8 +243,8 @@ export class CalendarDaysService {
           data: {
             branchId,
             date,
-            dayName: CalendarDaysService.DAY_NAMES[dayOfWeek],
-            weekNumber: this.isoWeekNumber(date),
+            dayName: DAY_NAMES[dayOfWeek],
+            weekNumber: isoWeekNumber(date),
             year: date.getUTCFullYear(),
             isWorkingDay: false,
             isHoliday: true,

@@ -409,6 +409,13 @@ model AcademicYear {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // True once a branch has created or edited this row itself — publishing a
+  // MasterAcademicYear skips any row where this is true, so a branch's own
+  // year is never silently overwritten.
+  isCustomized        Boolean            @default(false)
+  masterAcademicYearId String?
+  masterAcademicYear   MasterAcademicYear? @relation(fields: [masterAcademicYearId], references: [id], onDelete: SetNull)
+
   classSectionYears AcademicClassSectionYear[]
   calendarDays      CalendarDay[]
   branchSettings    BranchSettings[]
@@ -417,6 +424,23 @@ model AcademicYear {
 
   @@unique([branchId, name])
   @@index([branchId, isCurrent])
+  @@index([masterAcademicYearId])
+}
+
+// Super Admin's single, branch-less common academic year — same "global
+// template, copied out rather than referenced live" shape as
+// MasterCalendarDay/SurahTargetSchedule. Publishing copies name/dates into
+// every target branch's own AcademicYear (see MasterAcademicYearsService.publish),
+// after which each branch's copy is independently editable.
+model MasterAcademicYear {
+  id        String   @id @default(cuid())
+  name      String   @unique // e.g. "2026-2027"
+  startDate DateTime
+  endDate   DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  publishedYears AcademicYear[]
 }
 
 model AcademicClass {
@@ -522,12 +546,51 @@ model CalendarDay {
   isWorkingDay   Boolean       @default(true)
   isHoliday      Boolean       @default(false)
   holidayName    String? // legacy: holiday_name (plain text, no FK)
-  note           String?
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  // Attendance still happens and is expected on an event day (e.g. Sports
+  // Day, PTM) — unlike isHoliday, where the branch is closed. Distinct from
+  // isHoliday because schedule generation must skip both, but the
+  // attendance report's holiday exclusion must only ever key on isHoliday.
+  isEvent     Boolean @default(false)
+  eventName   String?
+  note        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // True once a branch has edited or manually created this row — publishing
+  // the master calendar (see MasterCalendarDay) skips any row where this is
+  // true, so a branch's own customization is never silently overwritten.
+  isCustomized        Boolean           @default(false)
+  masterCalendarDayId String?
+  masterCalendarDay   MasterCalendarDay? @relation(fields: [masterCalendarDayId], references: [id], onDelete: SetNull)
 
   @@unique([branchId, date])
   @@index([academicYearId])
+  @@index([masterCalendarDayId])
+}
+
+// Super Admin's single, branch-less common calendar — the same "global
+// template, copied out rather than referenced live" shape as
+// SurahTargetSchedule. Publishing a year copies matching rows into every
+// target branch's own CalendarDay (see MasterCalendarService.publish),
+// after which each branch's copy is independently editable.
+model MasterCalendarDay {
+  id          String   @id @default(cuid())
+  date        DateTime @unique @db.Date
+  dayName     String?
+  weekNumber  Int?
+  year        Int?
+  isWorkingDay Boolean @default(true)
+  isHoliday   Boolean  @default(false)
+  holidayName String?
+  isEvent     Boolean  @default(false)
+  eventName   String?
+  note        String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  publishedDays CalendarDay[]
+
+  @@index([year])
 }
 
 enum ActiveStatus {

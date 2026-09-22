@@ -14,19 +14,24 @@ export class HifdhService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * Returns the dates of the first `count` non-holiday days starting at (and
-   * including) `startDate`, skipping any date marked `CalendarDay.isHoliday`
-   * for the branch — the same "holiday" definition getAttendanceReport uses.
-   * A target schedule's dayNumber then indexes into this array (dayNumber 1
-   * = the 1st working day) instead of being added as a raw calendar offset,
-   * so marked holidays no longer land a lesson on a day off.
+   * Returns the dates of the first `count` lesson-eligible days starting at
+   * (and including) `startDate`, skipping any date marked
+   * `CalendarDay.isHoliday` OR `CalendarDay.isEvent` for the branch. Holiday
+   * = branch closed (also the definition getAttendanceReport's exclusion
+   * uses — do not broaden that one to isEvent, attendance is still taken on
+   * event days). Event = branch open, attendance taken, but no lesson
+   * scheduled (e.g. Sports Day) — same scheduling treatment as a holiday,
+   * different attendance treatment. A target schedule's dayNumber then
+   * indexes into this array (dayNumber 1 = the 1st lesson-eligible day)
+   * instead of being added as a raw calendar offset, so holidays/events no
+   * longer land a lesson on a day off.
    */
   private async buildWorkingDayDates(branchId: string, startDate: Date, count: number): Promise<Date[]> {
-    const holidayRows = await this.prisma.calendarDay.findMany({
-      where: { branchId, isHoliday: true, date: { gte: startDate } },
+    const skippedRows = await this.prisma.calendarDay.findMany({
+      where: { branchId, OR: [{ isHoliday: true }, { isEvent: true }], date: { gte: startDate } },
       select: { date: true },
     });
-    const holidayDates = new Set(holidayRows.map((h) => formatDateOnly(h.date)));
+    const holidayDates = new Set(skippedRows.map((h) => formatDateOnly(h.date)));
 
     const dates: Date[] = [];
     const cursor = new Date(startDate);

@@ -1,6 +1,9 @@
-import { IsBoolean, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsDateString, IsOptional, IsString } from 'class-validator';
 
-export class UpdateCalendarDayDto {
+export class CreateCalendarDayDto {
+  @IsDateString()
+  date: string; // yyyy-MM-dd
+
   @IsOptional()
   @IsBoolean()
   isWorkingDay?: boolean;

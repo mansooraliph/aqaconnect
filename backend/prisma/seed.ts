@@ -70,6 +70,19 @@ const PERMISSIONS: { key: string; module: string; description: string }[] = [
   { key: 'configuration.target_schedules.manage', module: 'configuration', description: 'Manage Surah target schedules' },
   { key: 'configuration.calendar.view', module: 'configuration', description: 'View branch calendar' },
   { key: 'configuration.calendar.manage', module: 'configuration', description: 'Manage/generate branch calendar' },
+
+  // Master Calendar — deliberately its own module, not `configuration`, so
+  // Branch Admin's broad configuration-module grant (below) never includes
+  // it. Super Admin only by default; Management gets .view explicitly.
+  { key: 'master_calendar.view', module: 'master_calendar', description: 'View the common calendar Super Admin maintains across all branches' },
+  { key: 'master_calendar.manage', module: 'master_calendar', description: 'Create/edit the common calendar and publish it to branches' },
+
+  // Master Academic Years — same standalone-module convention as
+  // master_calendar, for the same reason: Super Admin only by default,
+  // Management gets .view explicitly, Branch Admin's broad configuration
+  // grant must not include it.
+  { key: 'master_academic_years.view', module: 'master_academic_years', description: 'View the common academic years Super Admin maintains across all branches' },
+  { key: 'master_academic_years.manage', module: 'master_academic_years', description: 'Create/edit common academic years and publish them to branches' },
   { key: 'configuration.branch_settings.view', module: 'configuration', description: 'View branch settings' },
   { key: 'configuration.branch_settings.manage', module: 'configuration', description: 'Manage branch settings' },
 
@@ -172,6 +185,8 @@ const ROLES: {
       'system.branches.view',
       'system.users.view',
       'system.mobile_api.view',
+      'master_calendar.view',
+      'master_academic_years.view',
       ...PERMISSIONS.filter(
         (p) =>
           ['configuration', 'hr', 'student_management', 'fees', 'academic', 'devices'].includes(p.module) &&
@@ -190,17 +205,15 @@ const ROLES: {
       'system.users.manage',
       'system.mobile_api.view',
       'system.mobile_api.manage',
-      ...PERMISSIONS.filter((p) =>
-        [
-          'configuration',
-          'hr',
-          'student_management',
-          'fees',
-          'academic',
-          'mobile_api',
-          'communication',
-          'devices',
-        ].includes(p.module),
+      // Academic years are managed globally by Super Admin (see
+      // MasterAcademicYearsService) and published out — Branch Admin gets
+      // .view only, not .manage, hence the explicit exclusion below despite
+      // the otherwise-blanket 'configuration' grant.
+      ...PERMISSIONS.filter(
+        (p) =>
+          ['configuration', 'hr', 'student_management', 'fees', 'academic', 'mobile_api', 'communication', 'devices'].includes(
+            p.module,
+          ) && p.key !== 'configuration.academic_years.manage',
       ).map((p) => p.key),
     ],
   },
@@ -326,6 +339,14 @@ async function main() {
         update: {},
       });
     }
+
+    // Make the role's grants exactly match roleDef.permissionKeys — without
+    // this, a permission removed from a role's list here stays granted
+    // forever (upsert only ever adds), so the seed silently stops being the
+    // source of truth for what a role can do.
+    await prisma.rolePermission.deleteMany({
+      where: { roleId: role.id, permission: { key: { notIn: roleDef.permissionKeys } } },
+    });
   }
 
   // Backfill: existing student logins predate the "Student" role (it didn't

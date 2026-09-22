@@ -22,6 +22,7 @@ export class AcademicYearsService {
     return year;
   }
 
+  /** Branch-authored — always customized, so a master-academic-year publish never overwrites it. */
   create(branchId: string, dto: CreateAcademicYearDto) {
     return this.prisma.academicYear.create({
       data: {
@@ -29,6 +30,7 @@ export class AcademicYearsService {
         name: dto.name,
         startDate: new Date(dto.startDate),
         endDate: new Date(dto.endDate),
+        isCustomized: true,
       },
     });
   }
@@ -41,6 +43,7 @@ export class AcademicYearsService {
         ...(dto.name !== undefined && { name: dto.name }),
         ...(dto.startDate !== undefined && { startDate: new Date(dto.startDate) }),
         ...(dto.endDate !== undefined && { endDate: new Date(dto.endDate) }),
+        isCustomized: true,
       },
     });
   }

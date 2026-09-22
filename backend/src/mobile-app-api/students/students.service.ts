@@ -1156,6 +1156,24 @@ export class MobileStudentsService {
       );
     }
 
+    // 7b. Calendar events (branch-wide, e.g. Sports Day — CalendarDay.isEvent,
+    // set on the branch/master calendar) — distinct from `type: 'event'`
+    // below (a per-student StudentEvent a teacher logs individually).
+    // `record_type: 'calendar_event'` keeps the two from colliding for any
+    // client filtering on activity type.
+    const calendarEvents = await this.prisma.calendarDay.findMany({
+      where: { branchId, isEvent: true, date: { gte: start, lte: end } },
+      orderBy: { date: 'asc' },
+    });
+    for (const ev of calendarEvents) {
+      const date = toDateOnly(ev.date);
+      const occasion = ev.eventName ?? 'Event';
+      push(
+        date,
+        withId({ type: 'calendar_event', description: `Event: ${occasion}`, date, occasion }, ev.id, 'calendar_event'),
+      );
+    }
+
     // 8. Exams (getStudentActivity only)
     if (opts.includeExams) {
       const exams = await this.prisma.studentExam.findMany({

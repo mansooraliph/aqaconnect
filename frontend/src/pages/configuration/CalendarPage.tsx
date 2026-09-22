@@ -1,8 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
-import { CalendarDays, CalendarPlus, Loader2, Sun, Trash2 } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
+import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { useAuthStore } from '../../store/auth';
 import { api } from '../../lib/api';
 import { Button } from '../../components/ui/Button';
@@ -28,7 +27,10 @@ interface CalendarDay {
   isWorkingDay: boolean;
   isHoliday: boolean;
   holidayName: string | null;
+  isEvent: boolean;
+  eventName: string | null;
   note: string | null;
+  isCustomized: boolean;
 }
 
 interface CalendarStats {
@@ -36,24 +38,6 @@ interface CalendarStats {
   workingDays: number;
   holidays: number;
 }
-
-const WEEKDAYS: { key: string; label: string; icon: LucideIcon }[] = [
-  { key: 'sunday', label: 'Sunday', icon: Sun },
-  { key: 'monday', label: 'Monday', icon: CalendarDays },
-  { key: 'tuesday', label: 'Tuesday', icon: CalendarDays },
-  { key: 'wednesday', label: 'Wednesday', icon: CalendarDays },
-  { key: 'thursday', label: 'Thursday', icon: CalendarDays },
-  { key: 'friday', label: 'Friday', icon: CalendarDays },
-  { key: 'saturday', label: 'Saturday', icon: Sun },
-];
-
-const WEEKEND_PATTERNS = [
-  { key: '1st', label: 'First Saturday & Sunday' },
-  { key: '2nd', label: 'Second Saturday & Sunday' },
-  { key: '3rd', label: 'Third Saturday & Sunday' },
-  { key: '4th', label: 'Fourth Saturday & Sunday' },
-  { key: 'last', label: 'Last Saturday & Sunday (if 5th week exists)' },
-];
 
 const CURRENT_YEAR = new Date().getFullYear();
 
@@ -124,6 +108,9 @@ export function CalendarPage() {
       await api.patch(`/branches/${activeBranchId}/calendar-days/${record.id}`, {
         isWorkingDay: payload.isWorkingDay ?? record.isWorkingDay,
         isHoliday: payload.isHoliday ?? record.isHoliday,
+        holidayName: payload.holidayName ?? record.holidayName,
+        isEvent: payload.isEvent ?? record.isEvent,
+        eventName: payload.eventName ?? record.eventName,
         note: payload.note ?? record.note,
       });
       refetchAll();
@@ -134,73 +121,64 @@ export function CalendarPage() {
     }
   };
 
-  // ---- Initiate Days ----
-  const [initiateOpen, setInitiateOpen] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
-  const [initiating, setInitiating] = useState(false);
-  const [initYear, setInitYear] = useState(String(CURRENT_YEAR));
-  const [selectedWeekdays, setSelectedWeekdays] = useState<string[]>([]);
-  const [weekendOption, setWeekendOption] = useState<'all' | 'specific'>('all');
-  const [selectedWeekends, setSelectedWeekends] = useState<string[]>([]);
-  const [holidayName, setHolidayName] = useState('Weekly Holiday');
-  const [includeIslamicHolidays, setIncludeIslamicHolidays] = useState(true);
+  // ---- Add ad-hoc day ----
+  const [addDayOpen, setAddDayOpen] = useState(false);
+  const [addingDay, setAddingDay] = useState(false);
+  const [newDayDate, setNewDayDate] = useState('');
+  const [newDayKind, setNewDayKind] = useState<'holiday' | 'event'>('holiday');
+  const [newDayLabel, setNewDayLabel] = useState('');
 
-  const bothWeekendDaysSelected = selectedWeekdays.includes('saturday') && selectedWeekdays.includes('sunday');
-
-  const toggleWeekday = (key: string) => {
-    setSelectedWeekdays((prev) => (prev.includes(key) ? prev.filter((d) => d !== key) : [...prev, key]));
+  const openAddDay = () => {
+    setNewDayDate('');
+    setNewDayKind('holiday');
+    setNewDayLabel('');
+    setAddDayOpen(true);
   };
 
-  const toggleWeekend = (key: string) => {
-    setSelectedWeekends((prev) => (prev.includes(key) ? prev.filter((d) => d !== key) : [...prev, key]));
-  };
-
-  const openInitiate = () => {
-    setInitYear(String(CURRENT_YEAR));
-    setSelectedWeekdays([]);
-    setWeekendOption('all');
-    setSelectedWeekends([]);
-    setHolidayName('Weekly Holiday');
-    setIncludeIslamicHolidays(true);
-    setInitiateOpen(true);
-  };
-
-  const runInitiateDays = async () => {
-    setInitiating(true);
+  /**
+   * "Set Day" — works whether the date already has a row or not, so marking
+   * a holiday/event never requires scrolling the table to find it first.
+   * Tries to create; if one already exists for that date, looks it up in
+   * that date's year and edits it in place instead.
+   */
+  const runAddDay = async () => {
+    if (!newDayDate) return;
+    setAddingDay(true);
+    const fields = {
+      isHoliday: newDayKind === 'holiday',
+      holidayName: newDayKind === 'holiday' ? newDayLabel : undefined,
+      isEvent: newDayKind === 'event',
+      eventName: newDayKind === 'event' ? newDayLabel : undefined,
+    };
     try {
-      const { data } = await api.post<{ generatedDays: number; updatedHolidays: number }>(
-        `/branches/${activeBranchId}/calendar-days/initiate-days`,
-        {
-          year: Number(initYear),
-          selectedWeekdays,
-          weekendOption,
-          selectedWeekends,
-          holidayName,
-          includeIslamicHolidays,
-        },
-      );
-      toast.success(
-        `Generated ${data.generatedDays} day(s) for ${initYear}` +
-          (data.updatedHolidays > 0 ? ` and marked ${data.updatedHolidays} holiday(s)` : ''),
-      );
-      setConfirmOpen(false);
-      setInitiateOpen(false);
-      setBrowseYear(initYear);
+      try {
+        await api.post(`/branches/${activeBranchId}/calendar-days`, { date: newDayDate, ...fields });
+        toast.success('Day added');
+      } catch (err) {
+        const serverMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+        if (!serverMessage?.includes('already exists')) throw err;
+
+        const year = Number(newDayDate.slice(0, 4));
+        const { data: yearDays } = await api.get<CalendarDay[]>(`/branches/${activeBranchId}/calendar-days`, {
+          params: { year },
+        });
+        const existing = yearDays.find((d) => d.date.slice(0, 10) === newDayDate);
+        if (!existing) throw err;
+
+        await api.patch(`/branches/${activeBranchId}/calendar-days/${existing.id}`, fields);
+        toast.success('Day updated');
+      }
+      setAddDayOpen(false);
       setAcademicYearId(undefined);
+      setBrowseYear(newDayDate.slice(0, 4));
       refetchAll();
-    } catch {
-      toast.error('Failed to initiate days');
+    } catch (err) {
+      const serverMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      toast.error(serverMessage ?? 'Failed to set day');
     } finally {
-      setInitiating(false);
+      setAddingDay(false);
     }
   };
-
-  const confirmMessage = useMemo(() => {
-    const parts = [`Generate all days for year ${initYear}?`];
-    if (selectedWeekdays.length > 0) parts.push(`${selectedWeekdays.length} weekday(s) will be marked as holidays.`);
-    if (includeIslamicHolidays) parts.push('Islamic holidays will be included.');
-    return parts.join(' ');
-  }, [initYear, selectedWeekdays, includeIslamicHolidays]);
 
   // ---- Clear year ----
   const [clearOpen, setClearOpen] = useState(false);
@@ -264,7 +242,66 @@ export function CalendarPage() {
         );
       },
     },
-    { header: 'Holiday name', accessorKey: 'holidayName' },
+    {
+      header: 'Holiday name',
+      id: 'holidayName',
+      cell: ({ row }) => {
+        const record = row.original;
+        return (
+          <Input
+            defaultValue={record.holidayName ?? ''}
+            disabled={!canManage}
+            onBlur={(e) => {
+              if (e.target.value !== (record.holidayName ?? '')) {
+                patchDay(record, { holidayName: e.target.value });
+              }
+            }}
+          />
+        );
+      },
+    },
+    {
+      header: 'Event',
+      id: 'isEvent',
+      cell: ({ row }) => {
+        const record = row.original;
+        return (
+          <Switch
+            checked={record.isEvent}
+            disabled={!canManage}
+            onCheckedChange={(checked) => patchDay(record, { isEvent: checked })}
+          />
+        );
+      },
+    },
+    {
+      header: 'Event name',
+      id: 'eventName',
+      cell: ({ row }) => {
+        const record = row.original;
+        return (
+          <Input
+            defaultValue={record.eventName ?? ''}
+            disabled={!canManage}
+            onBlur={(e) => {
+              if (e.target.value !== (record.eventName ?? '')) {
+                patchDay(record, { eventName: e.target.value });
+              }
+            }}
+          />
+        );
+      },
+    },
+    {
+      header: 'Source',
+      id: 'isCustomized',
+      cell: ({ row }) =>
+        row.original.isCustomized ? (
+          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">Customized</span>
+        ) : (
+          <span className="rounded-full bg-table-alt px-2 py-0.5 text-xs font-medium text-text-muted">Default</span>
+        ),
+    },
     {
       header: 'Note',
       id: 'note',
@@ -308,17 +345,18 @@ export function CalendarPage() {
             />
           </Field>
           {canManage && (
-            <Button onClick={openInitiate}>
-              <CalendarPlus className="h-4 w-4" />
-              Initiate Days
+            <Button variant="outline" onClick={openAddDay}>
+              <Plus className="h-4 w-4" />
+              Set Day
             </Button>
           )}
         </div>
       </div>
 
       <p className="text-sm text-text-muted">
-        Working days and holidays for the branch — browse by academic year, or by a plain calendar year generated via
-        "Initiate Days".
+        Working days and holidays for the branch — browse by academic year, or by a plain calendar year published from
+        the Master Calendar. Use "Set Day" to mark any date as a holiday or event by picking the date directly — no
+        need to scroll the table to find it.
       </p>
 
       {(academicYearId || effectiveYear) && (
@@ -367,122 +405,6 @@ export function CalendarPage() {
         </>
       )}
 
-      <Modal
-        open={initiateOpen}
-        title="Initiate Days for Year"
-        onClose={() => setInitiateOpen(false)}
-        width="max-w-2xl"
-        footer={
-          <>
-            <Button variant="outline" onClick={() => setInitiateOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={() => setConfirmOpen(true)}>Generate Days</Button>
-          </>
-        }
-      >
-        <div className="flex flex-col gap-5">
-          <Field label="Select year" required>
-            <Input type="number" value={initYear} onChange={(e) => setInitYear(e.target.value)} />
-          </Field>
-
-          <div>
-            <p className="mb-2 text-sm font-medium text-text-primary">Select weekdays to mark as holidays</p>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {WEEKDAYS.map((w) => (
-                <label key={w.key} className="flex items-center gap-2 text-sm">
-                  <Checkbox
-                    checked={selectedWeekdays.includes(w.key)}
-                    onChange={() => toggleWeekday(w.key)}
-                  />
-                  <w.icon className="h-4 w-4 text-text-faint" />
-                  {w.label}
-                </label>
-              ))}
-            </div>
-            <p className="mt-1 text-xs text-text-faint">Check the days you want to mark as weekly holidays.</p>
-          </div>
-
-          {bothWeekendDaysSelected && (
-            <div className="rounded-card border border-border p-4">
-              <p className="mb-2 text-sm font-medium text-text-primary">Weekend holiday options</p>
-              <label className="mb-2 flex items-start gap-2 text-sm">
-                <input
-                  type="radio"
-                  className="mt-1"
-                  checked={weekendOption === 'all'}
-                  onChange={() => setWeekendOption('all')}
-                />
-                <span>
-                  <strong>All Saturdays &amp; Sundays</strong>
-                  <span className="block text-xs text-text-muted">Mark every Saturday and Sunday as holiday</span>
-                </span>
-              </label>
-              <label className="mb-2 flex items-start gap-2 text-sm">
-                <input
-                  type="radio"
-                  className="mt-1"
-                  checked={weekendOption === 'specific'}
-                  onChange={() => setWeekendOption('specific')}
-                />
-                <span>
-                  <strong>Specific weekends only</strong>
-                  <span className="block text-xs text-text-muted">Select which Saturday-Sunday combinations</span>
-                </span>
-              </label>
-              {weekendOption === 'specific' && (
-                <div className="ml-6 mt-2 flex flex-col gap-1.5">
-                  {WEEKEND_PATTERNS.map((w) => (
-                    <label key={w.key} className="flex items-center gap-2 text-sm">
-                      <Checkbox
-                        checked={selectedWeekends.includes(w.key)}
-                        onChange={() => toggleWeekend(w.key)}
-                      />
-                      {w.label}
-                    </label>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {selectedWeekdays.length > 0 && (
-            <Field label="Holiday name">
-              <Input value={holidayName} onChange={(e) => setHolidayName(e.target.value)} />
-            </Field>
-          )}
-
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox checked={includeIslamicHolidays} onChange={setIncludeIslamicHolidays} />
-            <span>
-              <strong>Include Islamic Holidays</strong>
-              <span className="block text-xs text-text-muted">
-                Automatically add Ramadan, Eid ul-Fitr, and Eid ul-Adha (Bakrid) holidays
-              </span>
-            </span>
-          </label>
-
-          <div className="rounded-card border border-blue/30 bg-blue-light p-4 text-sm text-blue">
-            <p className="mb-1 font-medium">What will happen?</p>
-            <ul className="list-disc pl-4">
-              <li>All days for the selected year will be generated</li>
-              <li>Selected weekdays will be marked as holidays throughout the year</li>
-              <li>Existing days will not be duplicated</li>
-            </ul>
-          </div>
-        </div>
-      </Modal>
-
-      <ConfirmModal
-        isOpen={confirmOpen}
-        onClose={() => setConfirmOpen(false)}
-        onConfirm={runInitiateDays}
-        title="Confirm Generation"
-        message={confirmMessage}
-        confirmLabel="Yes, Generate!"
-        isLoading={initiating}
-      />
-
       <ConfirmModal
         isOpen={clearOpen}
         onClose={() => setClearOpen(false)}
@@ -493,6 +415,49 @@ export function CalendarPage() {
         confirmLabel="Delete"
         isLoading={clearing}
       />
+
+      <Modal
+        open={addDayOpen}
+        title="Set a Day"
+        onClose={() => setAddDayOpen(false)}
+        footer={
+          <>
+            <Button variant="outline" onClick={() => setAddDayOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={runAddDay} disabled={!newDayDate || addingDay}>
+              {addingDay ? 'Saving…' : 'Set Day'}
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <p className="text-sm text-text-muted">
+            Pick any date — if it already has a row, this edits it in place; otherwise it creates a new branch-only
+            day. Either way you don't need to find it in the table yourself.
+          </p>
+          <Field label="Date" required>
+            <Input type="date" value={newDayDate} onChange={(e) => setNewDayDate(e.target.value)} />
+          </Field>
+          <div className="flex gap-4">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                checked={newDayKind === 'holiday'}
+                onChange={() => setNewDayKind('holiday')}
+              />
+              Holiday (branch closed)
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input type="radio" checked={newDayKind === 'event'} onChange={() => setNewDayKind('event')} />
+              Event (attendance still taken, no lesson)
+            </label>
+          </div>
+          <Field label={newDayKind === 'holiday' ? 'Holiday name' : 'Event name'}>
+            <Input value={newDayLabel} onChange={(e) => setNewDayLabel(e.target.value)} />
+          </Field>
+        </div>
+      </Modal>
     </div>
   );
 }

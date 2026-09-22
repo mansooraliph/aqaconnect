@@ -4,6 +4,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { ProtectedRoute } from './routes/ProtectedRoute';
 import { AppLayout } from './layout/AppLayout';
 import { AcademicYearsPage } from './pages/configuration/AcademicYearsPage';
+import { MasterAcademicYearsPage } from './pages/configuration/MasterAcademicYearsPage';
 import { AcademicClassesPage } from './pages/configuration/AcademicClassesPage';
 import { AcademicSectionsPage } from './pages/configuration/AcademicSectionsPage';
 import { ClassSectionsPage } from './pages/configuration/ClassSectionsPage';
@@ -13,6 +14,7 @@ import { SurahsPage } from './pages/configuration/SurahsPage';
 import { SurahAyahPageLinesPage } from './pages/configuration/SurahAyahPageLinesPage';
 import { TargetSchedulesPage } from './pages/configuration/TargetSchedulesPage';
 import { CalendarPage } from './pages/configuration/CalendarPage';
+import { MasterCalendarPage } from './pages/configuration/MasterCalendarPage';
 import { BranchSettingsPage } from './pages/configuration/BranchSettingsPage';
 import { DepartmentsDesignationsPage } from './pages/hr/DepartmentsDesignationsPage';
 import { EmployeesPage } from './pages/hr/EmployeesPage';
@@ -59,6 +61,7 @@ function App() {
           <Route path="/roles" element={<RolesPage />} />
 
           <Route path="/configuration/academic-years" element={<AcademicYearsPage />} />
+          <Route path="/configuration/master-academic-years" element={<MasterAcademicYearsPage />} />
           <Route path="/configuration/academic-classes" element={<AcademicClassesPage />} />
           <Route path="/configuration/academic-sections" element={<AcademicSectionsPage />} />
           <Route path="/configuration/class-sections" element={<ClassSectionsPage />} />
@@ -68,6 +71,7 @@ function App() {
           <Route path="/configuration/surah-ayah-page-lines" element={<SurahAyahPageLinesPage />} />
           <Route path="/configuration/target-schedules" element={<TargetSchedulesPage />} />
           <Route path="/configuration/calendar" element={<CalendarPage />} />
+          <Route path="/configuration/master-calendar" element={<MasterCalendarPage />} />
           <Route path="/configuration/settings" element={<BranchSettingsPage />} />
 
           <Route path="/hr/departments" element={<DepartmentsDesignationsPage />} />
