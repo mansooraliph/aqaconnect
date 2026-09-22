@@ -10,7 +10,6 @@ import { DataTable } from '../../components/ui/DataTable';
 import { StatCard } from '../../components/ui/StatCard';
 import { Switch } from '../../components/ui/Switch';
 import { Input, Field } from '../../components/ui/Input';
-import { Checkbox } from '../../components/ui/Checkbox';
 import { Modal } from '../../components/ui/Modal';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { toast } from '../../components/ui/toast';
