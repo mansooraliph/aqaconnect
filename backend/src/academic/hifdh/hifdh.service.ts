@@ -524,52 +524,55 @@ export class HifdhService {
   async bulkReschedule(studentIds: string[], newStartDate: string, fromDate?: string) {
     let rescheduled = 0;
     let copied = 0;
-    await this.prisma.$transaction(async (tx) => {
-      for (const studentId of studentIds) {
-        const rows = await tx.surahHifdhStudentSchedule.findMany({
-          where: {
-            studentId,
-            rescheduledTo: { none: {} },
-            ...(fromDate && { scheduledDate: { gte: new Date(fromDate) } }),
-          },
-          orderBy: { scheduledDate: 'asc' },
-        });
-        if (rows.length === 0) continue;
+    await this.prisma.$transaction(
+      async (tx) => {
+        for (const studentId of studentIds) {
+          const rows = await tx.surahHifdhStudentSchedule.findMany({
+            where: {
+              studentId,
+              rescheduledTo: { none: {} },
+              ...(fromDate && { scheduledDate: { gte: new Date(fromDate) } }),
+            },
+            orderBy: { scheduledDate: 'asc' },
+          });
+          if (rows.length === 0) continue;
 
-        // Only the pending rows actually start a new schedule generation —
-        // they're the ones being shifted to a new plan. Completed rows are
-        // just being copied forward (unchanged) so they stay visible after
-        // the old, now-superseded row is filtered out of listings; they
-        // keep the scheduleNo of the generation they were actually
-        // completed under, not the new one.
-        const nextScheduleNo = Math.max(...rows.map((r) => r.scheduleNo)) + 1;
+          // Only the pending rows actually start a new schedule generation —
+          // they're the ones being shifted to a new plan. Completed rows are
+          // just being copied forward (unchanged) so they stay visible after
+          // the old, now-superseded row is filtered out of listings; they
+          // keep the scheduleNo of the generation they were actually
+          // completed under, not the new one.
+          const nextScheduleNo = Math.max(...rows.map((r) => r.scheduleNo)) + 1;
 
-        const pendingRows = rows.filter((r) => r.status !== 'COMPLETED');
-        const completedRows = rows.filter((r) => r.status === 'COMPLETED');
+          const pendingRows = rows.filter((r) => r.status !== 'COMPLETED');
+          const completedRows = rows.filter((r) => r.status === 'COMPLETED');
 
-        if (pendingRows.length > 0) {
-          const deltaMs = new Date(newStartDate).getTime() - pendingRows[0].scheduledDate.getTime();
-          for (const row of pendingRows) {
-            await tx.surahHifdhStudentSchedule.create({
-              data: this.rescheduleRowData(
-                row,
-                new Date(row.scheduledDate.getTime() + deltaMs),
-                false,
-                nextScheduleNo,
+          // Batched via createMany rather than one create() per row — a
+          // student can easily have hundreds of pending rows, and Prisma's
+          // interactive-transaction timeout (5s default) was getting blown
+          // past by that many sequential round trips once this got wired to
+          // a multi-student reschedule prompt.
+          if (pendingRows.length > 0) {
+            const deltaMs = new Date(newStartDate).getTime() - pendingRows[0].scheduledDate.getTime();
+            await tx.surahHifdhStudentSchedule.createMany({
+              data: pendingRows.map((row) =>
+                this.rescheduleRowData(row, new Date(row.scheduledDate.getTime() + deltaMs), false, nextScheduleNo),
               ),
             });
-            rescheduled++;
+            rescheduled += pendingRows.length;
+          }
+
+          if (completedRows.length > 0) {
+            await tx.surahHifdhStudentSchedule.createMany({
+              data: completedRows.map((row) => this.rescheduleRowData(row, row.scheduledDate, true, row.scheduleNo)),
+            });
+            copied += completedRows.length;
           }
         }
-
-        for (const row of completedRows) {
-          await tx.surahHifdhStudentSchedule.create({
-            data: this.rescheduleRowData(row, row.scheduledDate, true, row.scheduleNo),
-          });
-          copied++;
-        }
-      }
-    });
+      },
+      { timeout: 30_000 },
+    );
     return { rescheduled, copied };
   }
 
