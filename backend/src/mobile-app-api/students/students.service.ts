@@ -816,6 +816,14 @@ export class MobileStudentsService {
     return serializeExam(updated);
   }
 
+  async deleteStudentExam(branchId: string, examId: string) {
+    const exam = await this.prisma.studentExam.findFirst({ where: { id: examId, branchId } });
+    if (!exam) {
+      throw new NotFoundException({ status: 'error', message: 'Exam record not found' });
+    }
+    await this.prisma.studentExam.delete({ where: { id: examId } });
+  }
+
   async addStudentEvent(branchId: string, dto: AddStudentEventDto) {
     const student = await this.prisma.student.findFirst({ where: { id: dto.student_id, branchId } });
     if (!student) {

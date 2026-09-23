@@ -190,6 +190,15 @@ export class StudentsController {
     return this.handle(() => this.service.updateStudentExam(branchId, examId, dto), 'Failed to update exam record');
   }
 
+  @Delete('destroy-student-exams/:examId')
+  async deleteStudentExam(@Req() req: AuthedRequest, @Param('examId') examId: string) {
+    const branchId = await this.context.resolveBranchId(req.user.userId);
+    return this.handle(async () => {
+      await this.service.deleteStudentExam(branchId, examId);
+      return { status: 'success', message: 'Exam deleted successfully' };
+    }, 'Failed to delete exam record');
+  }
+
   @Post('student-events')
   @HttpCode(201)
   async addStudentEvent(@Req() req: AuthedRequest, @Body() dto: AddStudentEventDto) {
