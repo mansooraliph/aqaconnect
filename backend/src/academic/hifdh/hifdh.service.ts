@@ -487,6 +487,26 @@ export class HifdhService {
   }
 
   /**
+   * Which students in this branch have an active (non-superseded),
+   * not-yet-completed schedule row on this exact date — used to prompt
+   * "these N students are affected, reschedule them?" right when a branch
+   * marks that date as a Holiday/Event on the Calendar page.
+   */
+  async getScheduleConflictsForDate(branchId: string, date: string) {
+    const rows = await this.prisma.surahHifdhStudentSchedule.findMany({
+      where: {
+        scheduledDate: new Date(date),
+        status: { not: 'COMPLETED' },
+        rescheduledTo: { none: {} },
+        student: { branchId },
+      },
+      distinct: ['studentId'],
+      select: { studentId: true, student: { select: { name: true } } },
+    });
+    return { students: rows.map((r) => ({ studentId: r.studentId, studentName: r.student.name })) };
+  }
+
+  /**
    * Bulk, per-student version of reschedule() — used to shift a student's (or
    * several students') whole remaining schedule after a disruption (absence,
    * holiday, curriculum restart), rather than one row at a time. Pending

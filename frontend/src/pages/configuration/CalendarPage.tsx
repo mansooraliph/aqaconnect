@@ -13,6 +13,7 @@ import { Input, Field } from '../../components/ui/Input';
 import { Modal } from '../../components/ui/Modal';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { toast } from '../../components/ui/toast';
+import { BulkRescheduleModal } from '../academic/HifdhTrackingPage';
 
 interface AcademicYear {
   id: string;
@@ -91,6 +92,37 @@ export function CalendarPage() {
     queryClient.invalidateQueries({ queryKey: ['calendar-days-stats'] });
   };
 
+  // ---- Reschedule prompt when marking a day Holiday/Event ----
+  const [rescheduleTargets, setRescheduleTargets] = useState<{ studentId: string; studentName: string }[] | null>(
+    null,
+  );
+  const [rescheduleFromDate, setRescheduleFromDate] = useState('');
+  const [rescheduleNewStartDate, setRescheduleNewStartDate] = useState('');
+
+  const addDays = (dateOnly: string, days: number) => {
+    const d = new Date(`${dateOnly}T00:00:00.000Z`);
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+  };
+
+  /** Only call this after a day was just marked Holiday/Event true — turning either off has nothing to reschedule. */
+  const checkAndPromptReschedule = async (dateOnly: string) => {
+    try {
+      const { data } = await api.get<{ students: { studentId: string; studentName: string }[] }>(
+        `/branches/${activeBranchId}/hifdh-schedules/date-conflicts`,
+        { params: { date: dateOnly } },
+      );
+      if (data.students.length > 0) {
+        setRescheduleFromDate(dateOnly);
+        setRescheduleNewStartDate(addDays(dateOnly, 1));
+        setRescheduleTargets(data.students);
+      }
+    } catch {
+      // Non-critical — the day is already marked either way; the branch can
+      // still reschedule manually from Hifdh Tracking if this check fails.
+    }
+  };
+
   const handleGenerate = async () => {
     if (!academicYearId) return;
     const { data } = await api.post<{ created: number; skipped: number }>(
@@ -112,6 +144,9 @@ export function CalendarPage() {
         eventName: payload.eventName ?? record.eventName,
         note: payload.note ?? record.note,
       });
+      if (payload.isHoliday === true || payload.isEvent === true) {
+        checkAndPromptReschedule(record.date.slice(0, 10));
+      }
       refetchAll();
     } catch {
       toast.error('Failed to update day');
@@ -170,6 +205,9 @@ export function CalendarPage() {
       setAddDayOpen(false);
       setAcademicYearId(undefined);
       setBrowseYear(newDayDate.slice(0, 4));
+      if (fields.isHoliday || fields.isEvent) {
+        checkAndPromptReschedule(newDayDate);
+      }
       refetchAll();
     } catch (err) {
       const serverMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
@@ -457,6 +495,15 @@ export function CalendarPage() {
           </Field>
         </div>
       </Modal>
+
+      <BulkRescheduleModal
+        activeBranchId={activeBranchId}
+        students={rescheduleTargets}
+        initialFromDate={rescheduleFromDate}
+        initialNewStartDate={rescheduleNewStartDate}
+        onClose={() => setRescheduleTargets(null)}
+        onSuccess={refetchAll}
+      />
     </div>
   );
 }

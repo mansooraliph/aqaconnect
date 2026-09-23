@@ -397,27 +397,41 @@ function SchedulesTab({
 }
 
 /** Reschedules one or several students' whole remaining (not-yet-completed) schedule by a fixed date shift. */
-function BulkRescheduleModal({
+export function BulkRescheduleModal({
   activeBranchId,
   students,
+  initialFromDate,
+  initialNewStartDate,
   onClose,
   onSuccess,
 }: {
   activeBranchId: string | undefined;
-  students: StudentProgressSummary[] | null;
+  students: { studentId: string; studentName: string }[] | null;
+  /** Pre-fills the two date fields — e.g. the Calendar page passes the just-marked date and the day after it. */
+  initialFromDate?: string;
+  initialNewStartDate?: string;
   onClose: () => void;
   onSuccess: () => void;
 }) {
   const todayStr = () => new Date().toISOString().slice(0, 10);
 
-  const [fromDate, setFromDate] = useState<string>('');
-  const [newStartDate, setNewStartDate] = useState<string>(todayStr());
+  const [fromDate, setFromDate] = useState<string>(initialFromDate ?? '');
+  const [newStartDate, setNewStartDate] = useState<string>(initialNewStartDate ?? todayStr());
   const [submitting, setSubmitting] = useState(false);
 
   const reset = () => {
-    setFromDate('');
-    setNewStartDate(todayStr());
+    setFromDate(initialFromDate ?? '');
+    setNewStartDate(initialNewStartDate ?? todayStr());
   };
+
+  // This modal stays mounted the whole time (visibility is driven by
+  // `students` going null/non-null), so the useState initializers above only
+  // run once ever — re-sync the date fields to the caller's props every time
+  // it's freshly opened for a new set of students.
+  useEffect(() => {
+    if (students) reset();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [students]);
 
   const handleClose = () => {
     reset();

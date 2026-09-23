@@ -83,6 +83,12 @@ export class HifdhSchedulesController {
     return this.service.reschedule(id, dto);
   }
 
+  @Get('date-conflicts')
+  @RequirePermission('academic.hifdh_schedules.view')
+  dateConflicts(@Param('branchId') branchId: string, @Query('date') date: string) {
+    return this.service.getScheduleConflictsForDate(branchId, date);
+  }
+
   @Post('bulk-reschedule')
   @RequirePermission('academic.hifdh_schedules.manage')
   bulkReschedule(@Body() dto: BulkRescheduleDto) {
