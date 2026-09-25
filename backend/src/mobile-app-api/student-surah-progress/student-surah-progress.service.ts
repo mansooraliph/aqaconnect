@@ -270,7 +270,16 @@ export class StudentSurahProgressService {
     fallbackSurahIds: string[],
   ): Promise<string[]> {
     const scheduleRows = await this.prisma.surahHifdhStudentSchedule.findMany({
-      where: { studentId, surahId: { not: null } },
+      where: {
+        studentId,
+        surahId: { not: null },
+        // Exclude rows superseded by a reschedule — otherwise a surah whose
+        // slot was moved keeps ranking by its old, stale day/date alongside
+        // the replacement row, scrambling its position relative to
+        // surrounding surahs. Mirrors HifdhService.listSchedules, the admin
+        // schedule view, which already filters this out (see its comment).
+        rescheduledTo: { none: {} },
+      },
       orderBy: [{ day: 'asc' }, { scheduledDate: 'asc' }],
       select: { surahId: true },
     });
