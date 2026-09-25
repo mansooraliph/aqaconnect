@@ -1013,6 +1013,11 @@ export class MobileStudentsService {
       include: {
         surah: { select: { id: true, number: true, nameArabic: true, nameEnglish: true, totalAyahs: true } },
       },
+      // `completedAt` is date-only (always midnight), so it can't order same-
+      // day entries relative to each other — the mobile app's "what's the
+      // next lesson type to mark" logic relies on this array being in true
+      // creation order to find the actually-last-marked entry for today.
+      orderBy: { createdAt: 'asc' },
     });
 
     // For cross-surah Old/Juzh Lesson ranges, `surah` above only resolves
