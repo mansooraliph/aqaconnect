@@ -276,11 +276,28 @@ export class StudentSurahProgressService {
         // Exclude rows superseded by a reschedule — otherwise a surah whose
         // slot was moved keeps ranking by its old, stale day/date alongside
         // the replacement row, scrambling its position relative to
-        // surrounding surahs. Mirrors HifdhService.listSchedules, the admin
-        // schedule view, which already filters this out (see its comment).
+        // surrounding surahs. When a schedule is regenerated for part of a
+        // student's plan (bulkReschedule), this is also what correctly
+        // drops the superseded generation's rows for the range that got
+        // regenerated, while leaving untouched days from that same old
+        // generation in place — there's no single "latest scheduleNo" that
+        // works here, only "not superseded". Mirrors HifdhService.
+        // listSchedules, the admin schedule view, which already filters
+        // this out (see its comment).
         rescheduledTo: { none: {} },
       },
-      orderBy: [{ day: 'asc' }, { scheduledDate: 'asc' }],
+      orderBy: [
+        { day: 'asc' },
+        { scheduledDate: 'asc' },
+        // A single day/date commonly holds several rows (e.g. a sabaq +
+        // several sabqi/manzil rows, or — as with Juz Amma — a whole batch
+        // of short surahs on day 1). day/scheduledDate alone don't order
+        // those relative to each other, so Postgres returns them in
+        // whatever order they happen to be stored, not curriculum order.
+        // surahTarget.sortOrder is the master plan's own display order —
+        // the same tiebreak HifdhService.listSchedules already relies on.
+        { surahTarget: { sortOrder: 'asc' } },
+      ],
       select: { surahId: true },
     });
     const orderedIds: string[] = [];
