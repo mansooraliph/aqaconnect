@@ -1214,6 +1214,8 @@ export class MobileStudentsService {
               result_label: resultLabel,
               marks: ex.marks !== null ? Number(ex.marks) : null,
               remarks: ex.remarks,
+              exam_mode: ex.examMode === 'MUKAMMAL' ? 'mukammal' : 'exam',
+              juz_numbers: ex.juzNumbers,
             },
             ex.id,
             'exam',
