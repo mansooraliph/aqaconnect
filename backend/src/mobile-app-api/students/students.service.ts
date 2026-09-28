@@ -1072,6 +1072,8 @@ export class MobileStudentsService {
           range = `Juz ${e.juzuhFrom}${e.juzuhTo && e.juzuhTo !== e.juzuhFrom ? `-${e.juzuhTo}` : ''}`;
         } else if (e.pageFrom) {
           range = `Page ${e.pageFrom}${e.pageTo && e.pageTo !== e.pageFrom ? `-${e.pageTo}` : ''}`;
+        } else if (e.pageCount) {
+          range = `${e.pageCount} Pages Read`;
         }
         description = range ? `${lessonLabel}: ${range}` : lessonLabel;
       }
@@ -1100,6 +1102,7 @@ export class MobileStudentsService {
               juzuh_to: e.juzuhTo,
               page_from: e.pageFrom,
               page_to: e.pageTo,
+              page_count: e.pageCount,
               from_ayah: e.fromAyah,
               to_ayah: e.toAyah,
               type: lessonLabel,
