@@ -1165,6 +1165,9 @@ model StudentSurahProgressEntry {
   juzuhTo       Int?
   pageFrom      Int?
   pageTo        Int?
+  // "Total Pages Read" method — a plain page count with no specific
+  // from/to range (unlike pageFrom/pageTo, which record an actual range).
+  pageCount     Int?
 
   addedById       String?
   addedBy         User?   @relation("ProgressEntryAddedBy", fields: [addedById], references: [id])

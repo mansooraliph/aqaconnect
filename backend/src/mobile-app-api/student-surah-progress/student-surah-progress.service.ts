@@ -1544,6 +1544,7 @@ export class StudentSurahProgressService {
         juzuhTo: dto.juzuh_to,
         pageFrom: dto.page_from,
         pageTo: dto.page_to,
+        pageCount: dto.page_count,
         addedById: userId,
         lastUpdatedById: userId,
       },
@@ -1569,6 +1570,7 @@ export class StudentSurahProgressService {
         juzuh_to: entry.juzuhTo,
         page_from: entry.pageFrom,
         page_to: entry.pageTo,
+        page_count: entry.pageCount,
         surah_range: entry.surahFrom
           ? `${entry.surahFrom}${entry.surahTo && entry.surahTo !== entry.surahFrom ? `-${entry.surahTo}` : ''}`
           : null,
@@ -1577,7 +1579,9 @@ export class StudentSurahProgressService {
           : null,
         page_range: entry.pageFrom
           ? `${entry.pageFrom}${entry.pageTo && entry.pageTo !== entry.pageFrom ? `-${entry.pageTo}` : ''}`
-          : null,
+          : entry.pageCount
+            ? `${entry.pageCount} pages`
+            : null,
         created_at: formatDateTime(entry.createdAt),
       },
     };
@@ -1687,9 +1691,12 @@ export class StudentSurahProgressService {
         : null,
       page_from: entry.pageFrom,
       page_to: entry.pageTo,
+      page_count: entry.pageCount,
       page_range: entry.pageFrom
         ? `${entry.pageFrom}${entry.pageTo && entry.pageTo !== entry.pageFrom ? `-${entry.pageTo}` : ''}`
-        : null,
+        : entry.pageCount
+          ? `${entry.pageCount} pages`
+          : null,
     }));
 
     const lastPage = Math.max(1, Math.ceil(total / perPage));

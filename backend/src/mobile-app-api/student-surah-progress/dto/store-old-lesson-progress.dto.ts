@@ -61,6 +61,15 @@ export class StoreOldLessonProgressDto {
   @Max(604)
   page_to?: number;
 
+  // "Total Pages Read" method — a plain count, independent of page_from/
+  // page_to (which record an actual page range).
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(604)
+  page_count?: number;
+
   @IsOptional()
   @IsIn(['Very Good', 'Good', 'Average', 'Bad'])
   grade?: 'Very Good' | 'Good' | 'Average' | 'Bad';
