@@ -1071,6 +1071,11 @@ model StudentExam {
   marks      Decimal?            @db.Decimal(5, 2)
   remarks    String?
   scheduleId String?
+  // "Evaluation" mode — a plain Exam vs. a Mukammal (comprehensive,
+  // multi-Juz' completion assessment). juzNumbers holds which Juz' (1-30)
+  // this evaluation covered, for either mode.
+  examMode   StudentExamMode     @default(EXAM)
+  juzNumbers Int[]               @default([])
   createdAt  DateTime            @default(now())
   updatedAt  DateTime            @updatedAt
 
@@ -1082,6 +1087,11 @@ enum StudentExamOutcome {
   PASS
   FAIL
   PREPARATION
+}
+
+enum StudentExamMode {
+  EXAM
+  MUKAMMAL
 }
 
 // A one-off school/academy event marked against a student (arts day, sports

@@ -4,7 +4,7 @@ import { randomBytes } from 'crypto';
 import { mkdirSync, createWriteStream, existsSync } from 'fs';
 import { join } from 'path';
 import PDFDocument from 'pdfkit';
-import { Gender, StudentExamOutcome, ProgressEntryGrade, ProgressEntryStatus, ProgressEntryType } from '@prisma/client';
+import { Gender, StudentExamOutcome, StudentExamMode, ProgressEntryGrade, ProgressEntryStatus, ProgressEntryType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { HifdhService } from '../../academic/hifdh/hifdh.service';
 import { MobileContextService } from '../common/mobile-context.service';
@@ -778,6 +778,8 @@ export class MobileStudentsService {
         marks: dto.marks,
         remarks: dto.remarks,
         scheduleId: dto.schedule_id,
+        examMode: dto.exam_mode === 'mukammal' ? 'MUKAMMAL' : 'EXAM',
+        juzNumbers: dto.juz_numbers ?? [],
       },
     });
 
@@ -810,6 +812,10 @@ export class MobileStudentsService {
         ...(dto.marks !== undefined && { marks: dto.marks }),
         ...(dto.remarks !== undefined && { remarks: dto.remarks }),
         ...(dto.schedule_id !== undefined && { scheduleId: dto.schedule_id }),
+        ...(dto.exam_mode !== undefined && {
+          examMode: dto.exam_mode === 'mukammal' ? 'MUKAMMAL' : 'EXAM',
+        }),
+        ...(dto.juz_numbers !== undefined && { juzNumbers: dto.juz_numbers }),
       },
     });
 
@@ -1612,6 +1618,8 @@ export class MobileStudentsService {
         result: e.result ? EXAM_RESULT_DISPLAY[e.result] : null,
         marks: e.marks,
         remarks: e.remarks,
+        exam_mode: e.examMode === 'MUKAMMAL' ? 'mukammal' : 'exam',
+        juz_numbers: e.juzNumbers,
       };
     });
 
@@ -1652,6 +1660,8 @@ function serializeExam(exam: {
   marks: unknown;
   remarks: string | null;
   scheduleId: string | null;
+  examMode: StudentExamMode;
+  juzNumbers: number[];
   createdAt: Date;
   updatedAt: Date;
 }) {
@@ -1670,6 +1680,8 @@ function serializeExam(exam: {
       marks: exam.marks,
       remarks: exam.remarks,
       schedule_id: exam.scheduleId,
+      exam_mode: exam.examMode === 'MUKAMMAL' ? 'mukammal' : 'exam',
+      juz_numbers: exam.juzNumbers,
     },
   };
 }
