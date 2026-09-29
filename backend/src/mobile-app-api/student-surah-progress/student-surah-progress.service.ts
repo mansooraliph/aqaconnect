@@ -2258,13 +2258,21 @@ export class StudentSurahProgressService {
       userId,
     );
 
+    // Was: one groupBy(studentId) to find candidates, then a findMany with
+    // distinct:['type'] PER CANDIDATE STUDENT to check how many distinct
+    // types they had — called twice per report (range + "recent"), so a
+    // full "all halqas" load was 2 x (1 + N) queries. A single
+    // groupBy(['studentId', 'type']) already returns one row per
+    // (student, type) pair that has ≥1 matching record — grouping those
+    // rows by studentId in JS gives the exact same distinct-type-count
+    // check with 2 total queries instead of 2 x (1 + N).
     const getStudentsWithAllTypes = async (
       start: string,
       end: string,
     ): Promise<string[] | null> => {
       if (types.length === 0) return null;
       const grouped = await this.prisma.studentSurahProgressEntry.groupBy({
-        by: ['studentId'],
+        by: ['studentId', 'type'],
         where: {
           branchId,
           status: { in: ['COMPLETED', 'VERIFIED'] },
@@ -2274,29 +2282,17 @@ export class StudentSurahProgressService {
           },
           type: { in: types.map((t) => TYPE_TO_ENUM[t]) },
         },
-        _count: { _all: true },
       });
-      // groupBy doesn't give distinct-type counts directly; approximate by re-querying distinct types per student.
-      const result: string[] = [];
+      const typesByStudent = new Map<string, Set<string>>();
       for (const g of grouped) {
-        const distinctTypes =
-          await this.prisma.studentSurahProgressEntry.findMany({
-            where: {
-              branchId,
-              studentId: g.studentId,
-              status: { in: ['COMPLETED', 'VERIFIED'] },
-              completedAt: {
-                gte: new Date(`${start}T00:00:00.000Z`),
-                lte: new Date(`${end}T23:59:59.999Z`),
-              },
-              type: { in: types.map((t) => TYPE_TO_ENUM[t]) },
-            },
-            distinct: ['type'],
-            select: { type: true },
-          });
-        if (distinctTypes.length >= types.length) result.push(g.studentId);
+        if (!g.type) continue;
+        const set = typesByStudent.get(g.studentId) ?? new Set<string>();
+        set.add(g.type);
+        typesByStudent.set(g.studentId, set);
       }
-      return result;
+      return [...typesByStudent.entries()]
+        .filter(([, set]) => set.size >= types.length)
+        .map(([id]) => id);
     };
 
     const studentsWithAllTypesInRange = await getStudentsWithAllTypes(
@@ -2466,24 +2462,15 @@ export class StudentSurahProgressService {
       types.length > 0 ? (studentsWithAllTypesInRange ?? []) : [],
     );
     for (const student of students) {
-      let hasAllRequired: boolean;
-      if (types.length === 0) {
-        hasAllRequired = await this.prisma.studentSurahProgressEntry
-          .count({
-            where: {
-              branchId,
-              studentId: student.id,
-              status: { in: ['COMPLETED', 'VERIFIED'] },
-              completedAt: {
-                gte: new Date(`${fromDate}T00:00:00.000Z`),
-                lte: new Date(`${toDate}T23:59:59.999Z`),
-              },
-            },
-          })
-          .then((c) => c > 0);
-      } else {
-        hasAllRequired = studentsWithAllTypesSet.has(student.id);
-      }
+      // When no type filter is active, "has a completed record in range"
+      // is exactly what studentsCompletedMap already captured from
+      // completedRecords (fetched once, above) — re-querying per student
+      // here was a redundant N+1 asking the DB something we'd already
+      // pulled into memory.
+      const hasAllRequired =
+        types.length === 0
+          ? studentsCompletedMap.has(student.id)
+          : studentsWithAllTypesSet.has(student.id);
       if (hasAllRequired) continue;
 
       const leave = leaveByStudent.get(student.id);
