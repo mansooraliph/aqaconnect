@@ -1868,6 +1868,11 @@ export class StudentSurahProgressService {
 
     const completedStudents: Record<string, unknown>[] = [];
     const pendingStudents: Record<string, unknown>[] = [];
+    // Students on leave today with no progress recorded — previously just
+    // silently dropped from both buckets. Kept separate so a consumer like
+    // the Halqa students list can show a "Leave" status tag for them
+    // instead of them vanishing from the day entirely.
+    const onLeaveStudents: Record<string, unknown>[] = [];
 
     for (const student of students) {
       const records = progressByStudent.get(student.id);
@@ -1943,22 +1948,24 @@ export class StudentSurahProgressService {
         String(a.time ?? '').localeCompare(String(b.time ?? '')),
       );
 
-      const studentData: Record<string, unknown> = {
-        student: await this.formatStudentBasic(student),
-        activities,
-        total_ayahs_today: totalAyahsToday,
-        lesson_types: [...lessonTypesMap.values()],
-        surahs_completed: surahsCompleted,
-      };
-
       // A student who's on approved leave or already has an exam/Mukammal
       // marked today is "handled" for the day even without ordinary lesson
       // progress — don't let them clutter the Pending bucket.
       const hasLeaveToday = (leavesByStudent.get(student.id) ?? []).length > 0;
       const hasExamToday = (examsByStudent.get(student.id) ?? []).length > 0;
 
+      const studentData: Record<string, unknown> = {
+        student: await this.formatStudentBasic(student),
+        activities,
+        total_ayahs_today: totalAyahsToday,
+        lesson_types: [...lessonTypesMap.values()],
+        surahs_completed: surahsCompleted,
+        is_on_leave: hasLeaveToday,
+      };
+
       if (records && records.length > 0) completedStudents.push(studentData);
-      else if (!hasLeaveToday && !hasExamToday) pendingStudents.push(studentData);
+      else if (hasLeaveToday) onLeaveStudents.push(studentData);
+      else if (!hasExamToday) pendingStudents.push(studentData);
     }
 
     const globalEvents = holidays.map((h) => ({
@@ -1986,6 +1993,10 @@ export class StudentSurahProgressService {
         pending: {
           total_students: pendingStudents.length,
           students: pendingStudents,
+        },
+        on_leave: {
+          total_students: onLeaveStudents.length,
+          students: onLeaveStudents,
         },
         global_events: globalEvents,
       },
