@@ -1992,43 +1992,97 @@ export class StudentSurahProgressService {
     };
   }
 
-  private async targetAndActualAyahs(
+  /**
+   * Batched target/actual-ayahs lookup for a whole student set — used by
+   * getStudentsExceededTarget/studentsWithPendingTargets, which used to
+   * call a single-student version in a sequential per-student loop (2N
+   * DB round-trips for N students). For "all halqas" with many students
+   * that was the same class of problem that made Top Students slow/502:
+   * two groupBy aggregations (one for schedules, one for progress entries)
+   * replace 2N findMany calls with 2 total, using the same
+   * sum(to) - sum(from) + count === sum(to - from + 1) decomposition as
+   * getTopStudents (non-null from/to filtered in, since a null-range row
+   * contributes 0 either way).
+   */
+  private async targetAndActualAyahsBatch(
     branchId: string,
-    studentId: string,
+    studentIds: string[],
     fromDate: string,
     toDate: string,
     type?: string,
-  ) {
-    const range = {
-      gte: new Date(`${fromDate}T00:00:00.000Z`),
-      lte: new Date(`${toDate}T23:59:59.999Z`),
-    };
-    const schedules = await this.prisma.surahHifdhStudentSchedule.findMany({
-      where: {
-        studentId,
-        scheduledDate: { gte: new Date(fromDate), lte: new Date(toDate) },
-      },
-    });
-    const targetAyahs = schedules.reduce(
-      (sum, s) => sum + this.ayahSpan(s.fromAyah, s.toAyah),
-      0,
-    );
+  ): Promise<Map<string, { targetAyahs: number; actualAyahs: number }>> {
+    const result = new Map<
+      string,
+      { targetAyahs: number; actualAyahs: number }
+    >();
+    if (studentIds.length === 0) return result;
+    for (const id of studentIds) result.set(id, { targetAyahs: 0, actualAyahs: 0 });
 
-    const records = await this.prisma.studentSurahProgressEntry.findMany({
-      where: {
-        branchId,
-        studentId,
-        status: { in: ['COMPLETED', 'VERIFIED'] },
-        completedAt: range,
-        ...(type && { type: TYPE_TO_ENUM[type] }),
-      },
-    });
-    const actualAyahs = records.reduce(
-      (sum, r) => sum + this.ayahSpan(r.fromAyah, r.toAyah),
-      0,
-    );
+    const [scheduleGroups, progressGroups] = await Promise.all([
+      this.prisma.surahHifdhStudentSchedule.groupBy({
+        by: ['studentId'],
+        where: {
+          studentId: { in: studentIds },
+          scheduledDate: { gte: new Date(fromDate), lte: new Date(toDate) },
+          fromAyah: { not: null },
+          toAyah: { not: null },
+        },
+        _sum: { fromAyah: true, toAyah: true },
+        _count: { _all: true },
+      }),
+      this.prisma.studentSurahProgressEntry.groupBy({
+        by: ['studentId'],
+        where: {
+          branchId,
+          studentId: { in: studentIds },
+          status: { in: ['COMPLETED', 'VERIFIED'] },
+          completedAt: {
+            gte: new Date(`${fromDate}T00:00:00.000Z`),
+            lte: new Date(`${toDate}T23:59:59.999Z`),
+          },
+          ...(type && { type: TYPE_TO_ENUM[type] }),
+          fromAyah: { not: null },
+          toAyah: { not: null },
+        },
+        _sum: { fromAyah: true, toAyah: true },
+        _count: { _all: true },
+      }),
+    ]);
 
-    return { targetAyahs, actualAyahs };
+    for (const g of scheduleGroups) {
+      const entry = result.get(g.studentId);
+      if (entry) {
+        entry.targetAyahs =
+          (g._sum.toAyah ?? 0) - (g._sum.fromAyah ?? 0) + g._count._all;
+      }
+    }
+    for (const g of progressGroups) {
+      const entry = result.get(g.studentId);
+      if (entry) {
+        entry.actualAyahs =
+          (g._sum.toAyah ?? 0) - (g._sum.fromAyah ?? 0) + g._count._all;
+      }
+    }
+    return result;
+  }
+
+  /** Batch halqa lookup for a small, already-bounded set of students (e.g. the final `limit`-sized result page) — avoids one findFirst per student. */
+  private async studentHalqasBatch(studentIds: string[]) {
+    const result = new Map<
+      string,
+      { id: string; name: string; status: string }
+    >();
+    if (studentIds.length === 0) return result;
+    const memberships = await this.prisma.halqaStudent.findMany({
+      where: { studentId: { in: studentIds }, removedAt: null },
+      include: { halqa: { select: { id: true, name: true, status: true } } },
+    });
+    for (const m of memberships) {
+      if (m.halqa && !result.has(m.studentId)) {
+        result.set(m.studentId, m.halqa);
+      }
+    }
+    return result;
   }
 
   // ── studentsWithPendingTargets ───────────────────────────────────────
@@ -2052,38 +2106,42 @@ export class StudentSurahProgressService {
       undefined,
       userId,
     );
-    const result: Record<string, unknown>[] = [];
-
-    for (const student of students) {
-      const { targetAyahs, actualAyahs } = await this.targetAndActualAyahs(
-        branchId,
-        student.id,
-        query.from_date,
-        query.to_date,
-        query.type,
-      );
-      if (targetAyahs === 0) continue;
-      const deficit = targetAyahs - actualAyahs;
-      if (deficit > minDeficit) {
-        const halqa = await this.studentHalqa(student.id);
-        result.push({
-          student: {
-            ...(await this.formatStudentBasic(student)),
-            halqa: halqa ? { id: halqa.id, name: halqa.name } : null,
-          },
-          target_ayahs: targetAyahs,
-          actual_ayahs: actualAyahs,
-          deficit_ayahs: deficit,
-        });
-      }
-    }
-
-    result.sort(
-      (a, b) =>
-        (b as { deficit_ayahs: number }).deficit_ayahs -
-        (a as { deficit_ayahs: number }).deficit_ayahs,
+    const ayahsByStudent = await this.targetAndActualAyahsBatch(
+      branchId,
+      students.map((s) => s.id),
+      query.from_date,
+      query.to_date,
+      query.type,
     );
-    const limited = result.slice(0, limit);
+
+    const qualifying = students
+      .map((student) => {
+        const { targetAyahs, actualAyahs } = ayahsByStudent.get(student.id)!;
+        return { student, targetAyahs, actualAyahs, deficit: targetAyahs - actualAyahs };
+      })
+      .filter((r) => r.targetAyahs !== 0 && r.deficit > minDeficit)
+      .sort((a, b) => b.deficit - a.deficit);
+    const limited = qualifying.slice(0, limit);
+
+    const halqaByStudent = await this.studentHalqasBatch(
+      limited.map((r) => r.student.id),
+    );
+    const result = await Promise.all(
+      limited.map(async (r) => ({
+        student: {
+          ...(await this.formatStudentBasic(r.student)),
+          halqa: halqaByStudent.get(r.student.id)
+            ? {
+                id: halqaByStudent.get(r.student.id)!.id,
+                name: halqaByStudent.get(r.student.id)!.name,
+              }
+            : null,
+        },
+        target_ayahs: r.targetAyahs,
+        actual_ayahs: r.actualAyahs,
+        deficit_ayahs: r.deficit,
+      })),
+    );
 
     return {
       status: 'success',
@@ -2095,8 +2153,8 @@ export class StudentSurahProgressService {
           min_deficit: minDeficit,
           limit,
         },
-        total_students_with_pending: limited.length,
-        students: limited,
+        total_students_with_pending: result.length,
+        students: result,
       },
     };
   }
@@ -2123,37 +2181,42 @@ export class StudentSurahProgressService {
       undefined,
       userId,
     );
-    const result: Record<string, unknown>[] = [];
-
-    for (const student of students) {
-      const { targetAyahs, actualAyahs } = await this.targetAndActualAyahs(
-        branchId,
-        student.id,
-        fromDate,
-        toDate,
-        query.type,
-      );
-      const excess = actualAyahs - targetAyahs;
-      if (excess > minExcess) {
-        const halqa = await this.studentHalqa(student.id);
-        result.push({
-          student: {
-            ...(await this.formatStudentBasic(student)),
-            halqa: halqa ? { id: halqa.id, name: halqa.name } : null,
-          },
-          target_ayahs: targetAyahs,
-          actual_ayahs: actualAyahs,
-          excess_ayahs: excess,
-        });
-      }
-    }
-
-    result.sort(
-      (a, b) =>
-        (b as { excess_ayahs: number }).excess_ayahs -
-        (a as { excess_ayahs: number }).excess_ayahs,
+    const ayahsByStudent = await this.targetAndActualAyahsBatch(
+      branchId,
+      students.map((s) => s.id),
+      fromDate,
+      toDate,
+      query.type,
     );
-    const limited = result.slice(0, limit);
+
+    const qualifying = students
+      .map((student) => {
+        const { targetAyahs, actualAyahs } = ayahsByStudent.get(student.id)!;
+        return { student, targetAyahs, actualAyahs, excess: actualAyahs - targetAyahs };
+      })
+      .filter((r) => r.excess > minExcess)
+      .sort((a, b) => b.excess - a.excess);
+    const limited = qualifying.slice(0, limit);
+
+    const halqaByStudent = await this.studentHalqasBatch(
+      limited.map((r) => r.student.id),
+    );
+    const result = await Promise.all(
+      limited.map(async (r) => ({
+        student: {
+          ...(await this.formatStudentBasic(r.student)),
+          halqa: halqaByStudent.get(r.student.id)
+            ? {
+                id: halqaByStudent.get(r.student.id)!.id,
+                name: halqaByStudent.get(r.student.id)!.name,
+              }
+            : null,
+        },
+        target_ayahs: r.targetAyahs,
+        actual_ayahs: r.actualAyahs,
+        excess_ayahs: r.excess,
+      })),
+    );
 
     return {
       status: 'success',
@@ -2165,8 +2228,8 @@ export class StudentSurahProgressService {
           min_excess: minExcess,
           limit,
         },
-        total_students_exceeded: limited.length,
-        students: limited,
+        total_students_exceeded: result.length,
+        students: result,
       },
     };
   }
@@ -2657,13 +2720,54 @@ export class StudentSurahProgressService {
       where.studentId = query.student_id;
     }
 
-    const records = await this.prisma.studentSurahProgressEntry.findMany({
-      where,
-      include: {
-        student: { include: { user: { select: { email: true } } } },
-        surah: { select: SURAH_SELECT },
-      },
-    });
+    // Two-phase: rank with a cheap DB-side aggregation over every matching
+    // row (groupBy — one row per student, no student/surah joins), then
+    // only run the heavy detailed query (with joins) for the winners.
+    // The previous single-pass version pulled every matching progress
+    // entry for the whole branch into Node with full relations included —
+    // fine for one halqa, but for "all halqas" over a wide date range that
+    // was thousands of rows with joins on every request, which is exactly
+    // what was driving the DB connection pool into "too many connections"
+    // under concurrent admin usage. ayahSpan(from, to) = to - from + 1, so
+    // sum(ayahSpan) decomposes algebraically into sum(to) - sum(from) +
+    // count(*) — restricting to non-null from/to keeps that identity exact
+    // (a null-range entry contributes 0 either way).
+    const [rankable, distinctStudents] = await Promise.all([
+      this.prisma.studentSurahProgressEntry.groupBy({
+        by: ['studentId'],
+        where: { ...where, fromAyah: { not: null }, toAyah: { not: null } },
+        _sum: { fromAyah: true, toAyah: true },
+        _count: { _all: true },
+      }),
+      // Separate from `rankable` because a student whose only matching
+      // entries have a null ayah range (Juz/Page-tracked progress) is
+      // excluded from ranking but still has "records" for this count.
+      this.prisma.studentSurahProgressEntry.groupBy({
+        by: ['studentId'],
+        where,
+      }),
+    ]);
+
+    const ranked = rankable
+      .map((g) => ({
+        studentId: g.studentId,
+        totalAyahs:
+          (g._sum.toAyah ?? 0) - (g._sum.fromAyah ?? 0) + g._count._all,
+      }))
+      .sort((a, b) => b.totalAyahs - a.totalAyahs);
+    const topStudentIds = ranked.slice(0, limit).map((r) => r.studentId);
+
+    // Detail query scoped to just the winners — bounded by limit x each
+    // winner's entry count, not the whole branch's history.
+    const records = topStudentIds.length
+      ? await this.prisma.studentSurahProgressEntry.findMany({
+          where: { ...where, studentId: { in: topStudentIds } },
+          include: {
+            student: { include: { user: { select: { email: true } } } },
+            surah: { select: SURAH_SELECT },
+          },
+        })
+      : [];
 
     const studentsData = new Map<
       string,
@@ -2713,10 +2817,11 @@ export class StudentSurahProgressService {
       }
     }
 
-    const list = [...studentsData.values()]
+    // Re-sort by the same total_ayahs the ranking phase computed — the
+    // detail query's row order doesn't preserve rank.
+    const topStudents = [...studentsData.values()]
       .map((d) => ({ ...d, lesson_types: [...d.lesson_types.values()] }))
       .sort((a, b) => b.total_ayahs - a.total_ayahs);
-    const topStudents = list.slice(0, limit);
 
     return {
       status: 'success',
@@ -2729,7 +2834,7 @@ export class StudentSurahProgressService {
         },
         top_students: {
           limit,
-          total_students_with_records: list.length,
+          total_students_with_records: distinctStudents.length,
           students: topStudents,
         },
       },
