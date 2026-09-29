@@ -931,10 +931,17 @@ export class MobileStudentsService {
     query: ActivityQueryDto,
     opts: { includeIdAndType: boolean; includeExams: boolean },
   ) {
-    const student = await this.prisma.student.findFirst({ where: { id: studentId, branchId } });
+    const [student, branch, branchSettings] = await Promise.all([
+      this.prisma.student.findFirst({ where: { id: studentId, branchId } }),
+      this.prisma.branch.findUnique({ where: { id: branchId } }),
+      this.prisma.branchSettings.findUnique({ where: { branchId } }),
+    ]);
     if (!student) {
       throw new NotFoundException({ status: 'error', message: 'Student not found' });
     }
+    // The academy/center name — never the Halqa's name, which is a
+    // different, more granular grouping the caller must not conflate with it.
+    const centerName = branchSettings?.displayName || branch?.name || null;
 
     const joiningDate = student.joiningDate ?? student.createdAt;
     const { start, end } = this.resolveDateRange(query, joiningDate);
@@ -1280,6 +1287,7 @@ export class MobileStudentsService {
           student_id: student.studentCode,
           joining_date: toDateOnly(joiningDate),
         },
+        center_name: centerName,
         date_range: { start: toDateOnly(start), end: toDateOnly(end) },
         activities,
       },
