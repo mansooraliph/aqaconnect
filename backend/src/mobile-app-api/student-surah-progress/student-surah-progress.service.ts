@@ -2098,7 +2098,12 @@ export class StudentSurahProgressService {
       });
     }
     const minDeficit = query.min_deficit ? Number(query.min_deficit) : 0;
-    const limit = query.limit ? Number(query.limit) : 20;
+    // No cap by default — this is an actionable admin worklist, not a
+    // leaderboard, so silently hiding qualifying students past 20 was the
+    // wrong default now that the underlying query is safely aggregated
+    // (bounded per-student cost, not the old raw-row-duplication problem).
+    // An explicit ?limit= is still honored for callers that want one.
+    const limit = query.limit ? Number(query.limit) : null;
 
     const students = await this.activeStudentsForReport(
       branchId,
@@ -2121,7 +2126,7 @@ export class StudentSurahProgressService {
       })
       .filter((r) => r.targetAyahs !== 0 && r.deficit > minDeficit)
       .sort((a, b) => b.deficit - a.deficit);
-    const limited = qualifying.slice(0, limit);
+    const limited = limit !== null ? qualifying.slice(0, limit) : qualifying;
 
     const halqaByStudent = await this.studentHalqasBatch(
       limited.map((r) => r.student.id),
@@ -2173,7 +2178,10 @@ export class StudentSurahProgressService {
       )!;
     const toDate = query.to_date ?? formatDateOnly(now)!;
     const minExcess = query.min_excess ? Number(query.min_excess) : 0;
-    const limit = query.limit ? Number(query.limit) : 20;
+    // No cap by default — see studentsWithPendingTargets for why (this is
+    // an actionable admin worklist, and the query underneath is already
+    // safely aggregated regardless of how many students qualify).
+    const limit = query.limit ? Number(query.limit) : null;
 
     const students = await this.activeStudentsForReport(
       branchId,
@@ -2196,7 +2204,7 @@ export class StudentSurahProgressService {
       })
       .filter((r) => r.excess > minExcess)
       .sort((a, b) => b.excess - a.excess);
-    const limited = qualifying.slice(0, limit);
+    const limited = limit !== null ? qualifying.slice(0, limit) : qualifying;
 
     const halqaByStudent = await this.studentHalqasBatch(
       limited.map((r) => r.student.id),
