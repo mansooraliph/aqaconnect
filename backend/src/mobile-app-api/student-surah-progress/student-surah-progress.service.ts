@@ -2744,71 +2744,136 @@ export class StudentSurahProgressService {
       .sort((a, b) => b.totalAyahs - a.totalAyahs);
     const topStudentIds = ranked.slice(0, limit).map((r) => r.studentId);
 
-    // Detail query scoped to just the winners — bounded by limit x each
-    // winner's entry count, not the whole branch's history.
-    const records = topStudentIds.length
-      ? await this.prisma.studentSurahProgressEntry.findMany({
-          where: { ...where, studentId: { in: topStudentIds } },
-          include: {
-            student: { include: { user: { select: { email: true } } } },
-            surah: { select: SURAH_SELECT },
+    if (topStudentIds.length === 0) {
+      return {
+        status: 'success',
+        data: {
+          date_range: { from_date: query.from_date, to_date: query.to_date },
+          filters: {
+            halqa_id: query.halqa_id ?? null,
+            student_id: query.student_id ?? null,
+            types,
           },
-        })
-      : [];
-
-    const studentsData = new Map<
-      string,
-      {
-        student: Record<string, unknown>;
-        total_ayahs: number;
-        total_entries: number;
-        lesson_types: Map<
-          string,
-          { type: string; total_ayahs: number; entries_count: number }
-        >;
-        surahs_completed: Record<string, unknown>[];
-      }
-    >();
-
-    for (const r of records) {
-      const sid = r.studentId;
-      const ayahs = this.ayahSpan(r.fromAyah, r.toAyah);
-      if (!studentsData.has(sid)) {
-        studentsData.set(sid, {
-          student: await this.formatStudentBasic(r.student),
-          total_ayahs: 0,
-          total_entries: 0,
-          lesson_types: new Map(),
-          surahs_completed: [],
-        });
-      }
-      const data = studentsData.get(sid)!;
-      data.total_ayahs += ayahs;
-      data.total_entries += 1;
-      const typeLabel = r.type ? TYPE_TO_LEGACY[r.type] : 'Lesson';
-      const lt = data.lesson_types.get(typeLabel) ?? {
-        type: typeLabel,
-        total_ayahs: 0,
-        entries_count: 0,
+          top_students: {
+            limit,
+            total_students_with_records: distinctStudents.length,
+            students: [],
+          },
+        },
       };
-      lt.total_ayahs += ayahs;
-      lt.entries_count += 1;
-      data.lesson_types.set(typeLabel, lt);
-      if (
-        r.surah &&
-        !data.surahs_completed.some(
-          (s) => (s as { id: string }).id === r.surah!.id,
-        )
-      ) {
-        data.surahs_completed.push(serializeSurahBasic(r.surah));
-      }
     }
 
-    // Re-sort by the same total_ayahs the ranking phase computed — the
-    // detail query's row order doesn't preserve rank.
-    const topStudents = [...studentsData.values()]
-      .map((d) => ({ ...d, lesson_types: [...d.lesson_types.values()] }))
-      .sort((a, b) => b.total_ayahs - a.total_ayahs);
+    // Detail phase, entirely aggregated — no raw studentSurahProgressEntry
+    // rows are ever pulled into Node here. The previous version did
+    // findMany({ include: { student: {...}, surah: {...} } }) over every
+    // matching entry row for the winners: since `include` embeds a full
+    // copy of the joined row on *every* entry row (not once per student),
+    // a winner with hundreds of entries in range meant hundreds of
+    // duplicated student+surah objects in memory. That's what actually
+    // spiked this process to ~1.8-1.9GB and got it OOM-killed by the OS —
+    // groupBy keeps every result here bounded by `limit` (students) x a
+    // small constant (lesson types, or the ~114 surahs in the Quran),
+    // never by how much history a student has.
+    const winnerWhere: Prisma.StudentSurahProgressEntryWhereInput = {
+      ...where,
+      studentId: { in: topStudentIds },
+    };
+    const [
+      entryCountByStudent,
+      typeCounts,
+      typeAyahSums,
+      surahTouches,
+      winnerStudents,
+    ] = await Promise.all([
+      this.prisma.studentSurahProgressEntry.groupBy({
+        by: ['studentId'],
+        where: winnerWhere,
+        _count: { _all: true },
+      }),
+      this.prisma.studentSurahProgressEntry.groupBy({
+        by: ['studentId', 'type'],
+        where: winnerWhere,
+        _count: { _all: true },
+      }),
+      this.prisma.studentSurahProgressEntry.groupBy({
+        by: ['studentId', 'type'],
+        where: { ...winnerWhere, fromAyah: { not: null }, toAyah: { not: null } },
+        _sum: { fromAyah: true, toAyah: true },
+      }),
+      this.prisma.studentSurahProgressEntry.groupBy({
+        by: ['studentId', 'surahId'],
+        where: { ...winnerWhere, surahId: { not: null } },
+      }),
+      this.prisma.student.findMany({
+        where: { id: { in: topStudentIds } },
+        include: { user: { select: { email: true } } },
+      }),
+    ]);
+
+    const uniqueSurahIds = [
+      ...new Set(surahTouches.map((s) => s.surahId).filter((id): id is string => !!id)),
+    ];
+    // Bounded by the ~114 surahs in the Quran regardless of history size.
+    const surahs = uniqueSurahIds.length
+      ? await this.prisma.surah.findMany({
+          where: { id: { in: uniqueSurahIds } },
+          select: SURAH_SELECT,
+        })
+      : [];
+    const surahById = new Map(surahs.map((s) => [s.id, s]));
+
+    const entryCountMap = new Map(
+      entryCountByStudent.map((g) => [g.studentId, g._count._all]),
+    );
+    const typeAyahMap = new Map<string, Map<string, number>>();
+    for (const g of typeAyahSums) {
+      if (!g.type) continue;
+      const perType = typeAyahMap.get(g.studentId) ?? new Map<string, number>();
+      const sum = (g._sum.toAyah ?? 0) - (g._sum.fromAyah ?? 0);
+      perType.set(g.type, sum);
+      typeAyahMap.set(g.studentId, perType);
+    }
+    const typesByStudent = new Map<string, Map<string, number>>();
+    for (const g of typeCounts) {
+      if (!g.type) continue;
+      const perType = typesByStudent.get(g.studentId) ?? new Map<string, number>();
+      perType.set(g.type, g._count._all);
+      typesByStudent.set(g.studentId, perType);
+    }
+    const surahsByStudent = new Map<string, string[]>();
+    for (const g of surahTouches) {
+      if (!g.surahId) continue;
+      const list = surahsByStudent.get(g.studentId) ?? [];
+      list.push(g.surahId);
+      surahsByStudent.set(g.studentId, list);
+    }
+    const studentById = new Map(winnerStudents.map((s) => [s.id, s]));
+
+    const topStudents = await Promise.all(
+      ranked.slice(0, limit).map(async (r) => {
+        const student = studentById.get(r.studentId);
+        const entryTypeCounts = typesByStudent.get(r.studentId) ?? new Map();
+        const entryTypeAyahs = typeAyahMap.get(r.studentId) ?? new Map();
+        const lessonTypes = [...entryTypeCounts.entries()].map(([type, count]) => ({
+          type: TYPE_TO_LEGACY[type as keyof typeof TYPE_TO_LEGACY] ?? type,
+          total_ayahs: entryTypeAyahs.get(type) ?? 0,
+          entries_count: count,
+        }));
+        const surahsCompleted = (surahsByStudent.get(r.studentId) ?? [])
+          .map((id) => surahById.get(id))
+          .filter((s): s is NonNullable<typeof s> => !!s)
+          .map((s) => serializeSurahBasic(s));
+        return {
+          student: student
+            ? await this.formatStudentBasic(student)
+            : { id: r.studentId },
+          total_ayahs: r.totalAyahs,
+          total_entries: entryCountMap.get(r.studentId) ?? 0,
+          lesson_types: lessonTypes,
+          surahs_completed: surahsCompleted,
+        };
+      }),
+    );
 
     return {
       status: 'success',
