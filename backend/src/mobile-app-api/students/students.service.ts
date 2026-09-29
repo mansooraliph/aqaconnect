@@ -1610,7 +1610,7 @@ export class MobileStudentsService {
         )?.[0] as StudentExamOutcome | undefined)
       : undefined;
 
-    const [exams, lastEverExams] = await Promise.all([
+    const [exams, lastEverExamByStudent] = await Promise.all([
       this.prisma.studentExam.findMany({
         where: {
           branchId,
@@ -1625,11 +1625,13 @@ export class MobileStudentsService {
       }),
       // Last-ever evaluation per student, unbounded by the report's date
       // range, so "last evaluation N days ago" stays meaningful even when
-      // viewing a narrow window.
-      this.prisma.studentExam.findMany({
+      // viewing a narrow window. groupBy — not findMany — so this is one
+      // aggregated row per student instead of every exam row ever, which
+      // was noticeably heavy for "all halqas" (all students, full history).
+      this.prisma.studentExam.groupBy({
+        by: ['studentId'],
         where: { branchId, studentId: { in: studentIds } },
-        orderBy: { examDate: 'desc' },
-        select: { studentId: true, examDate: true },
+        _max: { examDate: true },
       }),
     ]);
 
@@ -1657,13 +1659,9 @@ export class MobileStudentsService {
     const failCount = results.filter((r) => r.result === 'fail').length;
     const prepCount = results.filter((r) => r.result === 'preparation').length;
 
-    // Last-ever exam date per student (lastEverExams is already sorted
-    // desc, so the first hit per studentId wins).
     const lastExamByStudent = new Map<string, Date>();
-    for (const e of lastEverExams) {
-      if (!lastExamByStudent.has(e.studentId)) {
-        lastExamByStudent.set(e.studentId, e.examDate);
-      }
+    for (const g of lastEverExamByStudent) {
+      if (g._max.examDate) lastExamByStudent.set(g.studentId, g._max.examDate);
     }
 
     const resultsByStudent = new Map<string, typeof results>();

@@ -2545,6 +2545,12 @@ export class StudentSurahProgressService {
       if (!holidayDates.has(dateStr)) schoolDays.push(dateStr);
     }
 
+    // Building the per-day array for every student is only worth the cost
+    // when a single student is in view (the detail sheet) — for a broad
+    // "all halqas" list this was allocating students × school-days objects
+    // on every call and measurably slowing the report down.
+    const includeDailyBreakdown = !!query.student_id;
+
     const results = await Promise.all(
       students.map(async (student) => {
         const presentDates = presentByStudent.get(student.id) ?? new Set();
@@ -2559,13 +2565,13 @@ export class StudentSurahProgressService {
         for (const day of schoolDays) {
           if (leaveDates.has(day)) {
             leave += 1;
-            dailyBreakdown.push({ date: day, status: 'leave' });
+            if (includeDailyBreakdown) dailyBreakdown.push({ date: day, status: 'leave' });
           } else if (presentDates.has(day)) {
             recited += 1;
-            dailyBreakdown.push({ date: day, status: 'present_recited' });
+            if (includeDailyBreakdown) dailyBreakdown.push({ date: day, status: 'present_recited' });
           } else {
             notRecited += 1;
-            dailyBreakdown.push({ date: day, status: 'present_not_recited' });
+            if (includeDailyBreakdown) dailyBreakdown.push({ date: day, status: 'present_not_recited' });
           }
         }
         const present = recited + notRecited;
