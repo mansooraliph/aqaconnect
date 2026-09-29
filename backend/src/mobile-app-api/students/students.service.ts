@@ -1596,17 +1596,34 @@ export class MobileStudentsService {
     const studentIds = students.map((s) => s.id);
     const studentById = new Map(students.map((s) => [s.id, s]));
 
-    const exams = await this.prisma.studentExam.findMany({
-      where: {
-        branchId,
-        studentId: { in: studentIds },
-        examDate: {
-          gte: new Date(`${query.from_date}T00:00:00.000Z`),
-          lte: new Date(`${query.to_date}T23:59:59.999Z`),
+    const resultEnum = query.result
+      ? (Object.entries(EXAM_RESULT_DISPLAY).find(
+          ([, label]) => label === query.result,
+        )?.[0] as StudentExamOutcome | undefined)
+      : undefined;
+
+    const [exams, lastEverExams] = await Promise.all([
+      this.prisma.studentExam.findMany({
+        where: {
+          branchId,
+          studentId: { in: studentIds },
+          examDate: {
+            gte: new Date(`${query.from_date}T00:00:00.000Z`),
+            lte: new Date(`${query.to_date}T23:59:59.999Z`),
+          },
+          ...(resultEnum && { result: resultEnum }),
         },
-      },
-      orderBy: { examDate: 'desc' },
-    });
+        orderBy: { examDate: 'desc' },
+      }),
+      // Last-ever evaluation per student, unbounded by the report's date
+      // range, so "last evaluation N days ago" stays meaningful even when
+      // viewing a narrow window.
+      this.prisma.studentExam.findMany({
+        where: { branchId, studentId: { in: studentIds } },
+        orderBy: { examDate: 'desc' },
+        select: { studentId: true, examDate: true },
+      }),
+    ]);
 
     const results = exams.map((e) => {
       const student = studentById.get(e.studentId);
@@ -1630,6 +1647,63 @@ export class MobileStudentsService {
 
     const passCount = results.filter((r) => r.result === 'Pass').length;
     const failCount = results.filter((r) => r.result === 'fail').length;
+    const prepCount = results.filter((r) => r.result === 'preparation').length;
+
+    // Last-ever exam date per student (lastEverExams is already sorted
+    // desc, so the first hit per studentId wins).
+    const lastExamByStudent = new Map<string, Date>();
+    for (const e of lastEverExams) {
+      if (!lastExamByStudent.has(e.studentId)) {
+        lastExamByStudent.set(e.studentId, e.examDate);
+      }
+    }
+
+    const resultsByStudent = new Map<string, typeof results>();
+    for (const r of results) {
+      const list = resultsByStudent.get(r.student.id) ?? [];
+      list.push(r);
+      resultsByStudent.set(r.student.id, list);
+    }
+
+    const now = new Date();
+    let studentsSummary = students.map((student) => {
+      const lastDate = lastExamByStudent.get(student.id) ?? null;
+      const daysSince = lastDate
+        ? Math.floor(
+            (now.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24),
+          )
+        : null;
+      const studentResults = resultsByStudent.get(student.id) ?? [];
+      return {
+        student: {
+          id: student.id,
+          name: student.name,
+          student_id: student.studentCode,
+        },
+        last_exam_date: lastDate ? toDateOnly(lastDate) : null,
+        days_since_last_exam: daysSince,
+        total_exams: studentResults.length,
+        pass_count: studentResults.filter((r) => r.result === 'Pass').length,
+        fail_count: studentResults.filter((r) => r.result === 'fail').length,
+        prep_count: studentResults.filter((r) => r.result === 'preparation')
+          .length,
+      };
+    });
+
+    if (query.min_days_since_last_eval != null) {
+      studentsSummary = studentsSummary.filter(
+        (s) =>
+          s.days_since_last_exam === null ||
+          s.days_since_last_exam >= query.min_days_since_last_eval!,
+      );
+    }
+    // Most overdue (or never evaluated) first — that's the actionable order
+    // for a teacher scanning who needs an evaluation.
+    studentsSummary.sort((a, b) => {
+      if (a.days_since_last_exam === null) return -1;
+      if (b.days_since_last_exam === null) return 1;
+      return b.days_since_last_exam - a.days_since_last_exam;
+    });
 
     return {
       status: 'success',
@@ -1638,13 +1712,17 @@ export class MobileStudentsService {
         filters: {
           halqa_id: query.halqa_id ?? null,
           student_id: query.student_id ?? null,
+          result: query.result ?? null,
+          min_days_since_last_eval: query.min_days_since_last_eval ?? null,
         },
         summary: {
           total_exams: results.length,
           pass_count: passCount,
           fail_count: failCount,
+          prep_count: prepCount,
         },
         exams: results,
+        students: studentsSummary,
       },
     };
   }

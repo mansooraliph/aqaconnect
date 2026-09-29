@@ -1951,8 +1951,14 @@ export class StudentSurahProgressService {
         surahs_completed: surahsCompleted,
       };
 
+      // A student who's on approved leave or already has an exam/Mukammal
+      // marked today is "handled" for the day even without ordinary lesson
+      // progress — don't let them clutter the Pending bucket.
+      const hasLeaveToday = (leavesByStudent.get(student.id) ?? []).length > 0;
+      const hasExamToday = (examsByStudent.get(student.id) ?? []).length > 0;
+
       if (records && records.length > 0) completedStudents.push(studentData);
-      else pendingStudents.push(studentData);
+      else if (!hasLeaveToday && !hasExamToday) pendingStudents.push(studentData);
     }
 
     const globalEvents = holidays.map((h) => ({
@@ -2460,12 +2466,13 @@ export class StudentSurahProgressService {
   // ── getAttendanceReport ──────────────────────────────────────────────
   /**
    * There's no dedicated "mark attendance" flow for students in this app —
-   * the Attendance table stays essentially unused for them. So attendance
-   * here is derived the same way Recitation Attendance already frames it:
-   * a school day counts as Present if the student completed any lesson
-   * that day, Leave if they had an approved leave, otherwise Absent.
+   * the Attendance table stays essentially unused for them. Only an
+   * approved Leave counts as Absent; every other school day counts as
+   * Present, whether or not the student actually recited that day (tracked
+   * separately as "not recited" — a Present sub-status, not an absence).
    * Holidays are excluded from the day count entirely. Percentage is
-   * present / (present + absent) — leave days aren't held against them.
+   * present / (present + absent), i.e. present / total_school_days since
+   * absent === leave here.
    */
   async getAttendanceReport(
     branchId: string,
@@ -2542,25 +2549,41 @@ export class StudentSurahProgressService {
       students.map(async (student) => {
         const presentDates = presentByStudent.get(student.id) ?? new Set();
         const leaveDates = leaveByStudent.get(student.id) ?? new Set();
-        let present = 0;
-        let absent = 0;
+        let recited = 0;
+        let notRecited = 0;
         let leave = 0;
+        const dailyBreakdown: {
+          date: string;
+          status: 'leave' | 'present_recited' | 'present_not_recited';
+        }[] = [];
         for (const day of schoolDays) {
-          if (presentDates.has(day)) present += 1;
-          else if (leaveDates.has(day)) leave += 1;
-          else absent += 1;
+          if (leaveDates.has(day)) {
+            leave += 1;
+            dailyBreakdown.push({ date: day, status: 'leave' });
+          } else if (presentDates.has(day)) {
+            recited += 1;
+            dailyBreakdown.push({ date: day, status: 'present_recited' });
+          } else {
+            notRecited += 1;
+            dailyBreakdown.push({ date: day, status: 'present_not_recited' });
+          }
         }
-        const denominator = present + absent;
+        const present = recited + notRecited;
+        // Only Leave counts against attendance — a Present-but-not-recited
+        // day is still Present, so the denominator is every school day.
         const attendancePercentage =
-          denominator > 0
-            ? Math.round((present / denominator) * 10000) / 100
+          schoolDays.length > 0
+            ? Math.round((present / schoolDays.length) * 10000) / 100
             : 0;
         return {
           student: await this.formatStudentBasic(student),
           total_present: present,
-          total_absent: absent,
+          total_recited: recited,
+          total_not_recited: notRecited,
+          total_absent: leave,
           total_leave: leave,
           attendance_percentage: attendancePercentage,
+          daily_breakdown: dailyBreakdown,
         };
       }),
     );
