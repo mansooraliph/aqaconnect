@@ -100,6 +100,11 @@ model BranchSettings {
   timezone          String        @default("Asia/Kolkata")
   language          String        @default("en")
   logoUrl           String?
+  // Day-of-week numbers (0 = Sunday ... 6 = Saturday) treated as this
+  // branch's non-working weekend. Default [0, 6] matches the previous
+  // hardcoded Sat/Sun behavior in CalendarDaysService.generate() exactly, so
+  // existing branches see no change until they explicitly set otherwise.
+  weekendDays       Int[]         @default([0, 6])
   // Added in Phase 2.1 now that AcademicYear exists (deferred from Phase 2.0).
   academicYearId    String?
   academicYear      AcademicYear? @relation(fields: [academicYearId], references: [id])

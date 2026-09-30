@@ -5,7 +5,6 @@ import { Loader2, Plus, Trash2 } from 'lucide-react';
 import { useAuthStore } from '../../store/auth';
 import { api } from '../../lib/api';
 import { Button } from '../../components/ui/Button';
-import { FilterSelect } from '../../components/ui/FilterSelect';
 import { DataTable } from '../../components/ui/DataTable';
 import { StatCard } from '../../components/ui/StatCard';
 import { Switch } from '../../components/ui/Switch';
@@ -14,11 +13,6 @@ import { Modal } from '../../components/ui/Modal';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { toast } from '../../components/ui/toast';
 import { BulkRescheduleModal } from '../academic/HifdhTrackingPage';
-
-interface AcademicYear {
-  id: string;
-  name: string;
-}
 
 interface CalendarDay {
   id: string;
@@ -47,44 +41,35 @@ export function CalendarPage() {
   const canManage = hasPermission('configuration.calendar.manage');
   const queryClient = useQueryClient();
 
-  const [academicYearId, setAcademicYearId] = useState<string | undefined>(undefined);
   const [browseYear, setBrowseYear] = useState<string>(String(CURRENT_YEAR));
   const [savingId, setSavingId] = useState<string | null>(null);
 
-  const academicYearsQuery = useQuery({
-    queryKey: ['academic-years', activeBranchId],
-    queryFn: async () =>
-      (await api.get<AcademicYear[]>(`/branches/${activeBranchId}/academic-years`)).data,
-    enabled: Boolean(activeBranchId),
-  });
+  // Calendar days come from the Master Calendar publish flow — branches just
+  // browse by plain calendar year here, no separate per-branch generate step.
+  const effectiveYear = Number(browseYear) || undefined;
 
-  // Browsing is either by Academic Year (legacy per-academic-year `generate`
-  // flow) or by plain calendar Year (the "Initiate Days" flow, which isn't
-  // tied to any academic year) — Academic Year takes priority when set.
-  const effectiveYear = academicYearId ? undefined : Number(browseYear) || undefined;
-
-  const daysQueryKey = ['calendar-days', activeBranchId, academicYearId, effectiveYear];
+  const daysQueryKey = ['calendar-days', activeBranchId, effectiveYear];
   const daysQuery = useQuery({
     queryKey: daysQueryKey,
     queryFn: async () =>
       (
         await api.get<CalendarDay[]>(`/branches/${activeBranchId}/calendar-days`, {
-          params: { academicYearId, year: effectiveYear },
+          params: { year: effectiveYear },
         })
       ).data,
-    enabled: Boolean(activeBranchId && (academicYearId || effectiveYear)),
+    enabled: Boolean(activeBranchId && effectiveYear),
   });
 
-  const statsQueryKey = ['calendar-days-stats', activeBranchId, academicYearId, effectiveYear];
+  const statsQueryKey = ['calendar-days-stats', activeBranchId, effectiveYear];
   const statsQuery = useQuery({
     queryKey: statsQueryKey,
     queryFn: async () =>
       (
         await api.get<CalendarStats>(`/branches/${activeBranchId}/calendar-days/stats`, {
-          params: { academicYearId, year: effectiveYear },
+          params: { year: effectiveYear },
         })
       ).data,
-    enabled: Boolean(activeBranchId && (academicYearId || effectiveYear)),
+    enabled: Boolean(activeBranchId && effectiveYear),
   });
 
   const refetchAll = () => {
@@ -123,26 +108,19 @@ export function CalendarPage() {
     }
   };
 
-  const handleGenerate = async () => {
-    if (!academicYearId) return;
-    const { data } = await api.post<{ created: number; skipped: number }>(
-      `/branches/${activeBranchId}/calendar-days/generate`,
-      { academicYearId },
-    );
-    toast.success(`Generated ${data.created} day(s), skipped ${data.skipped} already present`);
-    refetchAll();
-  };
-
   const patchDay = async (record: CalendarDay, payload: Partial<CalendarDay>) => {
     setSavingId(record.id);
     try {
+      // Only send fields actually being changed — echoing isWorkingDay's
+      // current value here would stop the backend from auto-deriving it
+      // from isHoliday (see CalendarDaysService.resolveIsWorkingDay).
       await api.patch(`/branches/${activeBranchId}/calendar-days/${record.id}`, {
-        isWorkingDay: payload.isWorkingDay ?? record.isWorkingDay,
-        isHoliday: payload.isHoliday ?? record.isHoliday,
-        holidayName: payload.holidayName ?? record.holidayName,
-        isEvent: payload.isEvent ?? record.isEvent,
-        eventName: payload.eventName ?? record.eventName,
-        note: payload.note ?? record.note,
+        ...(payload.isWorkingDay !== undefined && { isWorkingDay: payload.isWorkingDay }),
+        ...(payload.isHoliday !== undefined && { isHoliday: payload.isHoliday }),
+        ...(payload.holidayName !== undefined && { holidayName: payload.holidayName }),
+        ...(payload.isEvent !== undefined && { isEvent: payload.isEvent }),
+        ...(payload.eventName !== undefined && { eventName: payload.eventName }),
+        ...(payload.note !== undefined && { note: payload.note }),
       });
       if (payload.isHoliday === true || payload.isEvent === true) {
         checkAndPromptReschedule(record.date.slice(0, 10));
@@ -155,28 +133,61 @@ export function CalendarPage() {
     }
   };
 
-  // ---- Add ad-hoc day ----
+  // ---- Add ad-hoc day (single date or a date range, always for the currently active branch) ----
   const [addDayOpen, setAddDayOpen] = useState(false);
   const [addingDay, setAddingDay] = useState(false);
   const [newDayDate, setNewDayDate] = useState('');
+  const [newDayToDate, setNewDayToDate] = useState('');
   const [newDayKind, setNewDayKind] = useState<'holiday' | 'event'>('holiday');
   const [newDayLabel, setNewDayLabel] = useState('');
 
   const openAddDay = () => {
     setNewDayDate('');
+    setNewDayToDate('');
     setNewDayKind('holiday');
     setNewDayLabel('');
     setAddDayOpen(true);
   };
 
+  const datesInRange = (from: string, to: string): string[] => {
+    const dates: string[] = [];
+    const cursor = new Date(`${from}T00:00:00.000Z`);
+    const end = new Date(`${to}T00:00:00.000Z`);
+    while (cursor.getTime() <= end.getTime()) {
+      dates.push(cursor.toISOString().slice(0, 10));
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    return dates;
+  };
+
+  /** Own-branch, single-day-at-a-time fallback for callers without master_calendar.manage — tries to create; if one already exists for that date, edits it in place instead. */
+  const setSingleDay = async (dateStr: string, fields: Record<string, unknown>) => {
+    try {
+      await api.post(`/branches/${activeBranchId}/calendar-days`, { date: dateStr, ...fields });
+    } catch (err) {
+      const serverMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      if (!serverMessage?.includes('already exists')) throw err;
+
+      const year = Number(dateStr.slice(0, 4));
+      const { data: yearDays } = await api.get<CalendarDay[]>(`/branches/${activeBranchId}/calendar-days`, {
+        params: { year },
+      });
+      const existing = yearDays.find((d) => d.date.slice(0, 10) === dateStr);
+      if (!existing) throw err;
+      await api.patch(`/branches/${activeBranchId}/calendar-days/${existing.id}`, fields);
+    }
+  };
+
   /**
    * "Set Day" — works whether the date already has a row or not, so marking
    * a holiday/event never requires scrolling the table to find it first.
-   * Tries to create; if one already exists for that date, looks it up in
-   * that date's year and edits it in place instead.
+   * Supports a date range (loops every date from newDayDate to newDayToDate)
+   * for the currently active branch only — cross-branch holidays/events are
+   * set from Master Calendar's "Set Holiday" instead.
    */
   const runAddDay = async () => {
     if (!newDayDate) return;
+    const toDate = newDayToDate || newDayDate;
     setAddingDay(true);
     const fields = {
       isHoliday: newDayKind === 'holiday',
@@ -185,25 +196,12 @@ export function CalendarPage() {
       eventName: newDayKind === 'event' ? newDayLabel : undefined,
     };
     try {
-      try {
-        await api.post(`/branches/${activeBranchId}/calendar-days`, { date: newDayDate, ...fields });
-        toast.success('Day added');
-      } catch (err) {
-        const serverMessage = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
-        if (!serverMessage?.includes('already exists')) throw err;
-
-        const year = Number(newDayDate.slice(0, 4));
-        const { data: yearDays } = await api.get<CalendarDay[]>(`/branches/${activeBranchId}/calendar-days`, {
-          params: { year },
-        });
-        const existing = yearDays.find((d) => d.date.slice(0, 10) === newDayDate);
-        if (!existing) throw err;
-
-        await api.patch(`/branches/${activeBranchId}/calendar-days/${existing.id}`, fields);
-        toast.success('Day updated');
+      const dates = datesInRange(newDayDate, toDate);
+      for (const dateStr of dates) {
+        await setSingleDay(dateStr, fields);
       }
+      toast.success(dates.length > 1 ? `Set ${dates.length} days` : 'Day set');
       setAddDayOpen(false);
-      setAcademicYearId(undefined);
       setBrowseYear(newDayDate.slice(0, 4));
       if (fields.isHoliday || fields.isEvent) {
         checkAndPromptReschedule(newDayDate);
@@ -364,20 +362,11 @@ export function CalendarPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-[18px] font-bold text-text-primary">Calendar</h1>
         <div className="flex flex-wrap items-end gap-3">
-          <FilterSelect
-            width="w-60"
-            label="Academic year"
-            placeholder="Browse by academic year"
-            value={academicYearId ?? ''}
-            onChange={(v) => setAcademicYearId(v || undefined)}
-            options={(academicYearsQuery.data ?? []).map((y) => ({ label: y.name, value: y.id }))}
-          />
-          <Field label="Or by calendar year">
+          <Field label="Calendar year">
             <Input
               type="number"
               className="w-28"
               value={browseYear}
-              disabled={Boolean(academicYearId)}
               onChange={(e) => setBrowseYear(e.target.value)}
             />
           </Field>
@@ -391,12 +380,12 @@ export function CalendarPage() {
       </div>
 
       <p className="text-sm text-text-muted">
-        Working days and holidays for the branch — browse by academic year, or by a plain calendar year published from
-        the Master Calendar. Use "Set Day" to mark any date as a holiday or event by picking the date directly — no
-        need to scroll the table to find it.
+        Working days and holidays for the branch — published from the Master Calendar. Use "Set Day" to mark a date
+        (or a date range, for a multi-day leave/event) as a holiday or event by picking it directly — no need to
+        scroll the table to find it.
       </p>
 
-      {(academicYearId || effectiveYear) && (
+      {effectiveYear && (
         <>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <StatCard
@@ -415,14 +404,6 @@ export function CalendarPage() {
               isLoading={statsQuery.isLoading}
             />
           </div>
-
-          {canManage && academicYearId && (
-            <div>
-              <Button variant="outline" onClick={handleGenerate}>
-                Generate calendar
-              </Button>
-            </div>
-          )}
 
           {canManage && effectiveYear && (
             <div>
@@ -457,6 +438,7 @@ export function CalendarPage() {
         open={addDayOpen}
         title="Set a Day"
         onClose={() => setAddDayOpen(false)}
+        width="max-w-xl"
         footer={
           <>
             <Button variant="outline" onClick={() => setAddDayOpen(false)}>
@@ -470,12 +452,22 @@ export function CalendarPage() {
       >
         <div className="flex flex-col gap-4">
           <p className="text-sm text-text-muted">
-            Pick any date — if it already has a row, this edits it in place; otherwise it creates a new branch-only
-            day. Either way you don't need to find it in the table yourself.
+            Pick a date (or a range, for a multi-day leave/event) — if a day already has a row, this edits it in
+            place; otherwise it creates a new one. Either way you don't need to find it in the table yourself.
           </p>
-          <Field label="Date" required>
-            <Input type="date" value={newDayDate} onChange={(e) => setNewDayDate(e.target.value)} />
-          </Field>
+          <div className="flex gap-3">
+            <Field label="Date" required>
+              <Input type="date" value={newDayDate} onChange={(e) => setNewDayDate(e.target.value)} />
+            </Field>
+            <Field label="To date (optional, for a range)">
+              <Input
+                type="date"
+                value={newDayToDate}
+                min={newDayDate || undefined}
+                onChange={(e) => setNewDayToDate(e.target.value)}
+              />
+            </Field>
+          </div>
           <div className="flex gap-4">
             <label className="flex items-center gap-2 text-sm">
               <input

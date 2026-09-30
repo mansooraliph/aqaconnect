@@ -57,12 +57,25 @@ export class MasterCalendarService {
     return day;
   }
 
+  /**
+   * A holiday always closes the (master) calendar day — isWorkingDay can't
+   * be true while isHoliday is true. If the caller changes isHoliday
+   * without also explicitly setting isWorkingDay in the same request, we
+   * derive it: false while the holiday is on, back to working once cleared
+   * (the master calendar has no branch/weekend concept of its own to fall
+   * back to, unlike CalendarDaysService). An explicit isWorkingDay in the
+   * same request always wins.
+   */
   async update(id: string, dto: UpdateMasterCalendarDayDto) {
     await this.findOne(id);
+    let isWorkingDay = dto.isWorkingDay;
+    if (dto.isHoliday !== undefined && dto.isWorkingDay === undefined) {
+      isWorkingDay = !dto.isHoliday;
+    }
     return this.prisma.masterCalendarDay.update({
       where: { id },
       data: {
-        ...(dto.isWorkingDay !== undefined && { isWorkingDay: dto.isWorkingDay }),
+        ...(isWorkingDay !== undefined && { isWorkingDay }),
         ...(dto.isHoliday !== undefined && { isHoliday: dto.isHoliday }),
         ...(dto.holidayName !== undefined && { holidayName: dto.holidayName }),
         ...(dto.isEvent !== undefined && { isEvent: dto.isEvent }),
@@ -205,12 +218,29 @@ export class MasterCalendarService {
     return { generatedDays, updatedHolidays };
   }
 
+  /** This branch's configured weekend (day-of-week numbers, 0 = Sunday ... 6 = Saturday); [0, 6] if unset. */
+  private async getWeekendDays(branchId: string): Promise<number[]> {
+    const settings = await this.prisma.branchSettings.findUnique({
+      where: { branchId },
+      select: { weekendDays: true },
+    });
+    return settings?.weekendDays?.length ? settings.weekendDays : [0, 6];
+  }
+
   /**
    * Copies this year's MasterCalendarDay rows into every target branch's own
    * CalendarDay. A branch day that's already isCustomized=true (edited or
    * manually created by that branch) is never touched — publish only fills
    * gaps and syncs days the branch hasn't customized. Returns a per-branch
    * summary so the UI can show what happened.
+   *
+   * isWorkingDay is deliberately NOT copied from the master as-is — the
+   * master's own weekend assumption would otherwise overwrite every branch's
+   * CalendarDay regardless of that branch's actual weekend. Only real
+   * holiday/event content (isHoliday/holidayName/isEvent/eventName) is
+   * propagated verbatim; isWorkingDay is recomputed per branch from its own
+   * weekendDays plus the propagated isHoliday flag, so publish is safe to run
+   * before or after a branch generates its own calendar.
    */
   async publish(dto: PublishMasterCalendarDto) {
     const masterDays = await this.prisma.masterCalendarDay.findMany({
@@ -229,6 +259,7 @@ export class MasterCalendarService {
     const summaries: { branchId: string; created: number; updated: number; skipped: number }[] = [];
 
     for (const branch of branches) {
+      const weekendDays = await this.getWeekendDays(branch.id);
       const existingRows = await this.prisma.calendarDay.findMany({
         where: {
           branchId: branch.id,
@@ -245,11 +276,12 @@ export class MasterCalendarService {
       await this.prisma.$transaction(async (tx) => {
         for (const masterDay of masterDays) {
           const existing = existingByDate.get(masterDay.date.getTime());
+          const isWorkingDay = !masterDay.isHoliday && !weekendDays.includes(masterDay.date.getUTCDay());
           const fields = {
             dayName: masterDay.dayName,
             weekNumber: masterDay.weekNumber,
             year: masterDay.year,
-            isWorkingDay: masterDay.isWorkingDay,
+            isWorkingDay,
             isHoliday: masterDay.isHoliday,
             holidayName: masterDay.holidayName,
             isEvent: masterDay.isEvent,

@@ -4,6 +4,7 @@ import { GenerateCalendarDaysDto } from './dto/generate-calendar-days.dto';
 import { UpdateCalendarDayDto } from './dto/update-calendar-day.dto';
 import { CreateCalendarDayDto } from './dto/create-calendar-day.dto';
 import { InitiateDaysDto } from './dto/initiate-days.dto';
+import { BulkSetCalendarDaysDto } from './dto/bulk-set-calendar-days.dto';
 import { fetchIslamicHolidaysForYear } from './islamic-holidays';
 import { DAY_NAMES, allDatesOfYear, isoWeekNumber, specificWeekendDates, weekdayDates } from './calendar-generation.util';
 
@@ -41,13 +42,48 @@ export class CalendarDaysService {
     return day;
   }
 
+  /**
+   * A holiday always closes the branch — isWorkingDay can't be true while
+   * isHoliday is true. If the caller changes isHoliday without also
+   * explicitly setting isWorkingDay in the same request, we derive it: false
+   * while the holiday is on, or back to this branch's normal weekend
+   * computation once the holiday is cleared (never left stuck non-working).
+   * An explicit isWorkingDay in the same request always wins.
+   */
+  private async resolveIsWorkingDay(
+    branchId: string,
+    dayOfWeek: number,
+    dtoIsHoliday: boolean | undefined,
+    dtoIsWorkingDay: boolean | undefined,
+    fallbackIsWorkingDay: boolean,
+  ): Promise<boolean> {
+    if (dtoIsWorkingDay !== undefined) {
+      return dtoIsWorkingDay;
+    }
+    if (dtoIsHoliday === undefined) {
+      return fallbackIsWorkingDay;
+    }
+    if (dtoIsHoliday) {
+      return false;
+    }
+    const weekendDays = await this.getWeekendDays(branchId);
+    return !weekendDays.includes(dayOfWeek);
+  }
+
   /** Any branch-initiated edit marks the row customized so a later master-calendar publish never overwrites it. */
   async update(branchId: string, id: string, dto: UpdateCalendarDayDto) {
-    await this.findOne(branchId, id);
+    const existing = await this.findOne(branchId, id);
+    const isWorkingDay = await this.resolveIsWorkingDay(
+      branchId,
+      existing.date.getUTCDay(),
+      dto.isHoliday,
+      dto.isWorkingDay,
+      existing.isWorkingDay,
+    );
     return this.prisma.calendarDay.update({
       where: { id },
       data: {
-        ...(dto.isWorkingDay !== undefined && { isWorkingDay: dto.isWorkingDay }),
+        isWorkingDay,
         ...(dto.isHoliday !== undefined && { isHoliday: dto.isHoliday }),
         ...(dto.holidayName !== undefined && { holidayName: dto.holidayName }),
         ...(dto.isEvent !== undefined && { isEvent: dto.isEvent }),
@@ -71,6 +107,7 @@ export class CalendarDaysService {
     }
 
     const dayOfWeek = date.getUTCDay();
+    const isWorkingDay = await this.resolveIsWorkingDay(branchId, dayOfWeek, dto.isHoliday, dto.isWorkingDay, true);
     return this.prisma.calendarDay.create({
       data: {
         branchId,
@@ -78,7 +115,7 @@ export class CalendarDaysService {
         dayName: DAY_NAMES[dayOfWeek],
         weekNumber: isoWeekNumber(date),
         year: date.getUTCFullYear(),
-        isWorkingDay: dto.isWorkingDay ?? true,
+        isWorkingDay,
         isHoliday: dto.isHoliday ?? false,
         holidayName: dto.holidayName,
         isEvent: dto.isEvent ?? false,
@@ -87,6 +124,66 @@ export class CalendarDaysService {
         isCustomized: true,
       },
     });
+  }
+
+  /**
+   * Super Admin-only: marks a date range as a holiday/event across one or
+   * more branches in a single call, instead of using "Set Day" once per date
+   * per branch. Always customized (isCustomized: true), same as "Set Day" —
+   * a later master-calendar publish never overwrites it.
+   */
+  async bulkSetDays(dto: BulkSetCalendarDaysDto): Promise<{ branches: number; daysSet: number }> {
+    const dates: Date[] = [];
+    const cursor = new Date(`${dto.fromDate}T00:00:00.000Z`);
+    const end = new Date(`${dto.toDate}T00:00:00.000Z`);
+    while (cursor.getTime() <= end.getTime()) {
+      dates.push(new Date(cursor.getTime()));
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+
+    let daysSet = 0;
+    for (const branchId of dto.branchIds) {
+      const weekendDays = await this.getWeekendDays(branchId);
+      for (const date of dates) {
+        const dayOfWeek = date.getUTCDay();
+        const existing = await this.prisma.calendarDay.findUnique({ where: { branchId_date: { branchId, date } } });
+        const isWorkingDay = dto.isHoliday
+          ? false
+          : existing
+            ? existing.isWorkingDay
+            : !weekendDays.includes(dayOfWeek);
+
+        await this.prisma.calendarDay.upsert({
+          where: { branchId_date: { branchId, date } },
+          update: {
+            isWorkingDay,
+            ...(dto.isHoliday !== undefined && { isHoliday: dto.isHoliday }),
+            ...(dto.holidayName !== undefined && { holidayName: dto.holidayName }),
+            ...(dto.isEvent !== undefined && { isEvent: dto.isEvent }),
+            ...(dto.eventName !== undefined && { eventName: dto.eventName }),
+            ...(dto.note !== undefined && { note: dto.note }),
+            isCustomized: true,
+          },
+          create: {
+            branchId,
+            date,
+            dayName: DAY_NAMES[dayOfWeek],
+            weekNumber: isoWeekNumber(date),
+            year: date.getUTCFullYear(),
+            isWorkingDay,
+            isHoliday: dto.isHoliday ?? false,
+            holidayName: dto.holidayName,
+            isEvent: dto.isEvent ?? false,
+            eventName: dto.eventName,
+            note: dto.note,
+            isCustomized: true,
+          },
+        });
+        daysSet++;
+      }
+    }
+
+    return { branches: dto.branchIds.length, daysSet };
   }
 
   private async assertAcademicYearBelongsToBranch(branchId: string, academicYearId: string) {
@@ -99,9 +196,19 @@ export class CalendarDaysService {
     return year;
   }
 
+  /** This branch's configured weekend (day-of-week numbers, 0 = Sunday ... 6 = Saturday); [0, 6] if unset. */
+  private async getWeekendDays(branchId: string): Promise<number[]> {
+    const settings = await this.prisma.branchSettings.findUnique({
+      where: { branchId },
+      select: { weekendDays: true },
+    });
+    return settings?.weekendDays?.length ? settings.weekendDays : [0, 6];
+  }
+
   /** Idempotent: only creates rows for dates that don't already have one for this branch. */
   async generate(branchId: string, dto: GenerateCalendarDaysDto) {
     const year = await this.assertAcademicYearBelongsToBranch(branchId, dto.academicYearId);
+    const weekendDays = await this.getWeekendDays(branchId);
 
     const allDates: Date[] = [];
     const cursor = new Date(
@@ -129,7 +236,7 @@ export class CalendarDaysService {
     await this.prisma.$transaction(
       missing.map((date) => {
         const dayOfWeek = date.getUTCDay(); // 0 = Sunday, 6 = Saturday
-        const isWorkingDay = dayOfWeek !== 0 && dayOfWeek !== 6;
+        const isWorkingDay = !weekendDays.includes(dayOfWeek);
         return this.prisma.calendarDay.create({
           data: {
             branchId,

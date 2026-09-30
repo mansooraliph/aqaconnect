@@ -507,6 +507,43 @@ export class HifdhService {
   }
 
   /**
+   * Cross-branch, cross-date version of getScheduleConflictsForDate — used
+   * from Master Calendar (per-day toggle and Publish to Branches), since a
+   * single master-calendar change can affect many branches' students in one
+   * shot, unlike a branch's own Calendar page which only ever affects itself.
+   */
+  async getScheduleConflictsBulk(branchIds: string[], dates: string[]) {
+    const rows = await this.prisma.surahHifdhStudentSchedule.findMany({
+      where: {
+        scheduledDate: { in: dates.map((d) => new Date(d)) },
+        status: { not: 'COMPLETED' },
+        rescheduledTo: { none: {} },
+        student: { branchId: { in: branchIds } },
+      },
+      distinct: ['studentId', 'scheduledDate'],
+      select: {
+        scheduledDate: true,
+        studentId: true,
+        student: { select: { name: true, branchId: true, branch: { select: { name: true } } } },
+      },
+    });
+
+    const grouped = new Map<
+      string,
+      { branchId: string; branchName: string; date: string; students: { studentId: string; studentName: string }[] }
+    >();
+    for (const r of rows) {
+      const dateStr = formatDateOnly(r.scheduledDate);
+      const key = `${r.student.branchId}_${dateStr}`;
+      if (!grouped.has(key)) {
+        grouped.set(key, { branchId: r.student.branchId, branchName: r.student.branch.name, date: dateStr, students: [] });
+      }
+      grouped.get(key)!.students.push({ studentId: r.studentId, studentName: r.student.name });
+    }
+    return { conflicts: Array.from(grouped.values()) };
+  }
+
+  /**
    * Bulk, per-student version of reschedule() — used to shift a student's (or
    * several students') whole remaining schedule after a disruption (absence,
    * holiday, curriculum restart), rather than one row at a time. Pending
