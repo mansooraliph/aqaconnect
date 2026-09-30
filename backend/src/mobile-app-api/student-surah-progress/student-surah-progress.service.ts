@@ -1830,6 +1830,46 @@ export class StudentSurahProgressService {
       progressByStudent.set(r.studentId, list);
     }
 
+    // Current New -> Juzh -> Old cycle position per student, persisting
+    // across days (NOT reset by "today" — a student's cycle position is
+    // whatever they last marked, whenever that was). All-time, lightweight
+    // query (3 scalar columns, no joins) so this stays cheap even for a
+    // student enrolled for years. Only the entries from the most recent
+    // "New Lesson" onward represent the CURRENT cycle — anything before
+    // that New Lesson belongs to a prior cycle.
+    const allTimeLessonEntries =
+      await this.prisma.studentSurahProgressEntry.findMany({
+        where: {
+          branchId,
+          studentId: { in: studentIds },
+          status: { in: ['COMPLETED', 'VERIFIED'] },
+          type: { in: ['NEW_LESSON', 'JUZH_LESSON', 'OLD_LESSON'] },
+        },
+        select: { studentId: true, type: true, createdAt: true },
+        orderBy: { createdAt: 'asc' },
+      });
+    const lessonHistoryByStudent = new Map<
+      string,
+      { type: string; createdAt: Date }[]
+    >();
+    for (const e of allTimeLessonEntries) {
+      if (!e.type) continue;
+      const list = lessonHistoryByStudent.get(e.studentId) ?? [];
+      list.push({ type: e.type, createdAt: e.createdAt });
+      lessonHistoryByStudent.set(e.studentId, list);
+    }
+    const currentCycleTypesByStudent = new Map<string, string[]>();
+    for (const [studentId, history] of lessonHistoryByStudent) {
+      const lastNewIndex = history.map((h) => h.type).lastIndexOf('NEW_LESSON');
+      const cycleSlice = lastNewIndex >= 0 ? history.slice(lastNewIndex) : history;
+      const distinctTypes: string[] = [];
+      for (const h of cycleSlice) {
+        const label = TYPE_TO_LEGACY[h.type as ProgressEntryType];
+        if (!distinctTypes.includes(label)) distinctTypes.push(label);
+      }
+      currentCycleTypesByStudent.set(studentId, distinctTypes);
+    }
+
     const [leaves, exams, holidays] = await Promise.all([
       this.prisma.studentLeave.findMany({
         where: {
@@ -1961,6 +2001,8 @@ export class StudentSurahProgressService {
         lesson_types: [...lessonTypesMap.values()],
         surahs_completed: surahsCompleted,
         is_on_leave: hasLeaveToday,
+        // Persists across days — see currentCycleTypesByStudent above.
+        current_cycle_types: currentCycleTypesByStudent.get(student.id) ?? [],
       };
 
       if (records && records.length > 0) completedStudents.push(studentData);
