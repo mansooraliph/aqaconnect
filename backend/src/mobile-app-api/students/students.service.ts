@@ -1026,11 +1026,17 @@ export class MobileStudentsService {
       include: {
         surah: { select: { id: true, number: true, nameArabic: true, nameEnglish: true, totalAyahs: true } },
       },
-      // `completedAt` is date-only (always midnight), so it can't order same-
-      // day entries relative to each other — the mobile app's "what's the
-      // next lesson type to mark" logic relies on this array being in true
-      // creation order to find the actually-last-marked entry for today.
-      orderBy: { createdAt: 'asc' },
+      // `completedAt` is date-only (always midnight), so it can't order
+      // same-day entries relative to each other, and `createdAt` isn't
+      // reliable either — New Lesson rows are often pre-created in bulk at
+      // schedule-generation time, so a fresh mark can carry a stale
+      // createdAt from weeks earlier. `updatedAt` is refreshed at the exact
+      // moment a row's status actually transitions to COMPLETED/VERIFIED
+      // regardless of when the row was first created, so it's the only
+      // field that reliably reflects true marking order — the mobile app's
+      // "what's the next lesson type to mark" logic relies on this array
+      // being in that true order to find the actually-last-marked entry.
+      orderBy: { updatedAt: 'asc' },
     });
 
     // For cross-surah Old/Juzh Lesson ranges, `surah` above only resolves

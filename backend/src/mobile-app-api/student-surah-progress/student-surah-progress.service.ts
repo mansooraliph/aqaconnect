@@ -1838,13 +1838,17 @@ export class StudentSurahProgressService {
     // "New Lesson" onward represent the CURRENT cycle — anything before
     // that New Lesson belongs to a prior cycle.
     //
-    // Ordered by completedAt (falling back to createdAt as the tiebreaker
-    // for same-day entries), NOT createdAt alone: New Lesson rows are often
-    // pre-created in bulk when a student's Hifdh schedule is generated, so
-    // their createdAt reflects schedule-generation time, not when the
-    // teacher actually marked them done — completedAt is what's set at
-    // marking time and is the only field both New and Old/Juzh entries
-    // update consistently.
+    // Ordered by updatedAt, not createdAt or completedAt: New Lesson rows
+    // are often pre-created in bulk when a student's Hifdh schedule is
+    // generated (stale createdAt, unrelated to marking time), and
+    // completedAt is a date-only field the teacher picks (or the schedule
+    // pre-sets), so several types can share the exact same completedAt day
+    // with no way to tell which was marked first. Prisma's @updatedAt is
+    // the one field that's always refreshed at the actual moment a row's
+    // status transitions to COMPLETED/VERIFIED, regardless of when the row
+    // was first created — verified against production data where a
+    // student's Juzh/Old/New were all completedAt-today but updatedAt
+    // showed the true marking order.
     const allTimeLessonEntries =
       await this.prisma.studentSurahProgressEntry.findMany({
         where: {
@@ -1853,17 +1857,17 @@ export class StudentSurahProgressService {
           status: { in: ['COMPLETED', 'VERIFIED'] },
           type: { in: ['NEW_LESSON', 'JUZH_LESSON', 'OLD_LESSON'] },
         },
-        select: { studentId: true, type: true, completedAt: true, createdAt: true },
-        orderBy: [{ completedAt: 'asc' }, { createdAt: 'asc' }],
+        select: { studentId: true, type: true, updatedAt: true },
+        orderBy: { updatedAt: 'asc' },
       });
     const lessonHistoryByStudent = new Map<
       string,
-      { type: string; completedAt: Date | null; createdAt: Date }[]
+      { type: string; updatedAt: Date }[]
     >();
     for (const e of allTimeLessonEntries) {
       if (!e.type) continue;
       const list = lessonHistoryByStudent.get(e.studentId) ?? [];
-      list.push({ type: e.type, completedAt: e.completedAt, createdAt: e.createdAt });
+      list.push({ type: e.type, updatedAt: e.updatedAt });
       lessonHistoryByStudent.set(e.studentId, list);
     }
     const currentCycleTypesByStudent = new Map<string, string[]>();
