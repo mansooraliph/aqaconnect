@@ -1837,6 +1837,14 @@ export class StudentSurahProgressService {
     // student enrolled for years. Only the entries from the most recent
     // "New Lesson" onward represent the CURRENT cycle — anything before
     // that New Lesson belongs to a prior cycle.
+    //
+    // Ordered by completedAt (falling back to createdAt as the tiebreaker
+    // for same-day entries), NOT createdAt alone: New Lesson rows are often
+    // pre-created in bulk when a student's Hifdh schedule is generated, so
+    // their createdAt reflects schedule-generation time, not when the
+    // teacher actually marked them done — completedAt is what's set at
+    // marking time and is the only field both New and Old/Juzh entries
+    // update consistently.
     const allTimeLessonEntries =
       await this.prisma.studentSurahProgressEntry.findMany({
         where: {
@@ -1845,17 +1853,17 @@ export class StudentSurahProgressService {
           status: { in: ['COMPLETED', 'VERIFIED'] },
           type: { in: ['NEW_LESSON', 'JUZH_LESSON', 'OLD_LESSON'] },
         },
-        select: { studentId: true, type: true, createdAt: true },
-        orderBy: { createdAt: 'asc' },
+        select: { studentId: true, type: true, completedAt: true, createdAt: true },
+        orderBy: [{ completedAt: 'asc' }, { createdAt: 'asc' }],
       });
     const lessonHistoryByStudent = new Map<
       string,
-      { type: string; createdAt: Date }[]
+      { type: string; completedAt: Date | null; createdAt: Date }[]
     >();
     for (const e of allTimeLessonEntries) {
       if (!e.type) continue;
       const list = lessonHistoryByStudent.get(e.studentId) ?? [];
-      list.push({ type: e.type, createdAt: e.createdAt });
+      list.push({ type: e.type, completedAt: e.completedAt, createdAt: e.createdAt });
       lessonHistoryByStudent.set(e.studentId, list);
     }
     const currentCycleTypesByStudent = new Map<string, string[]>();
