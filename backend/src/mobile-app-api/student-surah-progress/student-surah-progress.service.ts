@@ -2059,10 +2059,17 @@ export class StudentSurahProgressService {
       // one of them — a student who's only marked New Lesson today but
       // whose active cycle also includes Old/Juzh is still mid-day, not
       // done, and belongs in Pending.
+      //
+      // On the unfiltered "All" view (query.type unset), that cycle-based
+      // check isn't strict enough — a student whose cycle hasn't reached
+      // Juzh/Old yet (current_cycle_types still just ['New Lesson']) would
+      // show Completed after only a New Lesson. "All" instead requires
+      // literally all three lesson types marked today.
       const todaysTypes = new Set(lessonTypesMap.keys());
       const cycleTypes = currentCycleTypesByStudent.get(student.id) ?? [];
-      const hasAllCycleTypesToday =
-        cycleTypes.length > 0 && cycleTypes.every((t) => todaysTypes.has(t));
+      const hasAllCycleTypesToday = query.type
+        ? cycleTypes.length > 0 && cycleTypes.every((t) => todaysTypes.has(t))
+        : Object.values(TYPE_TO_LEGACY).every((t) => todaysTypes.has(t));
 
       if (
         (records && records.length > 0 && hasAllCycleTypesToday) ||
@@ -2913,6 +2920,7 @@ export class StudentSurahProgressService {
       entryCountByStudent,
       typeCounts,
       typeAyahSums,
+      typeCompletionDates,
       surahTouches,
       winnerStudents,
     ] = await Promise.all([
@@ -2930,6 +2938,15 @@ export class StudentSurahProgressService {
         by: ['studentId', 'type'],
         where: { ...winnerWhere, fromAyah: { not: null }, toAyah: { not: null } },
         _sum: { fromAyah: true, toAyah: true },
+      }),
+      // Distinct-day counts aren't expressible via groupBy (it groups on
+      // exact column values, not a date-truncated one), so this pulls raw
+      // (studentId, type, completedAt) rows to dedupe calendar days in
+      // Node — same bounded-to-winners shape as the other detail-phase
+      // queries above, just not reducible to a single aggregate.
+      this.prisma.studentSurahProgressEntry.findMany({
+        where: winnerWhere,
+        select: { studentId: true, type: true, completedAt: true },
       }),
       this.prisma.studentSurahProgressEntry.groupBy({
         by: ['studentId', 'surahId'],
@@ -2971,6 +2988,15 @@ export class StudentSurahProgressService {
       perType.set(g.type, g._count._all);
       typesByStudent.set(g.studentId, perType);
     }
+    const daysByStudentType = new Map<string, Map<string, Set<string>>>();
+    for (const e of typeCompletionDates) {
+      if (!e.type || !e.completedAt) continue;
+      const perType = daysByStudentType.get(e.studentId) ?? new Map<string, Set<string>>();
+      const days = perType.get(e.type) ?? new Set<string>();
+      days.add(e.completedAt.toISOString().slice(0, 10));
+      perType.set(e.type, days);
+      daysByStudentType.set(e.studentId, perType);
+    }
     const surahsByStudent = new Map<string, string[]>();
     for (const g of surahTouches) {
       if (!g.surahId) continue;
@@ -3000,12 +3026,14 @@ export class StudentSurahProgressService {
         const student = studentById.get(r.studentId);
         const entryTypeCounts = typesByStudent.get(r.studentId) ?? new Map();
         const entryTypeAyahs = typeAyahMap.get(r.studentId) ?? new Map();
+        const entryTypeDays = daysByStudentType.get(r.studentId) ?? new Map();
         const lessonTypes = [...entryTypeCounts.entries()].map(([type, count]) => {
           const ayahs = entryTypeAyahs.get(type) ?? 0;
           return {
             type: TYPE_TO_LEGACY[type as keyof typeof TYPE_TO_LEGACY] ?? type,
             total_ayahs: ayahs,
             ...toPagesLines(ayahs),
+            days: entryTypeDays.get(type)?.size ?? 0,
             entries_count: count,
           };
         });
