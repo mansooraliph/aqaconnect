@@ -62,7 +62,11 @@ export class ProfileService {
         name: student.name,
         email: student.user?.email ?? null,
         phone_number: student.user?.phone ?? student.guardianPhone ?? null,
-        image: student.user?.imageUrl ?? null,
+        // Student.imageUrl, not User.imageUrl — the same field every
+        // teacher/admin-facing endpoint reads, so a photo uploaded from
+        // either side (Edit Student, or this self-service profile) shows up
+        // consistently everywhere instead of two screens disagreeing.
+        image: student.imageUrl ?? null,
         gender: student.gender,
         address: student.address,
         qualification: student.qualification,
@@ -143,7 +147,6 @@ export class ProfileService {
         data: {
           email: dto.email,
           phone: dto.phone_number,
-          ...(imageUrl && { imageUrl }),
           ...(dto.whatsapp !== undefined && { whatsapp: dto.whatsapp }),
         },
       });
@@ -160,6 +163,8 @@ export class ProfileService {
           joiningDate: dto.joining_date
             ? new Date(dto.joining_date)
             : undefined,
+          // Student.imageUrl — see the matching comment on getProfile above.
+          ...(imageUrl && { imageUrl }),
           ...(dto.father_name !== undefined && { fatherName: dto.father_name }),
           ...(dto.mother_name !== undefined && { motherName: dto.mother_name }),
           ...(dto.guardian_name !== undefined && { guardianName: dto.guardian_name }),

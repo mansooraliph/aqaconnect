@@ -29,6 +29,27 @@ export class AuthService {
     return crypto.createHash('sha256').update(rawToken).digest('hex');
   }
 
+  /**
+   * Staff (Employee) avatars live on User.imageUrl, but Student avatars live
+   * on Student.imageUrl — a separate field every teacher/admin-facing
+   * endpoint reads from, populated by the "Edit Student" upload rather than
+   * this user's own profile edit. Without this, a student's own login/me
+   * response always showed no avatar even after one was uploaded for them,
+   * while teacher-facing screens showed it correctly — two different images
+   * for the same person.
+   */
+  private async resolveUserImage(
+    userId: string,
+    userImageUrl: string | null,
+  ): Promise<string | null> {
+    if (userImageUrl) return userImageUrl;
+    const student = await this.prisma.student.findUnique({
+      where: { userId },
+      select: { imageUrl: true },
+    });
+    return student?.imageUrl ?? null;
+  }
+
   private static readonly UNIT_SECONDS: Record<string, number> = {
     s: 1,
     m: 60,
@@ -107,6 +128,7 @@ export class AuthService {
       where: { userId: user.id },
       include: { designation: true },
     });
+    const image = await this.resolveUserImage(user.id, user.imageUrl);
 
     return {
       ...tokens,
@@ -114,7 +136,7 @@ export class AuthService {
       username: user.username,
       email: user.email,
       name: [user.firstName, user.lastName].filter(Boolean).join(' '),
-      image: null, // placeholder: no avatar storage yet
+      image,
       position: employee?.designation?.name ?? null,
       userType: employee?.employeeType ?? null,
       branchId: user.branchId,
@@ -170,13 +192,14 @@ export class AuthService {
       where: { userId: user.id },
       include: { designation: true },
     });
+    const image = await this.resolveUserImage(user.id, user.imageUrl);
 
     return {
       id: user.id,
       username: user.username,
       email: user.email,
       name: [user.firstName, user.lastName].filter(Boolean).join(' '),
-      image: null, // placeholder: no avatar storage yet
+      image,
       position: employee?.designation?.name ?? null,
       userType: employee?.employeeType ?? null,
       branchId: user.branchId,
