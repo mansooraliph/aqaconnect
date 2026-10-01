@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { LoginPage } from './pages/LoginPage';
+import { LeaderboardTvPage } from './pages/public/LeaderboardTvPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { ProtectedRoute } from './routes/ProtectedRoute';
 import { AppLayout } from './layout/AppLayout';
@@ -52,6 +53,7 @@ function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/tv/leaderboard/:branchId" element={<LeaderboardTvPage />} />
       <Route element={<ProtectedRoute />}>
         <Route element={<AppLayout />}>
           <Route path="/dashboard" element={<DashboardPage />} />

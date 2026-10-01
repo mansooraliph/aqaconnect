@@ -23,6 +23,7 @@ import { SurahsModule } from './configuration/surahs/surahs.module';
 import { SurahTargetSchedulesModule } from './configuration/surah-target-schedules/surah-target-schedules.module';
 import { CalendarDaysModule } from './configuration/calendar-days/calendar-days.module';
 import { MasterCalendarModule } from './configuration/master-calendar/master-calendar.module';
+import { LeaderboardModule } from './public/leaderboard/leaderboard.module';
 import { MasterAcademicYearsModule } from './configuration/master-academic-years/master-academic-years.module';
 import { DepartmentsModule } from './hr/departments/departments.module';
 import { DesignationsModule } from './hr/designations/designations.module';
@@ -99,6 +100,7 @@ import { BiometricDevicesModule } from './biometric-devices/biometric-devices.mo
     SurahTargetSchedulesModule,
     CalendarDaysModule,
     MasterCalendarModule,
+    LeaderboardModule,
     MasterAcademicYearsModule,
     DepartmentsModule,
     DesignationsModule,
