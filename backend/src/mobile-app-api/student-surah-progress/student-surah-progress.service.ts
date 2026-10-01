@@ -1649,7 +1649,11 @@ export class StudentSurahProgressService {
     const entries = await this.prisma.studentSurahProgressEntry.findMany({
       where,
       include: ENTRY_INCLUDE,
-      orderBy: { completedAt: 'desc' },
+      // completedAt is date-only, so same-day entries (e.g. several Juzh
+      // marks today) all tie and sort arbitrarily — updatedAt is the only
+      // field that reliably reflects true marking order (see the identical
+      // fix on current_cycle_types / buildActivityTimeline).
+      orderBy: { updatedAt: 'desc' },
       skip: (page - 1) * perPage,
       take: perPage,
     });
