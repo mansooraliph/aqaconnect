@@ -3,7 +3,6 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { createHash } from 'crypto';
 import type { Prisma } from '@prisma/client';
 import {
   HifdhScheduleStatus,
@@ -105,11 +104,6 @@ function formatDateOnly(date: Date | null | undefined): string | null {
   if (!date) return null;
   return date.toISOString().slice(0, 10);
 }
-function gravatarUrl(id: string): string {
-  const hash = createHash('md5').update(id).digest('hex');
-  return `https://www.gravatar.com/avatar/${hash}.png?s=200&d=mp`;
-}
-
 const SURAH_SELECT = {
   id: true,
   number: true,
@@ -330,7 +324,7 @@ export class StudentSurahProgressService {
       name: student.name,
       email: student.user?.email ?? null,
       student_id: student.id,
-      image_url: student.imageUrl ?? gravatarUrl(student.id),
+      image_url: student.imageUrl ?? null,
     };
   }
 
