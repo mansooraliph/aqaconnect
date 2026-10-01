@@ -323,13 +323,14 @@ export class StudentSurahProgressService {
     id: string;
     name: string;
     user: { email: string | null } | null;
+    imageUrl?: string | null;
   }) {
     return {
       id: student.id,
       name: student.name,
       email: student.user?.email ?? null,
       student_id: student.id,
-      image_url: gravatarUrl(student.id),
+      image_url: student.imageUrl ?? gravatarUrl(student.id),
     };
   }
 
@@ -1164,15 +1165,25 @@ export class StudentSurahProgressService {
     const remarkFileUrl = remarkFile
       ? `${publicBaseUrl}/uploads/voice-notes/${remarkFile.filename}`
       : undefined;
-    const entries = await this.prisma.studentSurahProgressEntry.findMany({
+    const fetchedEntries = await this.prisma.studentSurahProgressEntry.findMany({
       where: { id: { in: dto.ayah_ids }, branchId },
     });
-    if (entries.length === 0) {
+    if (fetchedEntries.length === 0) {
       throw new NotFoundException({
         status: 'error',
         message: 'No valid ayah progress records found',
       });
     }
+    // Prisma's `id: { in: [...] }` doesn't preserve the filter array's input
+    // order — re-sort to match dto.ayah_ids (the caller's intended marking
+    // sequence) so updatedAt, stamped as the loop below processes each row,
+    // reflects true marking order instead of arbitrary DB return order. The
+    // activity timeline orders by updatedAt, so an unordered bulk mark here
+    // is exactly what produced New Lesson entries showing out of sequence.
+    const entryById = new Map(fetchedEntries.map((e) => [e.id, e]));
+    const entries = dto.ayah_ids
+      .map((id) => entryById.get(id))
+      .filter((e): e is (typeof fetchedEntries)[number] => e != null);
 
     const completedAt = dto.completed_at
       ? new Date(dto.completed_at)
@@ -1317,6 +1328,12 @@ export class StudentSurahProgressService {
         status: { notIn: ['COMPLETED', 'VERIFIED'] },
         ...(dto.type && { type: TYPE_TO_ENUM[dto.type] }),
       },
+      // Explicit order so the loop below stamps updatedAt (which the
+      // activity timeline sorts by) in true pacing-plan sequence instead of
+      // Postgres's arbitrary unordered-query return order — without this,
+      // a bulk mark can make New Lesson entries show out of sequence while
+      // Old/Juzh (always marked one at a time) are unaffected.
+      orderBy: { day: 'asc' },
     });
     if (pending.length === 0) {
       throw new NotFoundException({
@@ -2006,6 +2023,26 @@ export class StudentSurahProgressService {
       const hasLeaveToday = (leavesByStudent.get(student.id) ?? []).length > 0;
       const hasExamToday = (examsByStudent.get(student.id) ?? []).length > 0;
 
+      // Most recent exam/Mukammal today, for the student card's evaluation
+      // chip — mode/result/marks so the card can show e.g. "Mukammal · Pass
+      // (85)" instead of just a generic "Exam" marker.
+      const todaysExams = examsByStudent.get(student.id) ?? [];
+      const latestExam = todaysExams.length > 0 ? todaysExams[todaysExams.length - 1] : null;
+      const evaluation = latestExam
+        ? {
+            kind: latestExam.examMode === 'MUKAMMAL' ? 'Mukammal' : 'Exam',
+            result: latestExam.result ?? null,
+            marks: latestExam.marks != null ? Number(latestExam.marks) : null,
+          }
+        : null;
+
+      // Surfaced separately from the activities feed so the card doesn't
+      // need to parse that generic array just to show a remarks indicator.
+      const remarkTexts = [
+        ...(records ?? []).map((r) => r.remarks).filter((r): r is string => !!r),
+        ...(latestExam?.remarks ? [latestExam.remarks] : []),
+      ];
+
       const studentData: Record<string, unknown> = {
         student: await this.formatStudentBasic(student),
         activities,
@@ -2015,11 +2052,27 @@ export class StudentSurahProgressService {
         is_on_leave: hasLeaveToday,
         // Persists across days — see currentCycleTypesByStudent above.
         current_cycle_types: currentCycleTypesByStudent.get(student.id) ?? [],
+        evaluation,
+        remarks: remarkTexts.length > 0 ? remarkTexts.join('; ') : null,
       };
 
-      if (records && records.length > 0) completedStudents.push(studentData);
-      else if (hasLeaveToday) onLeaveStudents.push(studentData);
-      else if (!hasExamToday) pendingStudents.push(studentData);
+      // "Completed" requires every lesson type in the student's current
+      // cycle (current_cycle_types above) to have a record today, not just
+      // one of them — a student who's only marked New Lesson today but
+      // whose active cycle also includes Old/Juzh is still mid-day, not
+      // done, and belongs in Pending.
+      const todaysTypes = new Set(lessonTypesMap.keys());
+      const cycleTypes = currentCycleTypesByStudent.get(student.id) ?? [];
+      const hasAllCycleTypesToday =
+        cycleTypes.length > 0 && cycleTypes.every((t) => todaysTypes.has(t));
+
+      if (records && records.length > 0 && hasAllCycleTypesToday) {
+        completedStudents.push(studentData);
+      } else if (hasLeaveToday) {
+        onLeaveStudents.push(studentData);
+      } else if (!hasExamToday) {
+        pendingStudents.push(studentData);
+      }
     }
 
     const globalEvents = holidays.map((h) => ({
@@ -2922,16 +2975,35 @@ export class StudentSurahProgressService {
     }
     const studentById = new Map(winnerStudents.map((s) => [s.id, s]));
 
+    // Academy convention (same one the PDF export uses): 15 lines per Mushaf
+    // page, applied as a flat conversion of ayah count rather than a true
+    // per-ayah line lookup (SurahAyahPageLine) — that table's per-ayah line
+    // counts aren't constant, so summing them can't be done as a cheap DB
+    // aggregate like ayahSpan can; it'd require pulling every matching row
+    // per student, which is exactly the OOM pattern this endpoint was
+    // rewritten to avoid (see the comment above the groupBy phase). Since
+    // this is a fixed-ratio transform of total_ayahs, ranking by pages/lines
+    // produces the identical order as ranking by ayahs — so the existing
+    // cheap aggregation still correctly determines the top N.
+    const toPagesLines = (ayahs: number) => ({
+      pages: Math.trunc(ayahs / 15),
+      lines: ayahs % 15,
+    });
+
     const topStudents = await Promise.all(
       ranked.slice(0, limit).map(async (r) => {
         const student = studentById.get(r.studentId);
         const entryTypeCounts = typesByStudent.get(r.studentId) ?? new Map();
         const entryTypeAyahs = typeAyahMap.get(r.studentId) ?? new Map();
-        const lessonTypes = [...entryTypeCounts.entries()].map(([type, count]) => ({
-          type: TYPE_TO_LEGACY[type as keyof typeof TYPE_TO_LEGACY] ?? type,
-          total_ayahs: entryTypeAyahs.get(type) ?? 0,
-          entries_count: count,
-        }));
+        const lessonTypes = [...entryTypeCounts.entries()].map(([type, count]) => {
+          const ayahs = entryTypeAyahs.get(type) ?? 0;
+          return {
+            type: TYPE_TO_LEGACY[type as keyof typeof TYPE_TO_LEGACY] ?? type,
+            total_ayahs: ayahs,
+            ...toPagesLines(ayahs),
+            entries_count: count,
+          };
+        });
         const surahsCompleted = (surahsByStudent.get(r.studentId) ?? [])
           .map((id) => surahById.get(id))
           .filter((s): s is NonNullable<typeof s> => !!s)
@@ -2941,6 +3013,7 @@ export class StudentSurahProgressService {
             ? await this.formatStudentBasic(student)
             : { id: r.studentId },
           total_ayahs: r.totalAyahs,
+          ...toPagesLines(r.totalAyahs),
           total_entries: entryCountMap.get(r.studentId) ?? 0,
           lesson_types: lessonTypes,
           surahs_completed: surahsCompleted,

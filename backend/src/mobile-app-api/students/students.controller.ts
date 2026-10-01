@@ -13,12 +13,18 @@ import {
   Post,
   Query,
   Req,
+  UploadedFile,
   UseGuards,
   UseInterceptors,
   UsePipes,
 } from '@nestjs/common';
 import { Request } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { diskStorage } from 'multer';
+import { randomBytes } from 'crypto';
+import { extname } from 'path';
+import { mkdirSync } from 'fs';
+import { UPLOADS_DIR } from '../profile/upload-paths';
 import { MobileStudentsService } from './students.service';
 import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
@@ -41,6 +47,17 @@ interface AuthedRequest extends Request {
   user: { userId: string };
 }
 
+mkdirSync(UPLOADS_DIR, { recursive: true });
+
+const avatarUpload = FileInterceptor('image', {
+  storage: diskStorage({
+    destination: UPLOADS_DIR,
+    filename: (_req, file, cb) =>
+      cb(null, `${randomBytes(16).toString('hex')}${extname(file.originalname)}`),
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 },
+});
+
 /** Mirrors legacy `Route::prefix('students')->group(...)`, i.e. `/api/app/students`. */
 @Controller('app/students')
 @UseGuards(PermissionsGuard)
@@ -59,11 +76,16 @@ export class StudentsController {
   // validation as if missing, regardless of what was actually sent.
   @Post()
   @HttpCode(201)
-  @UseInterceptors(FileInterceptor('image'))
-  async createStudent(@Req() req: AuthedRequest, @Body() dto: CreateStudentDto) {
+  @UseInterceptors(avatarUpload)
+  async createStudent(
+    @Req() req: AuthedRequest,
+    @Body() dto: CreateStudentDto,
+    @UploadedFile() image?: Express.Multer.File,
+  ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
+    const publicBaseUrl = `${req.protocol}://${req.get('host')}`;
     return this.handle(async () => {
-      const data = await this.service.createStudent(branchId, req.user.userId, dto);
+      const data = await this.service.createStudent(branchId, req.user.userId, dto, image, publicBaseUrl);
       return {
         status: 'success',
         message: `Student created successfully${dto.halqa_id ? ' and assigned to halqa' : ''}`,
@@ -78,11 +100,20 @@ export class StudentsController {
     return this.handle(() => this.service.getAllStudents(branchId, search ?? ''), 'Failed to retrieve students');
   }
 
+  // The client sends this as multipart/form-data (optionally with an `image`
+  // file) rather than JSON — see the matching comment on createStudent above.
   @Patch('update/:id')
-  async updateStudent(@Req() req: AuthedRequest, @Param('id') id: string, @Body() dto: UpdateStudentDto) {
+  @UseInterceptors(avatarUpload)
+  async updateStudent(
+    @Req() req: AuthedRequest,
+    @Param('id') id: string,
+    @Body() dto: UpdateStudentDto,
+    @UploadedFile() image?: Express.Multer.File,
+  ) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
+    const publicBaseUrl = `${req.protocol}://${req.get('host')}`;
     return this.handle(async () => {
-      const data = await this.service.updateStudent(branchId, req.user.userId, id, dto);
+      const data = await this.service.updateStudent(branchId, req.user.userId, id, dto, image, publicBaseUrl);
       return { status: 'success', message: 'Student updated successfully', data };
     }, 'Failed to update student');
   }

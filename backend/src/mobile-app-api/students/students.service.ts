@@ -176,6 +176,7 @@ export class MobileStudentsService {
       country_phonecode: null, // no Country concept in this schema
       gender: toLegacyGender(student.gender),
       status: student.status.toLowerCase(),
+      image_url: student.imageUrl ?? null,
       student_details: {
         id: student.id,
         student_id: student.studentCode,
@@ -198,7 +199,13 @@ export class MobileStudentsService {
     };
   }
 
-  async createStudent(branchId: string, userId: string, dto: CreateStudentDto) {
+  async createStudent(
+    branchId: string,
+    userId: string,
+    dto: CreateStudentDto,
+    image?: Express.Multer.File,
+    publicBaseUrl?: string,
+  ) {
     await this.assertUsernameAvailable(dto.username);
     await this.resolveHalqaTeacher(branchId, dto.halqa_id);
 
@@ -211,6 +218,7 @@ export class MobileStudentsService {
     const passwordHash = await bcrypt.hash(password, SALT_ROUNDS);
     const studentCode = dto.student_id ?? (await this.nextStudentCode(branchId));
     const guardianName = dto.guardian_name ?? dto.father_name;
+    const imageUrl = image ? `${publicBaseUrl}/uploads/avatars/${image.filename}` : undefined;
 
     const studentId = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.create({
@@ -241,6 +249,7 @@ export class MobileStudentsService {
           joiningDate: dto.joining_date ? new Date(dto.joining_date) : new Date(),
           hifdhStartDate: dto.hifdh_start_date ? new Date(dto.hifdh_start_date) : undefined,
           address: dto.address,
+          ...(imageUrl && { imageUrl }),
         },
       });
 
@@ -264,7 +273,14 @@ export class MobileStudentsService {
     return { ...data, generated_password: dto.password ? null : password };
   }
 
-  async updateStudent(branchId: string, userId: string, id: string, dto: UpdateStudentDto) {
+  async updateStudent(
+    branchId: string,
+    userId: string,
+    id: string,
+    dto: UpdateStudentDto,
+    image?: Express.Multer.File,
+    publicBaseUrl?: string,
+  ) {
     const existing = await this.prisma.student.findFirst({ where: { id, branchId } });
     if (!existing) {
       throw new NotFoundException({ status: 'error', message: 'Student not found' });
@@ -281,6 +297,7 @@ export class MobileStudentsService {
     }
 
     const nameParts = dto.name !== undefined ? splitName(dto.name) : undefined;
+    const imageUrl = image ? `${publicBaseUrl}/uploads/avatars/${image.filename}` : undefined;
 
     await this.prisma.$transaction(async (tx) => {
       if (existing.userId) {
@@ -315,6 +332,7 @@ export class MobileStudentsService {
             hifdhStartDate: dto.hifdh_start_date ? new Date(dto.hifdh_start_date) : null,
           }),
           ...(dto.address !== undefined && { address: dto.address }),
+          ...(imageUrl && { imageUrl }),
         },
       });
 
@@ -463,7 +481,7 @@ export class MobileStudentsService {
           email_notifications: true, // no notification-preferences subsystem in this schema
           locale: null,
           salutation: null,
-          image_url: null,
+          image_url: student.imageUrl ?? null,
           created_at: formatDateTime(student.createdAt),
           updated_at: formatDateTime(student.updatedAt),
         },
@@ -709,7 +727,7 @@ export class MobileStudentsService {
         country_phonecode: null,
         gender: toLegacyGender(student.gender),
         status: student.status.toLowerCase(),
-        image_url: null,
+        image_url: student.imageUrl ?? null,
         created_at: formatDateTime(student.createdAt),
         halqa: halqa ? { id: halqa.id, name: halqa.name } : null,
       };

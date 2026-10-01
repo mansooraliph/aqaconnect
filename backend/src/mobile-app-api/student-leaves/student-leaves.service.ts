@@ -52,6 +52,7 @@ function serializeLeave(leave: {
     gender: string | null;
     status: string;
     guardianPhone: string | null;
+    imageUrl: string | null;
   } | null;
 }) {
   return {
@@ -74,7 +75,7 @@ function serializeLeave(leave: {
         name: leave.student.name,
         email: '',
         mobile: leave.student.guardianPhone ?? '',
-        image_url: null,
+        image_url: leave.student.imageUrl ?? null,
         gender: leave.student.gender ?? '',
         status: leave.student.status,
       },

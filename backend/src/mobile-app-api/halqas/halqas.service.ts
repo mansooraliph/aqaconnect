@@ -168,7 +168,7 @@ export class MobileHalqasService {
         country_phonecode: null, // legacy: users.country_phonecode — no Country concept in this schema
         gender: student.gender ? student.gender.toLowerCase() : null,
         status: toLegacyStatus(student.status),
-        image_url: null, // legacy: asset($student->image_url) — no avatar/upload subsystem in this schema
+        image_url: student.imageUrl ?? null,
         created_at: formatDateTime(student.createdAt),
         is_temporary: isTemporary,
         restore_to_halqa: restoreToHalqa
@@ -532,7 +532,7 @@ export class MobileHalqasService {
     const data = memberships.map((m) => ({
       student_id: m.studentId,
       student_name: m.student.name,
-      student_image_url: null,
+      student_image_url: m.student.imageUrl ?? null,
       current_halqa: { id: m.halqa.id, name: m.halqa.name },
       restore_to_halqa: m.restoreToHalqa
         ? { id: m.restoreToHalqa.id, name: m.restoreToHalqa.name }
@@ -598,7 +598,7 @@ export class MobileHalqasService {
         email: student.user?.email ?? null,
         mobile: student.user?.phone ?? null,
         status: toLegacyStatus(student.status),
-        image_url: null,
+        image_url: student.imageUrl ?? null,
         gender: student.gender ? student.gender.toLowerCase() : null,
       },
     }));

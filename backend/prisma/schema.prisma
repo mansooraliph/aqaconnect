@@ -1028,6 +1028,7 @@ model Student {
   bloodGroup     String?
   gender         Gender? // legacy Mobile App API: read off `users.gender` (student *is* a User there)
   address        String?
+  imageUrl       String?
   qualification  String?
   joiningDate    DateTime?    @db.Date // legacy Mobile App API: student_details.joining_date
   hifdhStartDate DateTime?    @db.Date // legacy Mobile App API: student_details.hifdh_start_date (persisted there, only used transiently for schedule generation in the modern flow)
@@ -1188,6 +1189,13 @@ model StudentSurahProgressEntry {
   @@index([studentId, surahId])
   @@index([studentId, type])
   @@index([studentId, status])
+  // Nearly every report (attendance, today-progress, top-students, activity
+  // timeline) filters this table by branch/student + status + a completedAt
+  // date range — none of the above indexes cover that combination, so
+  // Postgres falls back to a broader scan + filter on every one of those
+  // calls against what's the most-queried table in the schema.
+  @@index([branchId, status, completedAt])
+  @@index([studentId, status, completedAt])
 }
 
 enum ProgressEntryType {
