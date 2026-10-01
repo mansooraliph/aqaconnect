@@ -2064,11 +2064,18 @@ export class StudentSurahProgressService {
       const hasAllCycleTypesToday =
         cycleTypes.length > 0 && cycleTypes.every((t) => todaysTypes.has(t));
 
-      if (records && records.length > 0 && hasAllCycleTypesToday) {
+      if (
+        (records && records.length > 0 && hasAllCycleTypesToday) ||
+        hasExamToday
+      ) {
+        // An exam/Mukammal today "handles" the student for the day even
+        // without ordinary lesson progress (see comment above) — but they
+        // still need a bucket, or they silently vanish from the response
+        // entirely instead of just skipping Pending.
         completedStudents.push(studentData);
       } else if (hasLeaveToday) {
         onLeaveStudents.push(studentData);
-      } else if (!hasExamToday) {
+      } else {
         pendingStudents.push(studentData);
       }
     }
