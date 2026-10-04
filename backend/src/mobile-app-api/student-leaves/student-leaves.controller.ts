@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   ForbiddenException,
   Get,
   HttpCode,
@@ -114,6 +115,28 @@ export class StudentLeavesController {
       if (error instanceof HttpException) throw error;
       throw new InternalServerErrorException({
         message: 'Failed to update leave range.',
+        error: (error as Error).message,
+      });
+    }
+  }
+
+  @Delete('delete-leave/:leaveId')
+  async deleteLeave(@Req() req: AuthedRequest, @Param('leaveId') leaveId: string) {
+    const branchId = await this.context.resolveBranchId(req.user.userId);
+    if (!(await this.service.isTeacherOrAdmin(req.user.userId))) {
+      throw new ForbiddenException('Unauthorized. Only teachers or admins can delete leave records.');
+    }
+    const existing = await this.service.findLeaveOrNull(branchId, leaveId);
+    if (!existing) {
+      throw new NotFoundException('Leave record not found.');
+    }
+    try {
+      await this.service.deleteLeave(leaveId);
+      return { message: 'Leave record deleted successfully.' };
+    } catch (error) {
+      if (error instanceof HttpException) throw error;
+      throw new InternalServerErrorException({
+        message: 'Failed to delete leave record.',
         error: (error as Error).message,
       });
     }

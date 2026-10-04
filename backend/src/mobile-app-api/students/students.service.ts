@@ -1191,7 +1191,24 @@ export class MobileStudentsService {
       if (l.reason) description += ` - Reason: ${l.reason}`;
       push(
         date,
-        withId({ type: 'leave', description, time: l.createdAt.toISOString(), status: 'approved' }, l.id, 'leave'),
+        withId(
+          {
+            type: 'leave',
+            description,
+            time: l.createdAt.toISOString(),
+            status: 'approved',
+            // The edit screen needs the real leaveDate/leaveType/isHalfDay to
+            // prefill correctly — `time` above is createdAt (when it was
+            // recorded), not the leave's actual date.
+            leave_date: toDateOnly(l.leaveDate),
+            leave_type: l.leaveType,
+            is_half_day: l.isHalfDay,
+            reason: l.reason,
+            creation_remarks: l.creationRemarks,
+          },
+          l.id,
+          'leave',
+        ),
       );
     }
 

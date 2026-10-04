@@ -274,6 +274,11 @@ export class MobileStudentLeavesService {
     return this.prisma.studentLeave.findFirst({ where: { id: leaveId, branchId } });
   }
 
+  /** Controller has already confirmed this leave exists in this branch. */
+  async deleteLeave(leaveId: string) {
+    await this.prisma.studentLeave.delete({ where: { id: leaveId } });
+  }
+
   async updateLeave(branchId: string, userId: string, leaveId: string, dto: UpdateLeaveDto) {
     // Controller has already confirmed this leave exists in this branch.
     const leave = await this.prisma.studentLeave.findFirstOrThrow({ where: { id: leaveId, branchId } });

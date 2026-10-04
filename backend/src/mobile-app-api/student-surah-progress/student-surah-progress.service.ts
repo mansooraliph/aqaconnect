@@ -318,12 +318,18 @@ export class StudentSurahProgressService {
     name: string;
     user: { email: string | null } | null;
     imageUrl?: string | null;
+    studentCode?: string;
   }) {
     return {
       id: student.id,
       name: student.name,
       email: student.user?.email ?? null,
       student_id: student.id,
+      // The actual human-facing enrollment code (e.g. "6") — student_id
+      // above is the internal cuid, kept as-is since other screens already
+      // rely on it for that. Optional: a couple of call sites pass a
+      // narrower student shape that doesn't carry studentCode.
+      student_code: student.studentCode ?? null,
       image_url: student.imageUrl ?? null,
     };
   }
@@ -2196,6 +2202,32 @@ export class StudentSurahProgressService {
     return result;
   }
 
+  /** Batch halqa + teacher name lookup — for Top Performing's "All Halqas" card, which needs the teacher to credit, not just the halqa name. */
+  private async studentHalqaTeacherBatch(studentIds: string[]) {
+    const result = new Map<string, { halqaName: string; teacherName: string | null }>();
+    if (studentIds.length === 0) return result;
+    const memberships = await this.prisma.halqaStudent.findMany({
+      where: { studentId: { in: studentIds }, removedAt: null },
+      include: {
+        halqa: {
+          select: {
+            name: true,
+            teacher: { include: { user: { select: { firstName: true, lastName: true } } } },
+          },
+        },
+      },
+    });
+    for (const m of memberships) {
+      if (m.halqa && !result.has(m.studentId)) {
+        const teacherName = m.halqa.teacher
+          ? [m.halqa.teacher.user.firstName, m.halqa.teacher.user.lastName].filter(Boolean).join(' ')
+          : null;
+        result.set(m.studentId, { halqaName: m.halqa.name, teacherName: teacherName || null });
+      }
+    }
+    return result;
+  }
+
   /** Batch halqa lookup for a small, already-bounded set of students (e.g. the final `limit`-sized result page) — avoids one findFirst per student. */
   private async studentHalqasBatch(studentIds: string[]) {
     const result = new Map<
@@ -2803,7 +2835,10 @@ export class StudentSurahProgressService {
     query: GetTopStudentsQueryDto,
   ) {
     const types = query.types ?? [];
-    const limit = query.limit ? Number(query.limit) : 10;
+    // No cap unless the caller explicitly asks for one — the mobile client
+    // never passes this, and capping at 10 silently hid everyone past that
+    // from "Top Performing" instead of showing the full ranked list.
+    const requestedLimit = query.limit ? Number(query.limit) : null;
 
     const where: Prisma.StudentSurahProgressEntryWhereInput = {
       branchId,
@@ -2880,7 +2915,9 @@ export class StudentSurahProgressService {
           (g._sum.toAyah ?? 0) - (g._sum.fromAyah ?? 0) + g._count._all,
       }))
       .sort((a, b) => b.totalAyahs - a.totalAyahs);
-    const topStudentIds = ranked.slice(0, limit).map((r) => r.studentId);
+    const topRanked =
+      requestedLimit !== null ? ranked.slice(0, requestedLimit) : ranked;
+    const topStudentIds = topRanked.map((r) => r.studentId);
 
     if (topStudentIds.length === 0) {
       return {
@@ -2893,7 +2930,7 @@ export class StudentSurahProgressService {
             types,
           },
           top_students: {
-            limit,
+            limit: requestedLimit,
             total_students_with_records: distinctStudents.length,
             students: [],
           },
@@ -2923,6 +2960,9 @@ export class StudentSurahProgressService {
       typeCompletionDates,
       surahTouches,
       winnerStudents,
+      halqaTeacherByStudent,
+      branchSettings,
+      branch,
     ] = await Promise.all([
       this.prisma.studentSurahProgressEntry.groupBy({
         by: ['studentId'],
@@ -2956,7 +2996,13 @@ export class StudentSurahProgressService {
         where: { id: { in: topStudentIds } },
         include: { user: { select: { email: true } } },
       }),
+      this.studentHalqaTeacherBatch(topStudentIds),
+      this.prisma.branchSettings.findUnique({ where: { branchId } }),
+      this.prisma.branch.findUnique({ where: { id: branchId } }),
     ]);
+    // The academy/center name — never the Halqa's name (see the identical
+    // comment in students.service.ts's buildActivityTimeline).
+    const centerName = branchSettings?.displayName || branch?.name || null;
 
     const uniqueSurahIds = [
       ...new Set(surahTouches.map((s) => s.surahId).filter((id): id is string => !!id)),
@@ -3022,8 +3068,9 @@ export class StudentSurahProgressService {
     });
 
     const topStudents = await Promise.all(
-      ranked.slice(0, limit).map(async (r) => {
+      topRanked.map(async (r) => {
         const student = studentById.get(r.studentId);
+        const halqaTeacher = halqaTeacherByStudent.get(r.studentId);
         const entryTypeCounts = typesByStudent.get(r.studentId) ?? new Map();
         const entryTypeAyahs = typeAyahMap.get(r.studentId) ?? new Map();
         const entryTypeDays = daysByStudentType.get(r.studentId) ?? new Map();
@@ -3050,6 +3097,9 @@ export class StudentSurahProgressService {
           total_entries: entryCountMap.get(r.studentId) ?? 0,
           lesson_types: lessonTypes,
           surahs_completed: surahsCompleted,
+          halqa_name: halqaTeacher?.halqaName ?? null,
+          teacher_name: halqaTeacher?.teacherName ?? null,
+          center_name: centerName,
         };
       }),
     );
@@ -3064,7 +3114,7 @@ export class StudentSurahProgressService {
           types,
         },
         top_students: {
-          limit,
+          limit: requestedLimit,
           total_students_with_records: distinctStudents.length,
           students: topStudents,
         },
