@@ -2088,9 +2088,18 @@ export class StudentSurahProgressService {
         completedStudents.push(studentData);
       } else if (hasLeaveToday) {
         onLeaveStudents.push(studentData);
-      } else {
+      } else if (query.type || todaysTypes.size === 0) {
+        // Under "All" (no type filter), Pending means genuinely hasn't
+        // started — not "hasn't finished everything." A student who's
+        // marked some but not all of today's required types is already
+        // correctly shown under whichever specific New/Juzh/Old tab
+        // applies to what they did; listing them in "All" Pending too
+        // would make Pending mean "not entirely done" instead of
+        // "nothing done," and double-count them against those tabs.
         pendingStudents.push(studentData);
       }
+      // else: a partial-completion student under "All" — intentionally
+      // not placed in any of the three buckets here (see comment above).
     }
 
     const globalEvents = holidays.map((h) => ({
