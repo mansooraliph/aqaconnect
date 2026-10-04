@@ -2865,6 +2865,14 @@ export class StudentSurahProgressService {
           ? ownHalqaIds.filter((id) => id === query.halqa_id)
           : ownHalqaIds;
 
+    // rosterIds is every student who should appear in the list — not just
+    // those with a matching entry, and not just those with a *rankable*
+    // one (a student whose only activity is a cross-surah Old/Juzh range
+    // has no plain fromAyah/toAyah to sum, so without this they'd be
+    // invisible even though they recited plenty). Rank by ayahs where
+    // computable, 0 otherwise — "show everyone" beats "only show who's
+    // easy to rank".
+    let rosterIds: string[];
     if (effectiveHalqaIds !== null) {
       const memberIds = (
         await this.prisma.halqaStudent.findMany({
@@ -2876,43 +2884,51 @@ export class StudentSurahProgressService {
         query.student_id && !memberIds.includes(query.student_id)
           ? { in: [] }
           : (query.student_id ?? { in: memberIds });
+      rosterIds = query.student_id
+        ? memberIds.includes(query.student_id)
+          ? [query.student_id]
+          : []
+        : memberIds;
     } else if (query.student_id) {
       where.studentId = query.student_id;
+      rosterIds = [query.student_id];
+    } else {
+      const allStudents = await this.prisma.student.findMany({
+        where: { branchId, status: 'ACTIVE' },
+        select: { id: true },
+      });
+      rosterIds = allStudents.map((s) => s.id);
     }
 
-    // Two-phase: rank with a cheap DB-side aggregation over every matching
-    // row (groupBy — one row per student, no student/surah joins), then
-    // only run the heavy detailed query (with joins) for the winners.
-    // The previous single-pass version pulled every matching progress
-    // entry for the whole branch into Node with full relations included —
-    // fine for one halqa, but for "all halqas" over a wide date range that
-    // was thousands of rows with joins on every request, which is exactly
+    // Rank with a cheap DB-side aggregation over every matching row
+    // (groupBy — one row per student, no student/surah joins), then only
+    // run the heavy detailed query (with joins) for the winners. The
+    // previous single-pass version pulled every matching progress entry
+    // for the whole branch into Node with full relations included — fine
+    // for one halqa, but for "all halqas" over a wide date range that was
+    // thousands of rows with joins on every request, which is exactly
     // what was driving the DB connection pool into "too many connections"
     // under concurrent admin usage. ayahSpan(from, to) = to - from + 1, so
     // sum(ayahSpan) decomposes algebraically into sum(to) - sum(from) +
     // count(*) — restricting to non-null from/to keeps that identity exact
     // (a null-range entry contributes 0 either way).
-    const [rankable, distinctStudents] = await Promise.all([
-      this.prisma.studentSurahProgressEntry.groupBy({
-        by: ['studentId'],
-        where: { ...where, fromAyah: { not: null }, toAyah: { not: null } },
-        _sum: { fromAyah: true, toAyah: true },
-        _count: { _all: true },
-      }),
-      // Separate from `rankable` because a student whose only matching
-      // entries have a null ayah range (Juz/Page-tracked progress) is
-      // excluded from ranking but still has "records" for this count.
-      this.prisma.studentSurahProgressEntry.groupBy({
-        by: ['studentId'],
-        where,
-      }),
-    ]);
+    const rankable = await this.prisma.studentSurahProgressEntry.groupBy({
+      by: ['studentId'],
+      where: { ...where, fromAyah: { not: null }, toAyah: { not: null } },
+      _sum: { fromAyah: true, toAyah: true },
+      _count: { _all: true },
+    });
+    const ayahsByStudent = new Map(
+      rankable.map((g) => [
+        g.studentId,
+        (g._sum.toAyah ?? 0) - (g._sum.fromAyah ?? 0) + g._count._all,
+      ]),
+    );
 
-    const ranked = rankable
-      .map((g) => ({
-        studentId: g.studentId,
-        totalAyahs:
-          (g._sum.toAyah ?? 0) - (g._sum.fromAyah ?? 0) + g._count._all,
+    const ranked = rosterIds
+      .map((studentId) => ({
+        studentId,
+        totalAyahs: ayahsByStudent.get(studentId) ?? 0,
       }))
       .sort((a, b) => b.totalAyahs - a.totalAyahs);
     const topRanked =
@@ -2931,7 +2947,7 @@ export class StudentSurahProgressService {
           },
           top_students: {
             limit: requestedLimit,
-            total_students_with_records: distinctStudents.length,
+            total_students_with_records: rosterIds.length,
             students: [],
           },
         },
@@ -3115,7 +3131,7 @@ export class StudentSurahProgressService {
         },
         top_students: {
           limit: requestedLimit,
-          total_students_with_records: distinctStudents.length,
+          total_students_with_records: rosterIds.length,
           students: topStudents,
         },
       },
