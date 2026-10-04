@@ -2080,12 +2080,14 @@ export class StudentSurahProgressService {
 
       if (
         (records && records.length > 0 && hasAllCycleTypesToday) ||
-        hasExamToday
-      ) {
         // An exam/Mukammal today "handles" the student for the day even
-        // without ordinary lesson progress (see comment above) — but they
-        // still need a bucket, or they silently vanish from the response
-        // entirely instead of just skipping Pending.
+        // without ordinary lesson progress — but only on the unfiltered
+        // "All" view. On a New/Juzh/Old tab, "Completed" specifically means
+        // that type was marked today; a student who only took an exam
+        // didn't mark that type, so they still need a bucket (or they'd
+        // silently vanish) but it isn't this one.
+        (!query.type && hasExamToday)
+      ) {
         completedStudents.push(studentData);
       } else if (hasLeaveToday) {
         onLeaveStudents.push(studentData);
