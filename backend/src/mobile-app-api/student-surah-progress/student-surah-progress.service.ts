@@ -2060,21 +2060,22 @@ export class StudentSurahProgressService {
         remarks: remarkTexts.length > 0 ? remarkTexts.join('; ') : null,
       };
 
-      // "Completed" requires every lesson type in the student's current
-      // cycle (current_cycle_types above) to have a record today, not just
-      // one of them — a student who's only marked New Lesson today but
-      // whose active cycle also includes Old/Juzh is still mid-day, not
-      // done, and belongs in Pending.
+      // On a single-type tab (New/Juzh/Old — query.type set), "Completed"
+      // just means that one type was marked today — the query itself is
+      // already scoped to that type, so todaysTypes can only ever contain
+      // it; checking it against the student's full current cycle (which
+      // can span more than one type, e.g. New marked earlier today then
+      // Juzh after) would almost always fail, since a type-filtered view
+      // can never see marks of a *different* type regardless of whether
+      // they also happened today.
       //
-      // On the unfiltered "All" view (query.type unset), that cycle-based
-      // check isn't strict enough — a student whose cycle hasn't reached
-      // Juzh/Old yet (current_cycle_types still just ['New Lesson']) would
-      // show Completed after only a New Lesson. "All" instead requires
-      // literally all three lesson types marked today.
+      // On the unfiltered "All" view (query.type unset), "Completed"
+      // requires literally all three lesson types marked today — see the
+      // commit that introduced this for the reasoning (current_cycle_types
+      // alone under-counts "done" there).
       const todaysTypes = new Set(lessonTypesMap.keys());
-      const cycleTypes = currentCycleTypesByStudent.get(student.id) ?? [];
       const hasAllCycleTypesToday = query.type
-        ? cycleTypes.length > 0 && cycleTypes.every((t) => todaysTypes.has(t))
+        ? todaysTypes.has(query.type)
         : Object.values(TYPE_TO_LEGACY).every((t) => todaysTypes.has(t));
 
       if (
