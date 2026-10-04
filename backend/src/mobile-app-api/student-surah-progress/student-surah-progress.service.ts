@@ -2979,6 +2979,7 @@ export class StudentSurahProgressService {
       halqaTeacherByStudent,
       branchSettings,
       branch,
+      ayahEntriesForLines,
     ] = await Promise.all([
       this.prisma.studentSurahProgressEntry.groupBy({
         by: ['studentId'],
@@ -3015,6 +3016,14 @@ export class StudentSurahProgressService {
       this.studentHalqaTeacherBatch(topStudentIds),
       this.prisma.branchSettings.findUnique({ where: { branchId } }),
       this.prisma.branch.findUnique({ where: { id: branchId } }),
+      // The (surahId, fromAyah, toAyah) per entry — needed to compute real
+      // completed lines via SurahAyahPageLine below, not just a flat
+      // ayahs/15 approximation. Bounded to winners only, same as
+      // typeCompletionDates above — never by how much history a student has.
+      this.prisma.studentSurahProgressEntry.findMany({
+        where: { ...winnerWhere, fromAyah: { not: null }, toAyah: { not: null }, surahId: { not: null } },
+        select: { studentId: true, surahId: true, type: true, fromAyah: true, toAyah: true },
+      }),
     ]);
     // The academy/center name — never the Halqa's name (see the identical
     // comment in students.service.ts's buildActivityTimeline).
@@ -3068,19 +3077,51 @@ export class StudentSurahProgressService {
     }
     const studentById = new Map(winnerStudents.map((s) => [s.id, s]));
 
-    // Academy convention (same one the PDF export uses): 15 lines per Mushaf
-    // page, applied as a flat conversion of ayah count rather than a true
-    // per-ayah line lookup (SurahAyahPageLine) — that table's per-ayah line
-    // counts aren't constant, so summing them can't be done as a cheap DB
-    // aggregate like ayahSpan can; it'd require pulling every matching row
-    // per student, which is exactly the OOM pattern this endpoint was
-    // rewritten to avoid (see the comment above the groupBy phase). Since
-    // this is a fixed-ratio transform of total_ayahs, ranking by pages/lines
-    // produces the identical order as ranking by ayahs — so the existing
-    // cheap aggregation still correctly determines the top N.
-    const toPagesLines = (ayahs: number) => ({
-      pages: Math.trunc(ayahs / 15),
-      lines: ayahs % 15,
+    // Real per-ayah line lookup (SurahAyahPageLine — same table
+    // /configuration/surah-ayah-page-lines manages), not a flat ayahs/15
+    // approximation: some ayahs are one Mushaf line, others span several,
+    // so two students with the same ayah count can have completed very
+    // different amounts of actual page content. Bounded to the surahs
+    // these winners actually touched (~114 max), same safe shape as the
+    // rest of this detail phase.
+    const pageLines = uniqueSurahIds.length
+      ? await this.prisma.surahAyahPageLine.findMany({
+          where: { surahId: { in: uniqueSurahIds } },
+          select: { surahId: true, ayahNumber: true, lineFrom: true, lineTo: true },
+        })
+      : [];
+    const lineSpanOf = new Map<string, number>(); // `${surahId}:${ayahNumber}` -> lines
+    for (const pl of pageLines) {
+      lineSpanOf.set(`${pl.surahId}:${pl.ayahNumber}`, pl.lineTo - pl.lineFrom + 1);
+    }
+    // Falls back to 1 line/ayah for any ayah missing page-line data, so a
+    // gap in that reference table degrades gracefully instead of undercounting.
+    const linesForRange = (surahId: string, fromAyah: number, toAyah: number): number => {
+      let lines = 0;
+      for (let ayah = fromAyah; ayah <= toAyah; ayah++) {
+        lines += lineSpanOf.get(`${surahId}:${ayah}`) ?? 1;
+      }
+      return lines;
+    };
+
+    const totalLinesByStudent = new Map<string, number>();
+    const typeLinesByStudent = new Map<string, Map<string, number>>();
+    for (const e of ayahEntriesForLines) {
+      if (!e.surahId || e.fromAyah === null || e.toAyah === null) continue;
+      const lines = linesForRange(e.surahId, e.fromAyah, e.toAyah);
+      totalLinesByStudent.set(e.studentId, (totalLinesByStudent.get(e.studentId) ?? 0) + lines);
+      if (e.type) {
+        const perType = typeLinesByStudent.get(e.studentId) ?? new Map<string, number>();
+        perType.set(e.type, (perType.get(e.type) ?? 0) + lines);
+        typeLinesByStudent.set(e.studentId, perType);
+      }
+    }
+    // 15 lines per Mushaf page (QuranPage.lineCount's default and the
+    // overwhelming majority of real pages) to turn a true line total into
+    // pages + remainder lines.
+    const toPagesLines = (lines: number) => ({
+      pages: Math.trunc(lines / 15),
+      lines: lines % 15,
     });
 
     const topStudents = await Promise.all(
@@ -3089,13 +3130,14 @@ export class StudentSurahProgressService {
         const halqaTeacher = halqaTeacherByStudent.get(r.studentId);
         const entryTypeCounts = typesByStudent.get(r.studentId) ?? new Map();
         const entryTypeAyahs = typeAyahMap.get(r.studentId) ?? new Map();
+        const entryTypeLines = typeLinesByStudent.get(r.studentId) ?? new Map();
         const entryTypeDays = daysByStudentType.get(r.studentId) ?? new Map();
         const lessonTypes = [...entryTypeCounts.entries()].map(([type, count]) => {
           const ayahs = entryTypeAyahs.get(type) ?? 0;
           return {
             type: TYPE_TO_LEGACY[type as keyof typeof TYPE_TO_LEGACY] ?? type,
             total_ayahs: ayahs,
-            ...toPagesLines(ayahs),
+            ...toPagesLines(entryTypeLines.get(type) ?? 0),
             days: entryTypeDays.get(type)?.size ?? 0,
             entries_count: count,
           };
@@ -3109,7 +3151,7 @@ export class StudentSurahProgressService {
             ? await this.formatStudentBasic(student)
             : { id: r.studentId },
           total_ayahs: r.totalAyahs,
-          ...toPagesLines(r.totalAyahs),
+          ...toPagesLines(totalLinesByStudent.get(r.studentId) ?? 0),
           total_entries: entryCountMap.get(r.studentId) ?? 0,
           lesson_types: lessonTypes,
           surahs_completed: surahsCompleted,
