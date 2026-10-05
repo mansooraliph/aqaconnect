@@ -733,21 +733,28 @@ export class StudentSurahProgressService {
     const today = new Date();
     today.setUTCHours(0, 0, 0, 0);
 
+    // Pace is measured over a trailing window (see PACE_WINDOW_DAYS below),
+    // not the student's entire history — a lifetime average never forgets
+    // a one-time bulk-marked backlog, so it can read as "unusually fast"
+    // for as long as that backlog stays a large share of the total (weeks
+    // to months, depending on size). A trailing window bounds that to the
+    // window length: once the bulk day ages out of it, pace reflects only
+    // recent real activity.
+    const PACE_WINDOW_DAYS = 14;
+    const windowStart = new Date(today.getTime() - PACE_WINDOW_DAYS * 86400000);
+
     let totalLines = 0;
     let actualLines = 0;
     let expectedLines = 0;
     let latestDate: Date | null = null;
-    // Pace is measured from actual practice, not the schedule's nominal
-    // start date — a student whose schedule was generated months ago but
-    // who only just started completing lessons should be paced from when
-    // they actually started, not averaged over the months they hadn't
-    // begun yet (that crushes linesPerDay toward zero and produces
-    // multi-century projections for anyone early in a long-dormant plan).
+    // Still tracked across the student's whole history (not just the pace
+    // window) — used for the "ever marked anything" / "gone quiet" checks
+    // below, which are about lifetime activity, not recent pace.
     let earliestCompletedAt: Date | null = null;
-    // Separately, the most recent completion — used to detect a student
-    // who's simply gone quiet recently, independent of how long they've
-    // been on the schedule overall.
     let latestCompletedAt: Date | null = null;
+    // Lines actually completed within the trailing window — this, not
+    // actualLines, drives the pace/projection calculation.
+    let windowLines = 0;
 
     for (const row of rows) {
       const lines = linesForRow(row.surahId, row.fromAyah, row.toAyah);
@@ -761,6 +768,7 @@ export class StudentSurahProgressService {
           if (!latestCompletedAt || row.completedAt > latestCompletedAt) {
             latestCompletedAt = row.completedAt;
           }
+          if (row.completedAt >= windowStart) windowLines += lines;
         }
       }
       if (row.scheduledDate <= today) expectedLines += lines;
@@ -776,16 +784,15 @@ export class StudentSurahProgressService {
         : 0;
     const targetCompletionDate = latestDate ? formatDateOnly(latestDate) : null;
 
-    // Project a finish date from the student's own actual pace so far —
-    // lines actually completed ÷ days elapsed since they first actually
-    // completed something. A raw extrapolation here can produce nonsense
-    // (a projection centuries out for someone who's barely started, or an
-    // implausibly fast one if a backlog got bulk-marked with the same
-    // timestamp) — those aren't useful dates, they're noise, so below we
-    // classify the estimate's reliability and only hand back a date when
-    // it's actually meaningful. Otherwise the caller gets a status + plain
-    // -language reason instead of a number that looks broken.
-    const MIN_DAYS_FOR_ESTIMATE = 1; // any real activity span is enough to show a first estimate
+    // Project a finish date from the student's own actual pace over the
+    // trailing window — lines completed within it ÷ days elapsed within
+    // it. A raw extrapolation here can produce nonsense (a projection
+    // centuries out for someone who's barely started, or an implausibly
+    // fast one if a backlog got bulk-marked with the same timestamp) —
+    // those aren't useful dates, they're noise, so below we classify the
+    // estimate's reliability and only hand back a date when it's actually
+    // meaningful. Otherwise the caller gets a status + plain-language
+    // reason instead of a number that looks broken.
     const MAX_PLAUSIBLE_LINES_PER_DAY = 50; // generous ceiling for real daily memorization pace — a genuine data-quality guard, not a "too surprising" filter
     const INACTIVE_AFTER_DAYS = 30; // schedule rows are daily with no built-in rest days, so any sustained gap is a real gap
 
@@ -815,28 +822,39 @@ export class StudentSurahProgressService {
       paceStatus = 'unmarked_dates';
       paceMessage =
         'Completed lessons are missing dates — marking may need review';
+    } else if (windowLines === 0) {
+      // Something was marked at some point (actualLines > 0) and they're
+      // not yet "inactive" (< 30 days since last activity), but nothing
+      // fell inside the shorter pace window — e.g. a bulk-marked backlog
+      // that's since aged out of it with no new marking yet. Distinct from
+      // both "not_started" and "inactive": there's history, just not
+      // enough *recent* history to estimate a current pace from.
+      paceStatus = 'insufficient_recent_activity';
+      paceMessage = `No lessons marked in the last ${PACE_WINDOW_DAYS} days to estimate current pace`;
     } else {
-      const daysElapsed = Math.max(
+      // Capped by how long the student has actually been active, so a
+      // student who started within the window isn't diluted by days
+      // before they existed (e.g. a 3-day-old student's pace is measured
+      // over 3 days, not artificially spread across the full window).
+      const daysSinceFirstEver = Math.max(
         1,
         Math.round(
           (today.getTime() - earliestCompletedAt.getTime()) / 86400000,
         ) + 1,
       );
-      const linesPerDay = actualLines / daysElapsed;
+      const daysElapsed = Math.min(PACE_WINDOW_DAYS, daysSinceFirstEver);
+      const linesPerDay = windowLines / daysElapsed;
 
-      if (daysElapsed < MIN_DAYS_FOR_ESTIMATE) {
-        paceStatus = 'insufficient_data';
-        paceMessage = 'Not enough recent activity yet to estimate a pace';
-      } else if (linesPerDay > MAX_PLAUSIBLE_LINES_PER_DAY) {
+      if (linesPerDay > MAX_PLAUSIBLE_LINES_PER_DAY) {
         paceStatus = 'unrealistic_pace';
         paceMessage = 'Recent marking looks unusually fast — may need review';
       } else {
-        // Now that pace is measured from real practice history (not the
-        // schedule's nominal start date), a far-out date is genuinely
-        // correct information for a slow-but-real student, not noise to
-        // hide — so it's shown as an actual date rather than a vague "far
-        // behind" placeholder. The UI compares it against the target date
-        // itself to label how far ahead/behind that implies.
+        // Now that pace is measured from real recent practice, a far-out
+        // date is genuinely correct information for a slow-but-real
+        // student, not noise to hide — so it's shown as an actual date
+        // rather than a vague "far behind" placeholder. The UI compares it
+        // against the target date itself to label how far ahead/behind
+        // that implies.
         const remainingLines = Math.max(0, totalLines - actualLines);
         const daysToFinish = Math.ceil(remainingLines / linesPerDay);
         const projected = new Date(today.getTime() + daysToFinish * 86400000);
