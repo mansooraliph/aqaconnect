@@ -3102,13 +3102,38 @@ export class StudentSurahProgressService {
           select: { surahId: true, ayahNumber: true, lineFrom: true, lineTo: true },
         })
       : [];
-    const lineSpanOf = new Map<string, number>(); // `${surahId}:${ayahNumber}` -> lines
+    const lineBoundsOf = new Map<string, { lineFrom: number; lineTo: number }>(); // `${surahId}:${ayahNumber}`
+    const lineSpanOf = new Map<string, number>(); // `${surahId}:${ayahNumber}` -> lines (fallback-only, see below)
     for (const pl of pageLines) {
+      lineBoundsOf.set(`${pl.surahId}:${pl.ayahNumber}`, { lineFrom: pl.lineFrom, lineTo: pl.lineTo });
       lineSpanOf.set(`${pl.surahId}:${pl.ayahNumber}`, pl.lineTo - pl.lineFrom + 1);
     }
-    // Falls back to 1 line/ayah for any ayah missing page-line data, so a
-    // gap in that reference table degrades gracefully instead of undercounting.
-    const linesForRange = (surahId: string, fromAyah: number, toAyah: number): number => {
+    // Consecutive ayahs commonly share a boundary line (e.g. ayah 9 ends on
+    // the same line ayah 10 starts on), so summing each ayah's own span
+    // independently double-counts every shared line. Merging adjacent/
+    // overlapping ayah ranges into contiguous blocks first, then measuring
+    // each block as (last ayah's lineTo - first ayah's lineFrom + 1), counts
+    // every physical line actually read exactly once.
+    const mergeAyahRanges = (ranges: [number, number][]): [number, number][] => {
+      const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
+      const merged: [number, number][] = [];
+      for (const [from, to] of sorted) {
+        const last = merged[merged.length - 1];
+        if (last && from <= last[1] + 1) {
+          last[1] = Math.max(last[1], to);
+        } else {
+          merged.push([from, to]);
+        }
+      }
+      return merged;
+    };
+    // Falls back to summing per-ayah spans for a block if either boundary
+    // ayah is missing page-line data, so a gap in that reference table
+    // degrades gracefully instead of undercounting.
+    const linesForMergedBlock = (surahId: string, fromAyah: number, toAyah: number): number => {
+      const start = lineBoundsOf.get(`${surahId}:${fromAyah}`);
+      const end = lineBoundsOf.get(`${surahId}:${toAyah}`);
+      if (start && end) return end.lineTo - start.lineFrom + 1;
       let lines = 0;
       for (let ayah = fromAyah; ayah <= toAyah; ayah++) {
         lines += lineSpanOf.get(`${surahId}:${ayah}`) ?? 1;
@@ -3116,16 +3141,28 @@ export class StudentSurahProgressService {
       return lines;
     };
 
-    const totalLinesByStudent = new Map<string, number>();
-    const typeLinesByStudent = new Map<string, Map<string, number>>();
+    const rangesByGroup = new Map<string, [number, number][]>(); // `${studentId}|${surahId}|${type}`
     for (const e of ayahEntriesForLines) {
       if (!e.surahId || e.fromAyah === null || e.toAyah === null) continue;
-      const lines = linesForRange(e.surahId, e.fromAyah, e.toAyah);
-      totalLinesByStudent.set(e.studentId, (totalLinesByStudent.get(e.studentId) ?? 0) + lines);
-      if (e.type) {
-        const perType = typeLinesByStudent.get(e.studentId) ?? new Map<string, number>();
-        perType.set(e.type, (perType.get(e.type) ?? 0) + lines);
-        typeLinesByStudent.set(e.studentId, perType);
+      const key = `${e.studentId}|${e.surahId}|${e.type ?? ''}`;
+      const ranges = rangesByGroup.get(key) ?? [];
+      ranges.push([e.fromAyah, e.toAyah]);
+      rangesByGroup.set(key, ranges);
+    }
+
+    const totalLinesByStudent = new Map<string, number>();
+    const typeLinesByStudent = new Map<string, Map<string, number>>();
+    for (const [key, ranges] of rangesByGroup) {
+      const [studentId, surahId, type] = key.split('|');
+      const lines = mergeAyahRanges(ranges).reduce(
+        (sum, [from, to]) => sum + linesForMergedBlock(surahId, from, to),
+        0,
+      );
+      totalLinesByStudent.set(studentId, (totalLinesByStudent.get(studentId) ?? 0) + lines);
+      if (type) {
+        const perType = typeLinesByStudent.get(studentId) ?? new Map<string, number>();
+        perType.set(type, (perType.get(type) ?? 0) + lines);
+        typeLinesByStudent.set(studentId, perType);
       }
     }
     // 15 lines per Mushaf page (QuranPage.lineCount's default and the
