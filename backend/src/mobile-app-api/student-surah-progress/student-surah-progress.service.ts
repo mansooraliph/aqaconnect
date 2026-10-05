@@ -673,8 +673,16 @@ export class StudentSurahProgressService {
       };
     }
 
+    // The student's current plan can span multiple scheduleNo generations
+    // when only part of it was ever regenerated (bulkReschedule) —
+    // rescheduledTo: {none: {}} is the correct "not superseded" filter
+    // (mirrors getScheduleOrderedSurahIds and getStudentSurahSchedule's own
+    // fix for the same issue), not "only the single highest scheduleNo",
+    // which silently dropped every row from an earlier generation the
+    // regeneration never touched — making a student with lots of real,
+    // already-marked progress on those surahs look 0% / "not started".
     const rows = await this.prisma.surahHifdhStudentSchedule.findMany({
-      where: { studentId, scheduleNo },
+      where: { studentId, rescheduledTo: { none: {} } },
       select: {
         surahId: true,
         fromAyah: true,
