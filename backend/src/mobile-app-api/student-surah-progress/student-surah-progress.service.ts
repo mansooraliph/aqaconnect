@@ -2092,6 +2092,15 @@ export class StudentSurahProgressService {
     // the Halqa students list can show a "Leave" status tag for them
     // instead of them vanishing from the day entirely.
     const onLeaveStudents: Record<string, unknown>[] = [];
+    // A student who's marked some but not all of today's required types
+    // under the unfiltered "All" view is intentionally kept out of the
+    // three buckets above (see the comment further down) — correct for
+    // the Today's Progress tabbed screens, which already show them under
+    // their specific New/Juzh/Old tab. But a consumer with no tabs at all
+    // (the Halqa students list) has nowhere else to find them, so they'd
+    // otherwise vanish from the response entirely and show no status tag.
+    // Kept here so any such consumer can still look them up.
+    const partialStudents: Record<string, unknown>[] = [];
 
     for (const student of students) {
       const records = progressByStudent.get(student.id);
@@ -2246,9 +2255,13 @@ export class StudentSurahProgressService {
         // would make Pending mean "not entirely done" instead of
         // "nothing done," and double-count them against those tabs.
         pendingStudents.push(studentData);
+      } else {
+        // A partial-completion student under "All" — intentionally not
+        // placed in any of the three buckets above (see comment above),
+        // but still recorded in partialStudents so a tabless consumer can
+        // find them (see partialStudents' own comment).
+        partialStudents.push(studentData);
       }
-      // else: a partial-completion student under "All" — intentionally
-      // not placed in any of the three buckets here (see comment above).
     }
 
     const globalEvents = holidays.map((h) => ({
@@ -2280,6 +2293,10 @@ export class StudentSurahProgressService {
         on_leave: {
           total_students: onLeaveStudents.length,
           students: onLeaveStudents,
+        },
+        partial: {
+          total_students: partialStudents.length,
+          students: partialStudents,
         },
         global_events: globalEvents,
       },
