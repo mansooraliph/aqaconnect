@@ -1319,6 +1319,25 @@ export class MobileStudentsService {
     const sortedDates = [...activitiesByDate.keys()].sort();
     const activities = sortedDates.map((date) => ({ date, activities: activitiesByDate.get(date) }));
 
+    // True New Lesson line total for the range (not a flat ayahs/15
+    // approximation) — see StudentSurahProgressService.computeTrueLinesByStudent's
+    // doc comment for why adjacent ayah entries are merged before counting.
+    const newLessonLinesEntries = surahProgressEntries
+      .filter((e): e is typeof e & { surahId: string; fromAyah: number; toAyah: number } => {
+        const at = e.verifiedAt ?? e.completedAt;
+        return (
+          e.type === 'NEW_LESSON' &&
+          !!at &&
+          at >= start &&
+          at <= end &&
+          e.surahId !== null &&
+          e.fromAyah !== null &&
+          e.toAyah !== null
+        );
+      })
+      .map((e) => ({ studentId, surahId: e.surahId, fromAyah: e.fromAyah, toAyah: e.toAyah }));
+    const newLessonLinesByStudent = await this.surahProgress.computeTrueLinesByStudent(newLessonLinesEntries);
+
     return {
       status: 'success',
       data: {
@@ -1330,6 +1349,7 @@ export class MobileStudentsService {
         },
         center_name: centerName,
         date_range: { start: toDateOnly(start), end: toDateOnly(end) },
+        new_lesson_lines_total: newLessonLinesByStudent.get(studentId) ?? 0,
         activities,
       },
     };

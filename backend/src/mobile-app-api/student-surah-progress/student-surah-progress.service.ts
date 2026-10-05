@@ -1762,6 +1762,75 @@ export class StudentSurahProgressService {
     return toAyah - fromAyah + 1;
   }
 
+  /**
+   * True completed-line totals per student from real SurahAyahPageLine
+   * spans, not a flat ayahs/15 approximation. Consecutive ayahs often share
+   * a boundary line (ayah N's lineTo === ayah N+1's lineFrom), so each
+   * student's ranges are merged per surah into contiguous blocks first —
+   * otherwise summing every ayah's own span independently double-counts
+   * every shared line (see getTopStudents, which this mirrors).
+   */
+  /** Public: reused by StudentsService's activity-report (see buildActivityTimeline). */
+  async computeTrueLinesByStudent(
+    entries: { studentId: string; surahId: string; fromAyah: number; toAyah: number }[],
+  ): Promise<Map<string, number>> {
+    const uniqueSurahIds = [...new Set(entries.map((e) => e.surahId))];
+    const pageLines = uniqueSurahIds.length
+      ? await this.prisma.surahAyahPageLine.findMany({
+          where: { surahId: { in: uniqueSurahIds } },
+          select: { surahId: true, ayahNumber: true, lineFrom: true, lineTo: true },
+        })
+      : [];
+    const lineBoundsOf = new Map<string, { lineFrom: number; lineTo: number }>();
+    const lineSpanOf = new Map<string, number>();
+    for (const pl of pageLines) {
+      lineBoundsOf.set(`${pl.surahId}:${pl.ayahNumber}`, { lineFrom: pl.lineFrom, lineTo: pl.lineTo });
+      lineSpanOf.set(`${pl.surahId}:${pl.ayahNumber}`, pl.lineTo - pl.lineFrom + 1);
+    }
+    const mergeAyahRanges = (ranges: [number, number][]): [number, number][] => {
+      const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
+      const merged: [number, number][] = [];
+      for (const [from, to] of sorted) {
+        const last = merged[merged.length - 1];
+        if (last && from <= last[1] + 1) {
+          last[1] = Math.max(last[1], to);
+        } else {
+          merged.push([from, to]);
+        }
+      }
+      return merged;
+    };
+    const linesForMergedBlock = (surahId: string, fromAyah: number, toAyah: number): number => {
+      const start = lineBoundsOf.get(`${surahId}:${fromAyah}`);
+      const end = lineBoundsOf.get(`${surahId}:${toAyah}`);
+      if (start && end) return end.lineTo - start.lineFrom + 1;
+      let lines = 0;
+      for (let ayah = fromAyah; ayah <= toAyah; ayah++) {
+        lines += lineSpanOf.get(`${surahId}:${ayah}`) ?? 1;
+      }
+      return lines;
+    };
+
+    const rangesByGroup = new Map<string, [number, number][]>(); // `${studentId}|${surahId}`
+    for (const e of entries) {
+      const key = `${e.studentId}|${e.surahId}`;
+      const ranges = rangesByGroup.get(key) ?? [];
+      ranges.push([e.fromAyah, e.toAyah]);
+      rangesByGroup.set(key, ranges);
+    }
+    const totalByStudent = new Map<string, number>();
+    for (const [key, ranges] of rangesByGroup) {
+      const studentId = key.slice(0, key.indexOf('|'));
+      const surahId = key.slice(key.indexOf('|') + 1);
+      const lines = mergeAyahRanges(ranges).reduce(
+        (sum, [from, to]) => sum + linesForMergedBlock(surahId, from, to),
+        0,
+      );
+      totalByStudent.set(studentId, (totalByStudent.get(studentId) ?? 0) + lines);
+    }
+    return totalByStudent;
+  }
+
   /** Public: reused by other mobile-api services (e.g. exam report) that need the same teacher/halqa/student scoping. */
   async activeStudentsForReport(
     branchId: string,
@@ -2549,6 +2618,23 @@ export class StudentSurahProgressService {
         include: { surah: { select: SURAH_SELECT } },
       });
 
+    // True per-ayah line totals (not a flat ayahs/15 approximation) — see
+    // computeTrueLinesByStudent's doc comment for why this merges ranges
+    // per surah before counting instead of summing each record's own span.
+    const trueLinesByStudent = await this.computeTrueLinesByStudent(
+      completedRecords
+        .filter(
+          (r): r is typeof r & { surahId: string; fromAyah: number; toAyah: number } =>
+            r.surahId !== null && r.fromAyah !== null && r.toAyah !== null,
+        )
+        .map((r) => ({
+          studentId: r.studentId,
+          surahId: r.surahId,
+          fromAyah: r.fromAyah,
+          toAyah: r.toAyah,
+        })),
+    );
+
     const studentsCompletedMap = new Map<string, Record<string, unknown>>();
     let totalAyahs = 0;
     const studentBasicCache = new Map<string, Record<string, unknown>>();
@@ -2613,10 +2699,12 @@ export class StudentSurahProgressService {
       }
     }
 
-    const completedList = [...studentsCompletedMap.values()].map((entry) => ({
+    const completedList = [...studentsCompletedMap.entries()].map(([sid, entry]) => ({
       ...entry,
       lesson_types: [...(entry.lesson_types as Map<string, unknown>).values()],
+      total_lines_today: trueLinesByStudent.get(sid) ?? 0,
     }));
+    const totalLinesMarked = [...trueLinesByStudent.values()].reduce((a, b) => a + b, 0);
 
     // Students on approved leave for this date range shouldn't be counted
     // as "not recited" — they're a separate bucket entirely, since they
@@ -2684,6 +2772,7 @@ export class StudentSurahProgressService {
         completed: {
           total_students: completedList.length,
           total_ayahs_marked: totalAyahs,
+          total_lines_marked: totalLinesMarked,
           students: completedList,
         },
         pending: { total_students: pendingList.length, students: pendingList },
