@@ -113,7 +113,23 @@ export class SurahSchedulesService {
     });
     const latestScheduleNo = latestScheduleNoAgg._max.scheduleNo ?? null;
 
-    const targetScheduleNo = query.schedule_no ? Number(query.schedule_no) : latestScheduleNo;
+    const explicitScheduleNo = query.schedule_no ? Number(query.schedule_no) : null;
+    const targetScheduleNo = explicitScheduleNo ?? latestScheduleNo;
+
+    // The student's current plan ("no explicit schedule_no requested") can
+    // span multiple scheduleNo generations when only part of it was ever
+    // regenerated (bulkReschedule) — rescheduledTo: {none: {}} is the
+    // correct "not superseded" filter (mirrors getScheduleOrderedSurahIds
+    // in student-surah-progress.service.ts and HifdhService.listSchedules),
+    // not "only the single highest scheduleNo". The latter silently drops
+    // any earlier-generation surah the regeneration never touched — e.g. a
+    // student still actively working through surahs that only exist in
+    // generation 1, while generation 2 only replaced a later portion of
+    // the plan, made their very real progress look like "not yet marked".
+    const scopeWhere: Prisma.SurahHifdhStudentScheduleWhereInput = explicitScheduleNo
+      ? { studentId, scheduleNo: explicitScheduleNo }
+      : { studentId, rescheduledTo: { none: {} } };
+    const hasScope = explicitScheduleNo !== null || latestScheduleNo !== null;
 
     const availableScheduleNumbers = (
       await this.prisma.surahHifdhStudentSchedule.findMany({
@@ -124,11 +140,9 @@ export class SurahSchedulesService {
       })
     ).map((r) => r.scheduleNo);
 
-    // Progress summary for the target schedule number.
-    const summaryRows = targetScheduleNo
-      ? await this.prisma.surahHifdhStudentSchedule.findMany({
-          where: { studentId, scheduleNo: targetScheduleNo },
-        })
+    // Progress summary for the current (or explicitly requested) scope.
+    const summaryRows = hasScope
+      ? await this.prisma.surahHifdhStudentSchedule.findMany({ where: scopeWhere })
       : [];
     const now = new Date();
     const todayStr = toDateOnly(now);
@@ -160,12 +174,12 @@ export class SurahSchedulesService {
       schedule_no: targetScheduleNo,
     };
 
-    // Per-surah progress for the target schedule number.
+    // Per-surah progress for the current (or explicitly requested) scope.
     let surahProgress: Record<string, unknown>[] = [];
     let currentSurah: Record<string, unknown> | null = null;
-    if (targetScheduleNo) {
+    if (hasScope) {
       const rowsWithSurah = await this.prisma.surahHifdhStudentSchedule.findMany({
-        where: { studentId, scheduleNo: targetScheduleNo },
+        where: scopeWhere,
         include: { surah: { select: { number: true, nameEnglish: true, nameArabic: true } } },
       });
 
@@ -218,18 +232,21 @@ export class SurahSchedulesService {
       }
     }
 
-    const currentScheduleCompleted = latestScheduleNo
-      ? totalIsFullyCompleted(
-          await this.prisma.surahHifdhStudentSchedule.findMany({
-            where: { studentId, scheduleNo: latestScheduleNo },
-            select: { status: true },
-          }),
-        )
-      : false;
+    // "Is the student's current overall plan complete" always reflects the
+    // not-superseded view, regardless of which specific generation (if
+    // any) the caller explicitly asked to browse via query.schedule_no.
+    const currentViewRows = explicitScheduleNo
+      ? await this.prisma.surahHifdhStudentSchedule.findMany({
+          where: { studentId, rescheduledTo: { none: {} } },
+          select: { status: true },
+        })
+      : summaryRows;
+    const currentScheduleCompleted = latestScheduleNo ? totalIsFullyCompleted(currentViewRows) : false;
 
     // Detailed, filtered, paginated schedule entries.
     const where: Prisma.SurahHifdhStudentScheduleWhereInput = { studentId };
-    if (targetScheduleNo) where.scheduleNo = targetScheduleNo;
+    if (explicitScheduleNo) where.scheduleNo = explicitScheduleNo;
+    else where.rescheduledTo = { none: {} };
 
     const surahWhere: Prisma.SurahWhereInput = {};
     if (query.surah_number) surahWhere.number = Number(query.surah_number);
