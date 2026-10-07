@@ -1,6 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
-import { ProgressEntryStatus } from '@prisma/client';
+import { Prisma, ProgressEntryStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GenerateSchedulesDto } from './dto/generate-schedules.dto';
 import { RescheduleDto } from './dto/reschedule.dto';
@@ -630,15 +629,30 @@ export class HifdhService {
     // round trips inside one interactive transaction, long enough to blow
     // past even the already-bumped 30s timeout and tie up a DB connection
     // the whole time, which in turn starved unrelated concurrent requests.
+    //
+    // Two steps rather than one findMany with `rescheduledTo: { none: {} }`:
+    // Prisma compiles that relation filter to `id NOT IN (SELECT
+    // rescheduledFromId FROM ... WHERE rescheduledFromId IS NOT NULL)` — a
+    // subquery over the WHOLE table that Postgres can take minutes on even
+    // with an index on rescheduledFromId (same issue already fixed in
+    // getScheduleConflictsForBranchDates). Step 1 finds just the matching
+    // ids with an index-friendly correlated NOT EXISTS; step 2 is a plain
+    // primary-key IN lookup, which is always fast regardless of table size.
+    const idRows = await this.prisma.$queryRaw<{ id: string }[]>`
+      SELECT s."id"
+      FROM "SurahHifdhStudentSchedule" s
+      WHERE s."studentId" = ANY(${studentIds}::text[])
+        ${fromDate ? Prisma.sql`AND s."scheduledDate" >= ${fromDate}::date` : Prisma.empty}
+        AND NOT EXISTS (
+          SELECT 1 FROM "SurahHifdhStudentSchedule" r WHERE r."rescheduledFromId" = s."id"
+        )
+    `;
+    if (idRows.length === 0) return { rescheduled: 0, copied: 0 };
+
     const rows = await this.prisma.surahHifdhStudentSchedule.findMany({
-      where: {
-        studentId: { in: studentIds },
-        rescheduledTo: { none: {} },
-        ...(fromDate && { scheduledDate: { gte: new Date(fromDate) } }),
-      },
+      where: { id: { in: idRows.map((r) => r.id) } },
       orderBy: { scheduledDate: 'asc' },
     });
-    if (rows.length === 0) return { rescheduled: 0, copied: 0 };
 
     const byStudent = new Map<string, typeof rows>();
     for (const row of rows) {
