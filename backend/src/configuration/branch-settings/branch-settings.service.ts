@@ -46,9 +46,25 @@ export class BranchSettingsService {
     return this.prisma.branchSettings.update({ where: { branchId }, data: dto });
   }
 
-  /** Super Admin sets the same weekend pattern across many branches in one call instead of one-by-one. */
+  /**
+   * Super Admin sets the same weekend pattern across many branches in one
+   * call instead of one-by-one. Beyond the BranchSettings.weekendDays
+   * value itself (which CalendarDaysService/MasterCalendarService consult
+   * for future day *generation*), this also stamps isHoliday=true onto
+   * already-existing upcoming CalendarDay rows that fall on one of the new
+   * weekend days — otherwise a branch's already-generated calendar keeps
+   * isWorkingDay=false but isHoliday=false on those dates, and every
+   * holiday-specific display/report (which checks isHoliday, not
+   * isWorkingDay — see publish()'s doc comment for why those two are kept
+   * independent everywhere else) never reflects the change until the whole
+   * year is regenerated. A branch's own customized days are left alone,
+   * same rule as publish().
+   */
   async bulkSetWeekendDays(branchIds: string[], weekendDays: number[]) {
     let updated = 0;
+    const todayStart = new Date();
+    todayStart.setUTCHours(0, 0, 0, 0);
+
     await this.prisma.$transaction(async (tx) => {
       for (const branchId of branchIds) {
         await tx.branchSettings.upsert({
@@ -57,6 +73,22 @@ export class BranchSettingsService {
           create: { branchId, weekendDays },
         });
         updated++;
+
+        const futureDays = await tx.calendarDay.findMany({
+          where: { branchId, date: { gte: todayStart }, isCustomized: false },
+          select: { id: true, date: true, holidayName: true },
+        });
+        const weekendRows = futureDays.filter((d) => weekendDays.includes(d.date.getUTCDay()));
+        for (const row of weekendRows) {
+          await tx.calendarDay.update({
+            where: { id: row.id },
+            data: {
+              isWorkingDay: false,
+              isHoliday: true,
+              holidayName: row.holidayName ?? 'Weekly Holiday',
+            },
+          });
+        }
       }
     });
     return { updated };
