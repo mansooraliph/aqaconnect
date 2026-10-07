@@ -123,6 +123,12 @@ export function MasterCalendarPage() {
   // Checked across every active branch at once, since a master-calendar change can affect many branches in one shot.
   const [conflictGroups, setConflictGroups] = useState<ConflictGroup[]>([]);
   const [activeReschedule, setActiveReschedule] = useState<(ConflictGroup & { isAll?: boolean }) | null>(null);
+  // Collapsed by default — Reschedule All already resolves every date for a
+  // recurring weekly holiday in one click, so a 50+ row per-date list is
+  // just noise most of the time. Kept expandable for the rarer case where a
+  // one-off holiday needs handling on its own instead of being folded into
+  // the whole-schedule shift (see the per-branch summary's explanation).
+  const [showIndividualDates, setShowIndividualDates] = useState(false);
 
   /** One "Reschedule All" target per branch present in conflictGroups — a
    * weekly holiday (e.g. every Friday for a year) produces one conflict
@@ -762,10 +768,19 @@ export function MasterCalendarPage() {
       <Modal
         open={conflictGroups.length > 0}
         title="Students need rescheduling"
-        onClose={() => setConflictGroups([])}
+        onClose={() => {
+          setConflictGroups([]);
+          setShowIndividualDates(false);
+        }}
         width="max-w-xl"
         footer={
-          <Button variant="outline" onClick={() => setConflictGroups([])}>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setConflictGroups([]);
+              setShowIndividualDates(false);
+            }}
+          >
             Close
           </Button>
         }
@@ -804,24 +819,34 @@ export function MasterCalendarPage() {
               </Button>
             </div>
           ))}
-          {conflictGroups.map((group) => (
-            <div
-              key={`${group.branchId}_${group.date}`}
-              className="flex items-center justify-between rounded-card border border-border p-3"
-            >
-              <div>
-                <p className="text-sm font-medium text-text-primary">
-                  {group.branchName} — {new Date(group.date).toLocaleDateString()}
-                </p>
-                <p className="text-xs text-text-muted">
-                  {group.students.length} student{group.students.length === 1 ? '' : 's'} affected
-                </p>
+          <button
+            type="button"
+            className="self-start text-xs font-medium text-primary hover:underline"
+            onClick={() => setShowIndividualDates((v) => !v)}
+          >
+            {showIndividualDates ? 'Hide' : 'Show'} {conflictGroups.length} individual date
+            {conflictGroups.length === 1 ? '' : 's'} (only needed to handle a date on its own instead of Reschedule
+            All)
+          </button>
+          {showIndividualDates &&
+            conflictGroups.map((group) => (
+              <div
+                key={`${group.branchId}_${group.date}`}
+                className="flex items-center justify-between rounded-card border border-border p-3"
+              >
+                <div>
+                  <p className="text-sm font-medium text-text-primary">
+                    {group.branchName} — {new Date(group.date).toLocaleDateString()}
+                  </p>
+                  <p className="text-xs text-text-muted">
+                    {group.students.length} student{group.students.length === 1 ? '' : 's'} affected
+                  </p>
+                </div>
+                <Button size="sm" onClick={() => setActiveReschedule(group)}>
+                  Reschedule
+                </Button>
               </div>
-              <Button size="sm" onClick={() => setActiveReschedule(group)}>
-                Reschedule
-              </Button>
-            </div>
-          ))}
+            ))}
         </div>
       </Modal>
 
