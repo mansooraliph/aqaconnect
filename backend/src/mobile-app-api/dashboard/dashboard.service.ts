@@ -1,5 +1,5 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import { ProgressEntryStatus } from '@prisma/client';
+import { ProgressEntryStatus, ProgressEntryType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MobileContextService } from '../common/mobile-context.service';
 
@@ -176,6 +176,51 @@ export class DashboardService {
     const presentTodayCount = presentTodayStudentRows.length;
     const pendingCount = totalEntriesCount - doneCount;
 
+    // "Absent" — there's no attendance-marking flow for students (see
+    // presentTodayCount's comment), so this means students on an approved
+    // leave today, the one real "not expected to recite today" signal
+    // that actually exists in the data. leaveDate is always stored as
+    // UTC midnight (see student-leaves.service.ts's dateRange/toDateOnly),
+    // so match it the same way rather than against local-time todayStart/
+    // todayEnd, which would drift off UTC midnight on a non-UTC server.
+    const todayUtcMidnight = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
+    const absentStudentRows = await this.prisma.studentLeave.findMany({
+      where: {
+        student: { branchId },
+        status: 'APPROVED',
+        leaveDate: todayUtcMidnight,
+      },
+      select: { studentId: true },
+      distinct: ['studentId'],
+    });
+    const absentTodayCount = absentStudentRows.length;
+
+    // Hafidh count — students who've completed every ayah of the Quran as
+    // New Lesson. Uses the same sum(to) - sum(from) + count decomposition
+    // as getTopStudents/targetAndActualAyahsBatch for a true per-student
+    // ayah total without pulling every row into Node; trusts entries don't
+    // overlap (the same assumption those call sites already make).
+    const [totalQuranAyahs, newLessonAyahGroups] = await Promise.all([
+      this.prisma.surah.aggregate({ _sum: { totalAyahs: true } }),
+      this.prisma.studentSurahProgressEntry.groupBy({
+        by: ['studentId'],
+        where: {
+          branchId,
+          type: ProgressEntryType.NEW_LESSON,
+          status: { in: DONE_STATUSES },
+          fromAyah: { not: null },
+          toAyah: { not: null },
+        },
+        _sum: { fromAyah: true, toAyah: true },
+        _count: { _all: true },
+      }),
+    ]);
+    const quranTotalAyahs = totalQuranAyahs._sum.totalAyahs ?? 0;
+    const hafidhCount = newLessonAyahGroups.filter((g) => {
+      const total = (g._sum.toAyah ?? 0) - (g._sum.fromAyah ?? 0) + g._count._all;
+      return quranTotalAyahs > 0 && total >= quranTotalAyahs;
+    }).length;
+
     // Legacy names this "completed today" but never actually filters by
     // date — replicated as-is (see `total_students` scoping too: legacy
     // counts *distinct students* with ≥1 done entry, not raw entry rows).
@@ -215,6 +260,8 @@ export class DashboardService {
             ? Math.round(((totalStudents - overdueStudentsCount) / totalStudents) * 1000) / 10
             : 0,
       },
+      absent_today: absentTodayCount,
+      hafidh_students_count: hafidhCount,
     };
   }
 }
