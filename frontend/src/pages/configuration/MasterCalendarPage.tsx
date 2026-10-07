@@ -122,7 +122,34 @@ export function MasterCalendarPage() {
   // ---- Reschedule prompt when a Holiday/Event marks a date students already have lessons scheduled on ----
   // Checked across every active branch at once, since a master-calendar change can affect many branches in one shot.
   const [conflictGroups, setConflictGroups] = useState<ConflictGroup[]>([]);
-  const [activeReschedule, setActiveReschedule] = useState<ConflictGroup | null>(null);
+  const [activeReschedule, setActiveReschedule] = useState<(ConflictGroup & { isAll?: boolean }) | null>(null);
+
+  /** One "Reschedule All" target per branch present in conflictGroups — a
+   * weekly holiday (e.g. every Friday for a year) produces one conflict
+   * group per date, which used to mean clicking Reschedule 50+ times.
+   * bulkReschedule already shifts a student's WHOLE remaining schedule by
+   * one fixed delta in a single call, so unioning every date's students for
+   * that branch and rescheduling from the earliest date resolves every
+   * group for that branch at once. */
+  const conflictsByBranch = useMemo(() => {
+    const byBranch = new Map<
+      string,
+      { branchId: string; branchName: string; students: { studentId: string; studentName: string }[]; earliestDate: string; dateCount: number }
+    >();
+    for (const group of conflictGroups) {
+      const existing = byBranch.get(group.branchId);
+      const studentMap = new Map((existing?.students ?? []).map((s) => [s.studentId, s]));
+      for (const s of group.students) studentMap.set(s.studentId, s);
+      byBranch.set(group.branchId, {
+        branchId: group.branchId,
+        branchName: group.branchName,
+        students: Array.from(studentMap.values()),
+        earliestDate: existing && existing.earliestDate < group.date ? existing.earliestDate : group.date,
+        dateCount: (existing?.dateCount ?? 0) + 1,
+      });
+    }
+    return Array.from(byBranch.values());
+  }, [conflictGroups]);
 
   const checkConflictsAcrossBranches = async (dates: string[], branchIds?: string[]) => {
     const targetBranchIds = branchIds ?? (branchesQuery.data ?? []).filter((b) => b.isActive).map((b) => b.id);
@@ -748,6 +775,35 @@ export function MasterCalendarPage() {
             These students already had a lesson scheduled on a date that's now a holiday/event. Reschedule each group
             below, or leave as-is and fix it later from Hifdh Tracking.
           </p>
+          {conflictsByBranch.map((b) => (
+            <div
+              key={`all_${b.branchId}`}
+              className="flex items-center justify-between rounded-card border border-primary/30 bg-primary/5 p-3"
+            >
+              <div>
+                <p className="text-sm font-medium text-text-primary">Reschedule all — {b.branchName}</p>
+                <p className="text-xs text-text-muted">
+                  {b.dateCount} date{b.dateCount === 1 ? '' : 's'}, {b.students.length} student
+                  {b.students.length === 1 ? '' : 's'} total — shifts each student's whole remaining schedule by one
+                  fixed delta, so every affected week moves off the holiday at once
+                </p>
+              </div>
+              <Button
+                size="sm"
+                onClick={() =>
+                  setActiveReschedule({
+                    branchId: b.branchId,
+                    branchName: b.branchName,
+                    date: b.earliestDate,
+                    students: b.students,
+                    isAll: true,
+                  })
+                }
+              >
+                Reschedule All
+              </Button>
+            </div>
+          ))}
           {conflictGroups.map((group) => (
             <div
               key={`${group.branchId}_${group.date}`}
@@ -784,7 +840,11 @@ export function MasterCalendarPage() {
         onSuccess={() => {
           if (activeReschedule) {
             setConflictGroups((prev) =>
-              prev.filter((g) => !(g.branchId === activeReschedule.branchId && g.date === activeReschedule.date)),
+              prev.filter((g) =>
+                activeReschedule.isAll
+                  ? g.branchId !== activeReschedule.branchId
+                  : !(g.branchId === activeReschedule.branchId && g.date === activeReschedule.date),
+              ),
             );
           }
           setActiveReschedule(null);
