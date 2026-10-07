@@ -520,32 +520,50 @@ export class HifdhService {
     // A full-year publish can easily produce 52+ weekend dates per branch —
     // an OR of that many (branchId, date) pairs was slow enough to hold a DB
     // connection for a long time and starve unrelated concurrent requests
-    // (same class of issue as the earlier bulkReschedule timeout). One
-    // bounded range query per branch set, filtered down to the exact pairs
-    // in memory, is both correct and cheap regardless of how many dates are
-    // being checked.
+    // (same class of issue as the earlier bulkReschedule timeout). A bounded
+    // date range + branch filter, with the exact pairs matched in memory,
+    // keeps this cheap regardless of how many dates are being checked.
+    //
+    // Raw SQL rather than Prisma's `rescheduledTo: { none: {} }`: Prisma
+    // compiles that relation filter to `id NOT IN (SELECT rescheduledFromId
+    // FROM ... WHERE rescheduledFromId IS NOT NULL)` — a subquery over the
+    // WHOLE table, independent of this query's date/branch narrowing, that
+    // Postgres can't always plan as a cheap indexed anti-join. A correlated
+    // NOT EXISTS lets Postgres narrow by date/branch first, then do one
+    // indexed lookup per surviving row.
     const branchIds = [...new Set(pairs.map((p) => p.branchId))];
-    const pairDates = pairs.map((p) => new Date(p.date).getTime());
-    const minDate = new Date(Math.min(...pairDates));
-    const maxDate = new Date(Math.max(...pairDates));
+    const pairDates = pairs.map((p) => p.date);
+    const minDate = pairDates.reduce((a, b) => (a < b ? a : b));
+    const maxDate = pairDates.reduce((a, b) => (a > b ? a : b));
     const pairSet = new Set(pairs.map((p) => `${p.branchId}_${p.date}`));
 
-    const rows = await this.prisma.surahHifdhStudentSchedule.findMany({
-      where: {
-        status: { not: 'COMPLETED' },
-        rescheduledTo: { none: {} },
-        scheduledDate: { gte: minDate, lte: maxDate },
-        student: { branchId: { in: branchIds } },
-      },
-      distinct: ['studentId', 'scheduledDate'],
-      select: {
-        scheduledDate: true,
-        studentId: true,
-        student: { select: { name: true, branchId: true, branch: { select: { name: true } } } },
-      },
-    });
-    const matching = rows.filter((r) => pairSet.has(`${r.student.branchId}_${formatDateOnly(r.scheduledDate)}`));
-    return { conflicts: this.groupConflictRows(matching) };
+    const rows = await this.prisma.$queryRaw<
+      { scheduledDate: Date; studentId: string; studentName: string; branchId: string; branchName: string }[]
+    >`
+      SELECT DISTINCT ON (s."studentId", s."scheduledDate")
+        s."scheduledDate", s."studentId", st."name" AS "studentName", st."branchId", b."name" AS "branchName"
+      FROM "SurahHifdhStudentSchedule" s
+      JOIN "Student" st ON st."id" = s."studentId"
+      JOIN "Branch" b ON b."id" = st."branchId"
+      WHERE s."status" <> 'COMPLETED'::"HifdhScheduleStatus"
+        AND s."scheduledDate" >= ${minDate}::date
+        AND s."scheduledDate" <= ${maxDate}::date
+        AND st."branchId" = ANY(${branchIds}::text[])
+        AND NOT EXISTS (
+          SELECT 1 FROM "SurahHifdhStudentSchedule" r WHERE r."rescheduledFromId" = s."id"
+        )
+      ORDER BY s."studentId", s."scheduledDate"
+    `;
+    const matching = rows.filter((r) => pairSet.has(`${r.branchId}_${formatDateOnly(r.scheduledDate)}`));
+    return {
+      conflicts: this.groupConflictRows(
+        matching.map((r) => ({
+          scheduledDate: r.scheduledDate,
+          studentId: r.studentId,
+          student: { name: r.studentName, branchId: r.branchId, branch: { name: r.branchName } },
+        })),
+      ),
+    };
   }
 
   private groupConflictRows(
