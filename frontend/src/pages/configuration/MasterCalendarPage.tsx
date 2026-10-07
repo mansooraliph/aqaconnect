@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
-import { CalendarPlus, Clock, Loader2, Trash2, UploadCloud } from 'lucide-react';
+import { CalendarDays, CalendarPlus, Clock, Loader2, Sun, Trash2, UploadCloud } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { useAuthStore } from '../../store/auth';
 import { useBranches } from '../../hooks/useBranches';
 import { api } from '../../lib/api';
@@ -35,17 +36,31 @@ interface MasterCalendarStats {
   events: number;
 }
 
-interface PublishSummary {
-  year: number;
-  branches: { branchId: string; created: number; updated: number; skipped: number }[];
-}
-
 interface ConflictGroup {
   branchId: string;
   branchName: string;
   date: string;
   students: { studentId: string; studentName: string }[];
 }
+
+interface PublishSummary {
+  year: number;
+  branches: { branchId: string; created: number; updated: number; skipped: number }[];
+  conflicts: ConflictGroup[];
+}
+
+const WEEKDAYS: { key: string; label: string; icon: LucideIcon }[] = [
+  { key: 'sunday', label: 'Sunday', icon: Sun },
+  { key: 'monday', label: 'Monday', icon: CalendarDays },
+  { key: 'tuesday', label: 'Tuesday', icon: CalendarDays },
+  { key: 'wednesday', label: 'Wednesday', icon: CalendarDays },
+  { key: 'thursday', label: 'Thursday', icon: CalendarDays },
+  { key: 'friday', label: 'Friday', icon: CalendarDays },
+  { key: 'saturday', label: 'Saturday', icon: Sun },
+];
+// Only referenced from the commented-out weekday picker below — kept for
+// when that comes back, but noUnusedLocals needs a real reference meanwhile.
+void WEEKDAYS;
 
 const WEEKEND_PATTERNS = [
   { key: '1st', label: 'First Saturday & Sunday' },
@@ -260,16 +275,11 @@ export function MasterCalendarPage() {
         `Published to ${data.branches.length} branch(es): ${totals.created} created, ${totals.updated} synced, ${totals.skipped} kept as customized`,
       );
 
-      // Only branches that actually received a change, and only dates that are
-      // actually a holiday/event — checking every published date across every
-      // branch would be excessive for a whole-year publish.
-      const affectedBranchIds = data.branches.filter((b) => b.created > 0 || b.updated > 0).map((b) => b.branchId);
-      const holidayDates = (daysQuery.data ?? [])
-        .filter((d) => d.isHoliday || d.isEvent)
-        .map((d) => d.date.slice(0, 10));
-      if (affectedBranchIds.length > 0 && holidayDates.length > 0) {
-        checkConflictsAcrossBranches(holidayDates, affectedBranchIds);
-      }
+      // The backend already computes conflicts per branch (its own weekend
+      // days count as holidays too, which a shared master-level date list
+      // would miss — see MasterCalendarService.publish's doc comment), so
+      // use its answer directly instead of re-deriving dates here.
+      if (data.conflicts.length > 0) setConflictGroups(data.conflicts);
     } catch {
       toast.error('Failed to publish master calendar');
     } finally {
