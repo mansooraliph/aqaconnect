@@ -1,5 +1,5 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import { AttendanceStatus, ProgressEntryStatus } from '@prisma/client';
+import { ProgressEntryStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MobileContextService } from '../common/mobile-context.service';
 
@@ -144,14 +144,23 @@ export class DashboardService {
     });
     const overdueStudentsCount = overdueStudentRows.length;
 
-    const [presentTodayCount, doneCount, totalEntriesCount] = await Promise.all([
-      this.prisma.attendance.count({
+    // "Present today" used to read the Attendance table — but there's no
+    // mark-attendance flow for students anywhere in the app, so that table
+    // is permanently empty and this always read 0 regardless of real
+    // activity. Counting distinct students with a completed lesson today
+    // mirrors what the Daily Recitation Attendance report already
+    // correctly shows (getFullProgressReport's "completed" bucket), so
+    // this card now agrees with that report instead of silently
+    // disagreeing with it.
+    const [presentTodayStudentRows, doneCount, totalEntriesCount] = await Promise.all([
+      this.prisma.studentSurahProgressEntry.findMany({
         where: {
           branchId,
-          studentId: { not: null },
-          status: AttendanceStatus.PRESENT,
-          date: { gte: todayStart, lte: todayEnd },
+          status: { in: DONE_STATUSES },
+          completedAt: { gte: todayStart, lte: todayEnd },
         },
+        select: { studentId: true },
+        distinct: ['studentId'],
       }),
       this.prisma.studentSurahProgressEntry.count({
         where: { branchId, status: { in: DONE_STATUSES } },
@@ -164,6 +173,7 @@ export class DashboardService {
       // ~70ms, and pendingCount below gets the same result via subtraction.
       this.prisma.studentSurahProgressEntry.count({ where: { branchId } }),
     ]);
+    const presentTodayCount = presentTodayStudentRows.length;
     const pendingCount = totalEntriesCount - doneCount;
 
     // Legacy names this "completed today" but never actually filters by
