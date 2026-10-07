@@ -120,6 +120,30 @@ export class DashboardService {
     const todayEnd = new Date();
     todayEnd.setHours(23, 59, 59, 999);
 
+    // Students with at least one overdue Hifdh schedule entry — same signal
+    // as the per-student schedule screen's "Overdue" count (see
+    // SurahSchedulesService.getStudentSurahSchedule's progressSummary.overdue,
+    // which isn't actually month-scoped despite taking year/month params).
+    // This used to be computed on the mobile app by fetching every single
+    // student's own schedule individually (one request per student) and
+    // counting client-side — for a branch with ~100 students that's ~100
+    // concurrent requests on every dashboard load, and any of them timing
+    // out under that load silently dropped that student from both the
+    // numerator and denominator, making the "X / Y up to date" card show a
+    // different (always-wrong, since Y never matched the real total)
+    // answer on every single load. One query here replaces all of that.
+    const overdueStudentRows = await this.prisma.surahHifdhStudentSchedule.findMany({
+      where: {
+        student: { branchId },
+        status: { not: 'COMPLETED' },
+        scheduledDate: { lt: todayStart },
+        rescheduledTo: { none: {} },
+      },
+      select: { studentId: true },
+      distinct: ['studentId'],
+    });
+    const overdueStudentsCount = overdueStudentRows.length;
+
     const [presentTodayCount, doneCount, totalEntriesCount] = await Promise.all([
       this.prisma.attendance.count({
         where: {
@@ -171,6 +195,15 @@ export class DashboardService {
       progress_summary: {
         pending: pendingCount,
         done: doneCount,
+      },
+      schedule_overdue: {
+        overdue_students: overdueStudentsCount,
+        up_to_date_students: Math.max(0, totalStudents - overdueStudentsCount),
+        total_students: totalStudents,
+        percentage_up_to_date:
+          totalStudents > 0
+            ? Math.round(((totalStudents - overdueStudentsCount) / totalStudents) * 1000) / 10
+            : 0,
       },
     };
   }
