@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateMasterCalendarDayDto } from './dto/update-master-calendar-day.dto';
 import { InitiateMasterDaysDto } from './dto/initiate-master-days.dto';
@@ -236,11 +237,18 @@ export class MasterCalendarService {
    *
    * isWorkingDay is deliberately NOT copied from the master as-is — the
    * master's own weekend assumption would otherwise overwrite every branch's
-   * CalendarDay regardless of that branch's actual weekend. Only real
-   * holiday/event content (isHoliday/holidayName/isEvent/eventName) is
-   * propagated verbatim; isWorkingDay is recomputed per branch from its own
-   * weekendDays plus the propagated isHoliday flag, so publish is safe to run
-   * before or after a branch generates its own calendar.
+   * CalendarDay regardless of that branch's actual weekend. isWorkingDay is
+   * recomputed per branch from its own weekendDays plus the propagated
+   * isHoliday flag, so publish is safe to run before or after a branch
+   * generates its own calendar.
+   *
+   * isHoliday is also true for any date on the branch's own weekend (see
+   * BranchSettingsService.bulkSetWeekendDays' doc comment for why — holiday-
+   * specific displays/reports check isHoliday, not isWorkingDay), with the
+   * master's real holiday name taking priority over the generic "Weekly
+   * Holiday" label when a date is both. This keeps publish from reverting a
+   * branch's weekend days back to isHoliday=false, which otherwise silently
+   * undoes bulkSetWeekendDays every time publish runs afterward.
    */
   async publish(dto: PublishMasterCalendarDto) {
     const masterDays = await this.prisma.masterCalendarDay.findMany({
@@ -269,39 +277,53 @@ export class MasterCalendarService {
       });
       const existingByDate = new Map(existingRows.map((r) => [r.date.getTime(), r]));
 
-      let created = 0;
-      let updated = 0;
+      // No interactive $transaction here — with up to 365 days per branch,
+      // one sequential await-per-day inside a single held connection was
+      // exactly the pattern that blew past HifdhService.bulkReschedule's
+      // transaction timeout under load (see that fix). Each row here is
+      // independently idempotent (publish is documented as safe to re-run),
+      // so createMany + concurrent per-row updates is both faster and loses
+      // nothing — a failure partway just leaves the remaining days to pick
+      // up on the next publish.
+      const toCreate: Prisma.CalendarDayCreateManyInput[] = [];
+      const toUpdate: { id: string; data: Prisma.CalendarDayUpdateInput }[] = [];
       let skipped = 0;
 
-      await this.prisma.$transaction(async (tx) => {
-        for (const masterDay of masterDays) {
-          const existing = existingByDate.get(masterDay.date.getTime());
-          const isWorkingDay = !masterDay.isHoliday && !weekendDays.includes(masterDay.date.getUTCDay());
-          const fields = {
-            dayName: masterDay.dayName,
-            weekNumber: masterDay.weekNumber,
-            year: masterDay.year,
-            isWorkingDay,
-            isHoliday: masterDay.isHoliday,
-            holidayName: masterDay.holidayName,
-            isEvent: masterDay.isEvent,
-            eventName: masterDay.eventName,
-            masterCalendarDayId: masterDay.id,
-          };
+      for (const masterDay of masterDays) {
+        const existing = existingByDate.get(masterDay.date.getTime());
+        const isWeekend = weekendDays.includes(masterDay.date.getUTCDay());
+        const isHoliday = masterDay.isHoliday || isWeekend;
+        const isWorkingDay = !isHoliday;
+        const fields = {
+          dayName: masterDay.dayName,
+          weekNumber: masterDay.weekNumber,
+          year: masterDay.year,
+          isWorkingDay,
+          isHoliday,
+          holidayName: masterDay.holidayName ?? (isWeekend ? 'Weekly Holiday' : null),
+          isEvent: masterDay.isEvent,
+          eventName: masterDay.eventName,
+          masterCalendarDayId: masterDay.id,
+        };
 
-          if (!existing) {
-            await tx.calendarDay.create({
-              data: { branchId: branch.id, date: masterDay.date, ...fields, isCustomized: false },
-            });
-            created++;
-          } else if (!existing.isCustomized) {
-            await tx.calendarDay.update({ where: { id: existing.id }, data: fields });
-            updated++;
-          } else {
-            skipped++;
-          }
+        if (!existing) {
+          toCreate.push({ branchId: branch.id, date: masterDay.date, ...fields, isCustomized: false });
+        } else if (!existing.isCustomized) {
+          toUpdate.push({ id: existing.id, data: fields });
+        } else {
+          skipped++;
         }
-      });
+      }
+
+      if (toCreate.length > 0) {
+        await this.prisma.calendarDay.createMany({ data: toCreate });
+      }
+      await Promise.all(
+        toUpdate.map((u) => this.prisma.calendarDay.update({ where: { id: u.id }, data: u.data })),
+      );
+
+      const created = toCreate.length;
+      const updated = toUpdate.length;
 
       summaries.push({ branchId: branch.id, created, updated, skipped });
     }
