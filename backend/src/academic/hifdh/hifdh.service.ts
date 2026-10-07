@@ -559,57 +559,61 @@ export class HifdhService {
    * consecutive dates.
    */
   async bulkReschedule(studentIds: string[], newStartDate: string, fromDate?: string) {
+    // One findMany + one createMany for ALL students, not two round trips
+    // per student in a loop — with dozens of students (e.g. every student
+    // affected by a single weekly-holiday date) that loop was 2*N sequential
+    // round trips inside one interactive transaction, long enough to blow
+    // past even the already-bumped 30s timeout and tie up a DB connection
+    // the whole time, which in turn starved unrelated concurrent requests.
+    const rows = await this.prisma.surahHifdhStudentSchedule.findMany({
+      where: {
+        studentId: { in: studentIds },
+        rescheduledTo: { none: {} },
+        ...(fromDate && { scheduledDate: { gte: new Date(fromDate) } }),
+      },
+      orderBy: { scheduledDate: 'asc' },
+    });
+    if (rows.length === 0) return { rescheduled: 0, copied: 0 };
+
+    const byStudent = new Map<string, typeof rows>();
+    for (const row of rows) {
+      const list = byStudent.get(row.studentId);
+      if (list) list.push(row);
+      else byStudent.set(row.studentId, [row]);
+    }
+
+    const toInsert: ReturnType<typeof this.rescheduleRowData>[] = [];
     let rescheduled = 0;
     let copied = 0;
-    await this.prisma.$transaction(
-      async (tx) => {
-        for (const studentId of studentIds) {
-          const rows = await tx.surahHifdhStudentSchedule.findMany({
-            where: {
-              studentId,
-              rescheduledTo: { none: {} },
-              ...(fromDate && { scheduledDate: { gte: new Date(fromDate) } }),
-            },
-            orderBy: { scheduledDate: 'asc' },
-          });
-          if (rows.length === 0) continue;
 
-          // Only the pending rows actually start a new schedule generation —
-          // they're the ones being shifted to a new plan. Completed rows are
-          // just being copied forward (unchanged) so they stay visible after
-          // the old, now-superseded row is filtered out of listings; they
-          // keep the scheduleNo of the generation they were actually
-          // completed under, not the new one.
-          const nextScheduleNo = Math.max(...rows.map((r) => r.scheduleNo)) + 1;
+    for (const studentRows of byStudent.values()) {
+      // Only the pending rows actually start a new schedule generation —
+      // they're the ones being shifted to a new plan. Completed rows are
+      // just being copied forward (unchanged) so they stay visible after
+      // the old, now-superseded row is filtered out of listings; they
+      // keep the scheduleNo of the generation they were actually
+      // completed under, not the new one.
+      const nextScheduleNo = Math.max(...studentRows.map((r) => r.scheduleNo)) + 1;
+      const pendingRows = studentRows.filter((r) => r.status !== 'COMPLETED');
+      const completedRows = studentRows.filter((r) => r.status === 'COMPLETED');
 
-          const pendingRows = rows.filter((r) => r.status !== 'COMPLETED');
-          const completedRows = rows.filter((r) => r.status === 'COMPLETED');
-
-          // Batched via createMany rather than one create() per row — a
-          // student can easily have hundreds of pending rows, and Prisma's
-          // interactive-transaction timeout (5s default) was getting blown
-          // past by that many sequential round trips once this got wired to
-          // a multi-student reschedule prompt.
-          if (pendingRows.length > 0) {
-            const deltaMs = new Date(newStartDate).getTime() - pendingRows[0].scheduledDate.getTime();
-            await tx.surahHifdhStudentSchedule.createMany({
-              data: pendingRows.map((row) =>
-                this.rescheduleRowData(row, new Date(row.scheduledDate.getTime() + deltaMs), false, nextScheduleNo),
-              ),
-            });
-            rescheduled += pendingRows.length;
-          }
-
-          if (completedRows.length > 0) {
-            await tx.surahHifdhStudentSchedule.createMany({
-              data: completedRows.map((row) => this.rescheduleRowData(row, row.scheduledDate, true, row.scheduleNo)),
-            });
-            copied += completedRows.length;
-          }
+      if (pendingRows.length > 0) {
+        const deltaMs = new Date(newStartDate).getTime() - pendingRows[0].scheduledDate.getTime();
+        for (const row of pendingRows) {
+          toInsert.push(
+            this.rescheduleRowData(row, new Date(row.scheduledDate.getTime() + deltaMs), false, nextScheduleNo),
+          );
         }
-      },
-      { timeout: 30_000 },
-    );
+        rescheduled += pendingRows.length;
+      }
+
+      for (const row of completedRows) {
+        toInsert.push(this.rescheduleRowData(row, row.scheduledDate, true, row.scheduleNo));
+      }
+      copied += completedRows.length;
+    }
+
+    await this.prisma.surahHifdhStudentSchedule.createMany({ data: toInsert });
     return { rescheduled, copied };
   }
 
