@@ -516,11 +516,26 @@ export class HifdhService {
    */
   async getScheduleConflictsForBranchDates(pairs: { branchId: string; date: string }[]) {
     if (pairs.length === 0) return { conflicts: [] as ReturnType<typeof this.groupConflictRows> };
+
+    // A full-year publish can easily produce 52+ weekend dates per branch —
+    // an OR of that many (branchId, date) pairs was slow enough to hold a DB
+    // connection for a long time and starve unrelated concurrent requests
+    // (same class of issue as the earlier bulkReschedule timeout). One
+    // bounded range query per branch set, filtered down to the exact pairs
+    // in memory, is both correct and cheap regardless of how many dates are
+    // being checked.
+    const branchIds = [...new Set(pairs.map((p) => p.branchId))];
+    const pairDates = pairs.map((p) => new Date(p.date).getTime());
+    const minDate = new Date(Math.min(...pairDates));
+    const maxDate = new Date(Math.max(...pairDates));
+    const pairSet = new Set(pairs.map((p) => `${p.branchId}_${p.date}`));
+
     const rows = await this.prisma.surahHifdhStudentSchedule.findMany({
       where: {
         status: { not: 'COMPLETED' },
         rescheduledTo: { none: {} },
-        OR: pairs.map((p) => ({ student: { branchId: p.branchId }, scheduledDate: new Date(p.date) })),
+        scheduledDate: { gte: minDate, lte: maxDate },
+        student: { branchId: { in: branchIds } },
       },
       distinct: ['studentId', 'scheduledDate'],
       select: {
@@ -529,7 +544,8 @@ export class HifdhService {
         student: { select: { name: true, branchId: true, branch: { select: { name: true } } } },
       },
     });
-    return { conflicts: this.groupConflictRows(rows) };
+    const matching = rows.filter((r) => pairSet.has(`${r.student.branchId}_${formatDateOnly(r.scheduledDate)}`));
+    return { conflicts: this.groupConflictRows(matching) };
   }
 
   private groupConflictRows(
