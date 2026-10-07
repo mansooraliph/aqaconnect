@@ -747,13 +747,24 @@ export class MobileStudentsService {
     if (!student) {
       throw new NotFoundException({ status: 'error', message: 'Student details not found' });
     }
-    await this.prisma.$transaction(async (tx) => {
-      await tx.studentEnrollment.deleteMany({ where: { studentId: id } });
-      await tx.student.delete({ where: { id } });
-      if (student.userId) {
-        await tx.user.delete({ where: { id: student.userId } });
-      }
-    });
+    await this.prisma.$transaction(
+      async (tx) => {
+        await tx.studentEnrollment.deleteMany({ where: { studentId: id } });
+        await tx.student.delete({ where: { id } });
+        if (student.userId) {
+          await tx.user.delete({ where: { id: student.userId } });
+        }
+      },
+      // deleting a student cascades across every table that references
+      // them (progress entries, schedule, leaves, exams, etc.) — for a
+      // long-enrolled student that's easily thousands of rows, and under
+      // real production load (concurrent lesson-marking traffic
+      // potentially holding locks on the same rows) this has measured at
+      // 20+ seconds, well past Prisma's 5s interactive-transaction
+      // default, which was failing this with "Transaction already closed"
+      // even though nothing was actually wrong with the delete itself.
+      { timeout: 30000 },
+    );
   }
 
   async getAcademicClasses(branchId: string, query: AcademicClassesQueryDto) {
