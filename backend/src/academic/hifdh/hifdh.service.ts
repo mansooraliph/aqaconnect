@@ -507,6 +507,50 @@ export class HifdhService {
   }
 
   /**
+   * Like getScheduleConflictsBulk, but for when the holiday dates differ per
+   * branch — e.g. Master Calendar Publish, where a branch's own weekend
+   * pattern (not just the shared master holidays) determines which dates
+   * just became isHoliday=true for that specific branch, so one shared date
+   * list across all branches would miss (or wrongly check) branch-specific
+   * weekend dates.
+   */
+  async getScheduleConflictsForBranchDates(pairs: { branchId: string; date: string }[]) {
+    if (pairs.length === 0) return { conflicts: [] as ReturnType<typeof this.groupConflictRows> };
+    const rows = await this.prisma.surahHifdhStudentSchedule.findMany({
+      where: {
+        status: { not: 'COMPLETED' },
+        rescheduledTo: { none: {} },
+        OR: pairs.map((p) => ({ student: { branchId: p.branchId }, scheduledDate: new Date(p.date) })),
+      },
+      distinct: ['studentId', 'scheduledDate'],
+      select: {
+        scheduledDate: true,
+        studentId: true,
+        student: { select: { name: true, branchId: true, branch: { select: { name: true } } } },
+      },
+    });
+    return { conflicts: this.groupConflictRows(rows) };
+  }
+
+  private groupConflictRows(
+    rows: { scheduledDate: Date; studentId: string; student: { name: string; branchId: string; branch: { name: string } } }[],
+  ) {
+    const grouped = new Map<
+      string,
+      { branchId: string; branchName: string; date: string; students: { studentId: string; studentName: string }[] }
+    >();
+    for (const r of rows) {
+      const dateStr = formatDateOnly(r.scheduledDate);
+      const key = `${r.student.branchId}_${dateStr}`;
+      if (!grouped.has(key)) {
+        grouped.set(key, { branchId: r.student.branchId, branchName: r.student.branch.name, date: dateStr, students: [] });
+      }
+      grouped.get(key)!.students.push({ studentId: r.studentId, studentName: r.student.name });
+    }
+    return Array.from(grouped.values());
+  }
+
+  /**
    * Cross-branch, cross-date version of getScheduleConflictsForDate — used
    * from Master Calendar (per-day toggle and Publish to Branches), since a
    * single master-calendar change can affect many branches' students in one
@@ -527,20 +571,7 @@ export class HifdhService {
         student: { select: { name: true, branchId: true, branch: { select: { name: true } } } },
       },
     });
-
-    const grouped = new Map<
-      string,
-      { branchId: string; branchName: string; date: string; students: { studentId: string; studentName: string }[] }
-    >();
-    for (const r of rows) {
-      const dateStr = formatDateOnly(r.scheduledDate);
-      const key = `${r.student.branchId}_${dateStr}`;
-      if (!grouped.has(key)) {
-        grouped.set(key, { branchId: r.student.branchId, branchName: r.student.branch.name, date: dateStr, students: [] });
-      }
-      grouped.get(key)!.students.push({ studentId: r.studentId, studentName: r.student.name });
-    }
-    return { conflicts: Array.from(grouped.values()) };
+    return { conflicts: this.groupConflictRows(rows) };
   }
 
   /**

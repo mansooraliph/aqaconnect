@@ -6,6 +6,7 @@ import { InitiateMasterDaysDto } from './dto/initiate-master-days.dto';
 import { PublishMasterCalendarDto } from './dto/publish-master-calendar.dto';
 import { fetchIslamicHolidaysForYear } from '../calendar-days/islamic-holidays';
 import { DAY_NAMES, allDatesOfYear, isoWeekNumber, specificWeekendDates, weekdayDates } from '../calendar-days/calendar-generation.util';
+import { HifdhService } from '../../academic/hifdh/hifdh.service';
 
 /**
  * Super Admin's single, branch-less common calendar. Mirrors
@@ -15,7 +16,10 @@ import { DAY_NAMES, allDatesOfYear, isoWeekNumber, specificWeekendDates, weekday
  */
 @Injectable()
 export class MasterCalendarService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly hifdhService: HifdhService,
+  ) {}
 
   private monthRange(month?: number, year?: number) {
     if (year === undefined) return undefined;
@@ -265,6 +269,13 @@ export class MasterCalendarService {
     });
 
     const summaries: { branchId: string; created: number; updated: number; skipped: number }[] = [];
+    // Every date that just became isHoliday=true for a branch (whether a
+    // real master holiday or that branch's own weekend) — checked for
+    // schedule conflicts after the loop so the caller can prompt a
+    // reschedule, the same way the single-day Holiday toggle already does.
+    // Per-branch rather than one shared date list, since branches can have
+    // different weekends (see getScheduleConflictsForBranchDates' doc).
+    const holidayPairs: { branchId: string; date: string }[] = [];
 
     for (const branch of branches) {
       const weekendDays = await this.getWeekendDays(branch.id);
@@ -308,8 +319,10 @@ export class MasterCalendarService {
 
         if (!existing) {
           toCreate.push({ branchId: branch.id, date: masterDay.date, ...fields, isCustomized: false });
+          if (isHoliday) holidayPairs.push({ branchId: branch.id, date: masterDay.date.toISOString().slice(0, 10) });
         } else if (!existing.isCustomized) {
           toUpdate.push({ id: existing.id, data: fields });
+          if (isHoliday) holidayPairs.push({ branchId: branch.id, date: masterDay.date.toISOString().slice(0, 10) });
         } else {
           skipped++;
         }
@@ -328,6 +341,7 @@ export class MasterCalendarService {
       summaries.push({ branchId: branch.id, created, updated, skipped });
     }
 
-    return { year: dto.year, branches: summaries };
+    const { conflicts } = await this.hifdhService.getScheduleConflictsForBranchDates(holidayPairs);
+    return { year: dto.year, branches: summaries, conflicts };
   }
 }
