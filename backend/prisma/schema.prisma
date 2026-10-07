@@ -1684,6 +1684,15 @@ model SurahHifdhStudentSchedule {
   @@index([teacherId])
   @@index([halqaId])
   @@index([surahTargetId])
+  // `rescheduledTo: { none: {} }` (used everywhere "not yet superseded by a
+  // reschedule" is checked — dashboard overdue count, schedule generation,
+  // conflict checks, bulk reschedule) compiles to an anti-join keyed on this
+  // column. Without an index here, Postgres has to scan for every candidate
+  // row instead of doing an index lookup — fine for small result sets, but
+  // a wide date range (e.g. a full-year publish's conflict check) turned
+  // this into a multi-minute query that held a DB connection and starved
+  // unrelated concurrent requests.
+  @@index([rescheduledFromId])
 }
 
 // Cumulative per-student, per-surah progress (separate from the schedule —
