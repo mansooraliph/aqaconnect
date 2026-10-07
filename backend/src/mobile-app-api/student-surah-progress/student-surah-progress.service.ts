@@ -1792,9 +1792,21 @@ export class StudentSurahProgressService {
    * True completed-line totals per student from real SurahAyahPageLine
    * spans, not a flat ayahs/15 approximation. Consecutive ayahs often share
    * a boundary line (ayah N's lineTo === ayah N+1's lineFrom), so each
-   * student's ranges are merged per surah into contiguous blocks first —
-   * otherwise summing every ayah's own span independently double-counts
-   * every shared line (see getTopStudents, which this mirrors).
+   * student's ranges are merged into contiguous blocks first — otherwise
+   * summing every ayah's own span independently double-counts every
+   * shared line (see getTopStudents, which this mirrors).
+   *
+   * Crucially, that merge runs across surah boundaries too, not just
+   * within one surah: a surah's last ayah and the next surah's first ayah
+   * can land on the very same physical Mushaf line (common with short
+   * Juz-Amma surahs, which often open and close mid-line) — e.g. Abasa's
+   * last ayah and At-Takwir's first ayah can both sit on page 586 line 1.
+   * Treating each surah's range independently (as an earlier version of
+   * this did) counted that shared line once for each surah, inflating any
+   * total spanning multiple complete, sequential surahs. Two ranges are
+   * only merged across a surah boundary when the first reaches that
+   * surah's very last ayah and the second starts at the next surah's
+   * ayah 1 — a partial surah never merges across its own boundary.
    *
    * A merged block can itself straddle two Mushaf pages (e.g. ayah 30 ends
    * page 421, ayah 31 starts page 422) — line numbers reset on the new
@@ -1821,12 +1833,20 @@ export class StudentSurahProgressService {
     entries: { groupKey: string; surahId: string; fromAyah: number; toAyah: number }[],
   ): Promise<Map<string, number>> {
     const uniqueSurahIds = [...new Set(entries.map((e) => e.surahId))];
-    const pageLines = uniqueSurahIds.length
-      ? await this.prisma.surahAyahPageLine.findMany({
-          where: { surahId: { in: uniqueSurahIds } },
-          select: { surahId: true, ayahNumber: true, quranPageId: true, lineFrom: true, lineTo: true },
-        })
-      : [];
+    const [pageLines, surahs] = await Promise.all([
+      uniqueSurahIds.length
+        ? this.prisma.surahAyahPageLine.findMany({
+            where: { surahId: { in: uniqueSurahIds } },
+            select: { surahId: true, ayahNumber: true, quranPageId: true, lineFrom: true, lineTo: true },
+          })
+        : Promise.resolve([]),
+      uniqueSurahIds.length
+        ? this.prisma.surah.findMany({
+            where: { id: { in: uniqueSurahIds } },
+            select: { id: true, number: true, totalAyahs: true },
+          })
+        : Promise.resolve([]),
+    ]);
     const lineInfoOf = new Map<
       string,
       { quranPageId: string; lineFrom: number; lineTo: number }
@@ -1838,23 +1858,64 @@ export class StudentSurahProgressService {
         lineTo: pl.lineTo,
       });
     }
-    const mergeAyahRanges = (ranges: [number, number][]): [number, number][] => {
-      const sorted = [...ranges].sort((a, b) => a[0] - b[0]);
-      const merged: [number, number][] = [];
-      for (const [from, to] of sorted) {
+    // Surah number <-> id/totalAyahs — needed to detect "this range reaches
+    // the very end of its surah" and "the next range starts the very next
+    // surah", the only condition under which a merge is allowed to cross a
+    // surah boundary.
+    const surahIdByNumber = new Map<number, string>();
+    const totalAyahsByNumber = new Map<number, number>();
+    const numberBySurahId = new Map<string, number>();
+    for (const s of surahs) {
+      surahIdByNumber.set(s.number, s.id);
+      totalAyahsByNumber.set(s.number, s.totalAyahs);
+      numberBySurahId.set(s.id, s.number);
+    }
+
+    type Range = { surahNumber: number; fromAyah: number; toAyah: number };
+    type MergedBlock = { startSurah: number; startAyah: number; endSurah: number; endAyah: number };
+    const mergeRanges = (ranges: Range[]): MergedBlock[] => {
+      const sorted = [...ranges].sort((a, b) =>
+        a.surahNumber !== b.surahNumber ? a.surahNumber - b.surahNumber : a.fromAyah - b.fromAyah,
+      );
+      const merged: MergedBlock[] = [];
+      for (const r of sorted) {
         const last = merged[merged.length - 1];
-        if (last && from <= last[1] + 1) {
-          last[1] = Math.max(last[1], to);
-        } else {
-          merged.push([from, to]);
+        if (last) {
+          if (r.surahNumber === last.endSurah && r.fromAyah <= last.endAyah + 1) {
+            last.endAyah = Math.max(last.endAyah, r.toAyah);
+            continue;
+          }
+          const lastSurahTotal = totalAyahsByNumber.get(last.endSurah);
+          if (
+            r.surahNumber === last.endSurah + 1 &&
+            r.fromAyah === 1 &&
+            lastSurahTotal !== undefined &&
+            last.endAyah === lastSurahTotal
+          ) {
+            last.endSurah = r.surahNumber;
+            last.endAyah = r.toAyah;
+            continue;
+          }
         }
+        merged.push({
+          startSurah: r.surahNumber,
+          startAyah: r.fromAyah,
+          endSurah: r.surahNumber,
+          endAyah: r.toAyah,
+        });
       }
       return merged;
     };
-    // Walks a merged block ayah-by-ayah, closing out (and counting) the
-    // current run every time the page changes (or page data is missing),
-    // so each run is measured only within its own page's line numbering.
-    const linesForMergedBlock = (surahId: string, fromAyah: number, toAyah: number): number => {
+
+    // Walks a (possibly multi-surah) merged block ayah-by-ayah in canonical
+    // Quran order, closing out (and counting) the current same-page run
+    // every time the page changes (or page data is missing).
+    const linesForMergedBlock = (
+      startSurah: number,
+      startAyah: number,
+      endSurah: number,
+      endAyah: number,
+    ): number => {
       let lines = 0;
       let runPageId: string | null = null;
       let runStart: { lineFrom: number } | null = null;
@@ -1865,44 +1926,49 @@ export class StudentSurahProgressService {
         runStart = null;
         runEnd = null;
       };
-      for (let ayah = fromAyah; ayah <= toAyah; ayah++) {
-        const info = lineInfoOf.get(`${surahId}:${ayah}`);
-        if (!info) {
+      for (let surahNumber = startSurah; surahNumber <= endSurah; surahNumber++) {
+        const surahId = surahIdByNumber.get(surahNumber);
+        const from = surahNumber === startSurah ? startAyah : 1;
+        const to = surahNumber === endSurah ? endAyah : totalAyahsByNumber.get(surahNumber);
+        if (!surahId || to === undefined) {
           closeRun();
-          lines += 1; // missing data: degrade gracefully, 1 line for this ayah
+          lines += 1; // missing surah data: degrade gracefully
           continue;
         }
-        if (runPageId !== null && info.quranPageId !== runPageId) closeRun();
-        if (runPageId === null) {
-          runPageId = info.quranPageId;
-          runStart = { lineFrom: info.lineFrom };
+        for (let ayah = from; ayah <= to; ayah++) {
+          const info = lineInfoOf.get(`${surahId}:${ayah}`);
+          if (!info) {
+            closeRun();
+            lines += 1; // missing data: degrade gracefully, 1 line for this ayah
+            continue;
+          }
+          if (runPageId !== null && info.quranPageId !== runPageId) closeRun();
+          if (runPageId === null) {
+            runPageId = info.quranPageId;
+            runStart = { lineFrom: info.lineFrom };
+          }
+          runEnd = { lineTo: info.lineTo };
         }
-        runEnd = { lineTo: info.lineTo };
       }
       closeRun();
       return lines;
     };
 
-    // groupKey -> surahId -> ranges — nested (not string-concatenated) so a
-    // groupKey that itself contains a delimiter (e.g. getTopStudents passes
-    // `${studentId}|${type}`) can't be ambiguously re-split against surahId.
-    const rangesByGroup = new Map<string, Map<string, [number, number][]>>();
+    const rangesByGroup = new Map<string, Range[]>();
     for (const e of entries) {
-      const bySurah = rangesByGroup.get(e.groupKey) ?? new Map<string, [number, number][]>();
-      const ranges = bySurah.get(e.surahId) ?? [];
-      ranges.push([e.fromAyah, e.toAyah]);
-      bySurah.set(e.surahId, ranges);
-      rangesByGroup.set(e.groupKey, bySurah);
+      const surahNumber = numberBySurahId.get(e.surahId);
+      if (surahNumber === undefined) continue; // surah lookup failed — skip rather than guess
+      const ranges = rangesByGroup.get(e.groupKey) ?? [];
+      ranges.push({ surahNumber, fromAyah: e.fromAyah, toAyah: e.toAyah });
+      rangesByGroup.set(e.groupKey, ranges);
     }
     const totalByGroup = new Map<string, number>();
-    for (const [groupKey, bySurah] of rangesByGroup) {
-      let total = 0;
-      for (const [surahId, ranges] of bySurah) {
-        total += mergeAyahRanges(ranges).reduce(
-          (sum, [from, to]) => sum + linesForMergedBlock(surahId, from, to),
-          0,
-        );
-      }
+    for (const [groupKey, ranges] of rangesByGroup) {
+      const merged = mergeRanges(ranges);
+      const total = merged.reduce(
+        (sum, m) => sum + linesForMergedBlock(m.startSurah, m.startAyah, m.endSurah, m.endAyah),
+        0,
+      );
       totalByGroup.set(groupKey, total);
     }
     return totalByGroup;
