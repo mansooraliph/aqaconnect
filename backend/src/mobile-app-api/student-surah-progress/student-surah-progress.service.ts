@@ -2381,12 +2381,18 @@ export class StudentSurahProgressService {
    * getTopStudents (non-null from/to filtered in, since a null-range row
    * contributes 0 either way).
    */
+  // No `type` parameter — the Hifdh schedule (the "target" side) only ever
+  // represents the New Lesson memorization pacing plan, there's no Old/Juzh
+  // Lesson schedule concept at all. Filtering "actual" to Old/Juzh while
+  // "target" stayed unfiltered used to produce a meaningless comparison
+  // (every student looked artificially behind, since actual was scoped to
+  // a lesson type target never covers). Always scoping both sides to New
+  // Lesson is the only comparison that's ever coherent here.
   private async targetAndActualAyahsBatch(
     branchId: string,
     studentIds: string[],
     fromDate: string,
     toDate: string,
-    type?: string,
   ): Promise<Map<string, { targetAyahs: number; actualAyahs: number }>> {
     const result = new Map<
       string,
@@ -2417,7 +2423,7 @@ export class StudentSurahProgressService {
             gte: new Date(`${fromDate}T00:00:00.000Z`),
             lte: new Date(`${toDate}T23:59:59.999Z`),
           },
-          ...(type && { type: TYPE_TO_ENUM[type] }),
+          type: TYPE_TO_ENUM['New Lesson'],
           fromAyah: { not: null },
           toAyah: { not: null },
         },
@@ -2519,7 +2525,6 @@ export class StudentSurahProgressService {
       students.map((s) => s.id),
       query.from_date,
       query.to_date,
-      query.type,
     );
 
     const qualifying = students
@@ -2557,7 +2562,6 @@ export class StudentSurahProgressService {
         period: { from_date: query.from_date, to_date: query.to_date },
         filters: {
           halqa_id: query.halqa_id ?? null,
-          type: query.type ?? null,
           min_deficit: minDeficit,
           limit,
         },
@@ -2597,7 +2601,6 @@ export class StudentSurahProgressService {
       students.map((s) => s.id),
       fromDate,
       toDate,
-      query.type,
     );
 
     const qualifying = students
@@ -2635,7 +2638,6 @@ export class StudentSurahProgressService {
         period: { from_date: fromDate, to_date: toDate },
         filters: {
           halqa_id: query.halqa_id ?? null,
-          type: query.type ?? null,
           min_excess: minExcess,
           limit,
         },
