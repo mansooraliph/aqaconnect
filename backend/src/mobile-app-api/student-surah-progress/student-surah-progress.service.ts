@@ -104,6 +104,28 @@ function formatDateOnly(date: Date | null | undefined): string | null {
   if (!date) return null;
   return date.toISOString().slice(0, 10);
 }
+// Calendar days strictly after `lastDate` up to and including `until`,
+// excluding any date in `holidaySet` (branch holidays + weekly-offs, which
+// are stamped onto CalendarDay.isHoliday too — see bulkSetWeekendDays /
+// MasterCalendarService.publish). Mirrors days_since_last_exam's plain
+// calendar-day diff, but school-days-only for the "Not Recited" tag so a
+// weekend/holiday run doesn't make a student look overdue.
+function countSchoolDaysSince(
+  lastDate: Date,
+  until: Date,
+  holidaySet: Set<string | null>,
+): number {
+  let count = 0;
+  const cursor = new Date(lastDate);
+  cursor.setUTCHours(0, 0, 0, 0);
+  const end = new Date(until);
+  end.setUTCHours(0, 0, 0, 0);
+  while (cursor < end) {
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+    if (!holidaySet.has(formatDateOnly(cursor))) count++;
+  }
+  return count;
+}
 const SURAH_SELECT = {
   id: true,
   number: true,
@@ -2090,7 +2112,11 @@ export class StudentSurahProgressService {
           status: { in: ['COMPLETED', 'VERIFIED'] },
           type: { in: ['NEW_LESSON', 'JUZH_LESSON', 'OLD_LESSON'] },
         },
-        select: { studentId: true, type: true, updatedAt: true },
+        select: {
+          studentId: true,
+          type: true,
+          updatedAt: true,
+        },
         orderBy: { updatedAt: 'asc' },
       });
     const lessonHistoryByStudent = new Map<
@@ -2104,6 +2130,11 @@ export class StudentSurahProgressService {
       lessonHistoryByStudent.set(e.studentId, list);
     }
     const currentCycleTypesByStudent = new Map<string, string[]>();
+    // Last moment this student actually had a lesson marked, all-time —
+    // used for the "Not Recited N days ago" tag. Since allTimeLessonEntries
+    // is ordered by updatedAt ascending, each student's last history entry
+    // is already their latest mark.
+    const lastRecitedDateByStudent = new Map<string, Date>();
     for (const [studentId, history] of lessonHistoryByStudent) {
       const lastNewIndex = history.map((h) => h.type).lastIndexOf('NEW_LESSON');
       const cycleSlice = lastNewIndex >= 0 ? history.slice(lastNewIndex) : history;
@@ -2113,9 +2144,21 @@ export class StudentSurahProgressService {
         if (!distinctTypes.includes(label)) distinctTypes.push(label);
       }
       currentCycleTypesByStudent.set(studentId, distinctTypes);
+      const last = history[history.length - 1];
+      if (last) lastRecitedDateByStudent.set(studentId, last.updatedAt);
     }
+    const earliestLastRecitedDate =
+      lastRecitedDateByStudent.size > 0
+        ? new Date(
+            Math.min(
+              ...[...lastRecitedDateByStudent.values()].map((d) =>
+                d.getTime(),
+              ),
+            ),
+          )
+        : null;
 
-    const [leaves, exams, holidays] = await Promise.all([
+    const [leaves, exams, holidays, recitationGapHolidays] = await Promise.all([
       this.prisma.studentLeave.findMany({
         where: {
           studentId: { in: studentIds },
@@ -2137,7 +2180,23 @@ export class StudentSurahProgressService {
         },
         orderBy: { date: 'asc' },
       }),
+      earliestLastRecitedDate
+        ? this.prisma.calendarDay.findMany({
+            where: {
+              branchId,
+              isWorkingDay: false,
+              date: { gt: earliestLastRecitedDate, lte: new Date(toDate) },
+            },
+            select: { date: true },
+          })
+        : Promise.resolve([] as { date: Date }[]),
     ]);
+    // Non-working days (holidays + weekly-offs) between the earliest
+    // "last recited" date found and the viewed date — used to make the
+    // "Not Recited N days ago" count school-days-only.
+    const recitationNonWorkingSet = new Set(
+      recitationGapHolidays.map((h) => formatDateOnly(h.date)),
+    );
     const leavesByStudent = new Map<string, typeof leaves>();
     for (const l of leaves)
       leavesByStudent.set(l.studentId, [
@@ -2268,6 +2327,18 @@ export class StudentSurahProgressService {
         ...(latestExam?.remarks ? [latestExam.remarks] : []),
       ];
 
+      // School-days-only gap since this student's last recorded mark of any
+      // kind — powers the "Not Recited N days ago" tag. null when they've
+      // never recited (mirrors days_since_last_exam's "never evaluated").
+      const lastRecitedDate = lastRecitedDateByStudent.get(student.id) ?? null;
+      const daysSinceLastRecited = lastRecitedDate
+        ? countSchoolDaysSince(
+            lastRecitedDate,
+            new Date(`${toDate}T00:00:00.000Z`),
+            recitationNonWorkingSet,
+          )
+        : null;
+
       const studentData: Record<string, unknown> = {
         student: await this.formatStudentBasic(student),
         activities,
@@ -2277,6 +2348,7 @@ export class StudentSurahProgressService {
         is_on_leave: hasLeaveToday,
         // Persists across days — see currentCycleTypesByStudent above.
         current_cycle_types: currentCycleTypesByStudent.get(student.id) ?? [],
+        days_since_last_recited: daysSinceLastRecited,
         evaluation,
         remarks: remarkTexts.length > 0 ? remarkTexts.join('; ') : null,
       };
