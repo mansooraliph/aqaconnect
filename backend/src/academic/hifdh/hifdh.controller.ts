@@ -91,8 +91,8 @@ export class HifdhSchedulesController {
 
   @Post('bulk-reschedule')
   @RequirePermission('academic.hifdh_schedules.manage')
-  bulkReschedule(@Body() dto: BulkRescheduleDto) {
-    return this.service.bulkReschedule(dto.studentIds, dto.newStartDate, dto.fromDate);
+  bulkReschedule(@Param('branchId') branchId: string, @Body() dto: BulkRescheduleDto) {
+    return this.service.bulkReschedule(branchId, dto.studentIds, dto.newStartDate, dto.fromDate);
   }
 }
 

@@ -620,9 +620,13 @@ export class HifdhService {
    * day-to-day spacing for shifted rows: every one moves by the same delta
    * (newStartDate minus that student's earliest affected pending row), so a
    * multi-row day stays a multi-row day instead of being compressed onto
-   * consecutive dates.
+   * consecutive dates. That flat delta alone isn't holiday-safe though — a
+   * date that was never a holiday originally can land on one after a shift
+   * (and repeated reschedules compound this further), so every shifted date
+   * is nudged forward day-by-day past any of the branch's holiday dates
+   * before being used.
    */
-  async bulkReschedule(studentIds: string[], newStartDate: string, fromDate?: string) {
+  async bulkReschedule(branchId: string, studentIds: string[], newStartDate: string, fromDate?: string) {
     // One findMany + one createMany for ALL students, not two round trips
     // per student in a loop — with dozens of students (e.g. every student
     // affected by a single weekly-holiday date) that loop was 2*N sequential
@@ -654,6 +658,27 @@ export class HifdhService {
       orderBy: { scheduledDate: 'asc' },
     });
 
+    // Fetched once for the whole call, not per row — a 3-year window easily
+    // covers every shifted date a "whole remaining schedule" reschedule can
+    // produce, and CalendarDay rows are cheap (~365/branch/year).
+    const holidayRangeStart = new Date(newStartDate);
+    const holidayRangeEnd = new Date(newStartDate);
+    holidayRangeEnd.setUTCFullYear(holidayRangeEnd.getUTCFullYear() + 3);
+    const holidayRows = await this.prisma.calendarDay.findMany({
+      where: { branchId, isHoliday: true, date: { gte: holidayRangeStart, lt: holidayRangeEnd } },
+      select: { date: true },
+    });
+    const holidaySet = new Set(holidayRows.map((h) => formatDateOnly(h.date)));
+    const nudgePastHolidays = (date: Date): Date => {
+      let d = date;
+      // 60-day cap — generous past even a full Ramadan-length holiday block,
+      // and avoids ever looping indefinitely on a misconfigured calendar.
+      for (let i = 0; i < 60 && holidaySet.has(formatDateOnly(d)); i++) {
+        d = new Date(d.getTime() + 86_400_000);
+      }
+      return d;
+    };
+
     const byStudent = new Map<string, typeof rows>();
     for (const row of rows) {
       const list = byStudent.get(row.studentId);
@@ -679,9 +704,8 @@ export class HifdhService {
       if (pendingRows.length > 0) {
         const deltaMs = new Date(newStartDate).getTime() - pendingRows[0].scheduledDate.getTime();
         for (const row of pendingRows) {
-          toInsert.push(
-            this.rescheduleRowData(row, new Date(row.scheduledDate.getTime() + deltaMs), false, nextScheduleNo),
-          );
+          const shifted = nudgePastHolidays(new Date(row.scheduledDate.getTime() + deltaMs));
+          toInsert.push(this.rescheduleRowData(row, shifted, false, nextScheduleNo));
         }
         rescheduled += pendingRows.length;
       }
