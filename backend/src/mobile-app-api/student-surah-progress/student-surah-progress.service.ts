@@ -2956,11 +2956,70 @@ export class StudentSurahProgressService {
       completedWhere.studentId = { in: [...allowedStudentIds] };
     }
 
-    const completedRecords =
-      await this.prisma.studentSurahProgressEntry.findMany({
+    // Holidays/leaves fetched alongside completedRecords (not after, like
+    // before) — the new every-school-day bucketing below needs per-day
+    // leave data for ALL students up front, not just the ones left over
+    // once "has a completed record" was already decided.
+    const [completedRecords, holidays, approvedLeaves] = await Promise.all([
+      this.prisma.studentSurahProgressEntry.findMany({
         where: completedWhere,
         include: { surah: { select: SURAH_SELECT } },
-      });
+      }),
+      this.prisma.calendarDay.findMany({
+        where: {
+          branchId,
+          isHoliday: true,
+          date: {
+            gte: new Date(`${fromDate}T00:00:00.000Z`),
+            lte: new Date(`${toDate}T23:59:59.999Z`),
+          },
+        },
+      }),
+      this.prisma.studentLeave.findMany({
+        where: {
+          studentId: { in: students.map((s) => s.id) },
+          status: 'APPROVED',
+          leaveDate: {
+            gte: new Date(`${fromDate}T00:00:00.000Z`),
+            lte: new Date(`${toDate}T23:59:59.999Z`),
+          },
+        },
+      }),
+    ]);
+
+    // Every school day in the selected range (holidays excluded) — the
+    // bucketing below requires EVERY one of these to be covered before a
+    // student counts as Completed or On Leave; see the classification loop
+    // further down for the exact rule.
+    const holidayDates = new Set(holidays.map((h) => formatDateOnly(h.date)!));
+    const schoolDays: string[] = [];
+    for (
+      const d = new Date(`${fromDate}T00:00:00.000Z`);
+      d <= new Date(`${toDate}T00:00:00.000Z`);
+      d.setUTCDate(d.getUTCDate() + 1)
+    ) {
+      const dateStr = formatDateOnly(d)!;
+      if (!holidayDates.has(dateStr)) schoolDays.push(dateStr);
+    }
+
+    // Per-day leave coverage, per student — used by the classification loop
+    // to check "on leave every school day in range", not just "on leave
+    // for at least one day" like the old single-leave lookup did.
+    const leaveDaysByStudent = new Map<string, Set<string>>();
+    for (const leave of approvedLeaves) {
+      const d = formatDateOnly(leave.leaveDate)!;
+      const set = leaveDaysByStudent.get(leave.studentId) ?? new Set<string>();
+      set.add(d);
+      leaveDaysByStudent.set(leave.studentId, set);
+    }
+    // Kept for the On Leave list's reason/is_half_day display — same "first
+    // match wins" representative-leave behavior as before this change.
+    const firstLeaveByStudent = new Map<string, (typeof approvedLeaves)[number]>();
+    for (const leave of approvedLeaves) {
+      if (!firstLeaveByStudent.has(leave.studentId)) {
+        firstLeaveByStudent.set(leave.studentId, leave);
+      }
+    }
 
     // True per-ayah line totals (not a flat ayahs/15 approximation) — see
     // computeTrueLinesByStudent's doc comment for why this merges ranges
@@ -2980,7 +3039,12 @@ export class StudentSurahProgressService {
     );
 
     const studentsCompletedMap = new Map<string, Record<string, unknown>>();
-    let totalAyahs = 0;
+    // studentId -> day -> set of lesson-type labels completed that day —
+    // the classification loop below uses this to check "recited every
+    // school day" (and, when a type filter is active, "recited ALL
+    // selected types on that day") rather than "recited at least once
+    // somewhere in the range".
+    const completedDaysByStudent = new Map<string, Map<string, Set<string>>>();
     const studentBasicCache = new Map<string, Record<string, unknown>>();
     const getBasic = async (studentId: string) => {
       if (studentBasicCache.has(studentId))
@@ -3001,7 +3065,6 @@ export class StudentSurahProgressService {
     for (const record of completedRecords) {
       const sid = record.studentId;
       const ayahs = this.ayahSpan(record.fromAyah, record.toAyah);
-      totalAyahs += ayahs;
       if (!studentsCompletedMap.has(sid)) {
         studentsCompletedMap.set(sid, {
           student: await getBasic(sid),
@@ -3021,6 +3084,14 @@ export class StudentSurahProgressService {
         { type: string; total_ayahs: number; entries_count: number }
       >;
       const typeLabel = record.type ? TYPE_TO_LEGACY[record.type] : 'Lesson';
+      if (record.completedAt) {
+        const day = formatDateOnly(record.completedAt)!;
+        const dayMap = completedDaysByStudent.get(sid) ?? new Map<string, Set<string>>();
+        const typesThatDay = dayMap.get(day) ?? new Set<string>();
+        typesThatDay.add(typeLabel);
+        dayMap.set(day, typesThatDay);
+        completedDaysByStudent.set(sid, dayMap);
+      }
       const lt = lessonTypes.get(typeLabel) ?? {
         type: typeLabel,
         total_ayahs: 0,
@@ -3043,64 +3114,74 @@ export class StudentSurahProgressService {
       }
     }
 
-    const completedList = [...studentsCompletedMap.entries()].map(([sid, entry]) => ({
-      ...entry,
-      lesson_types: [...(entry.lesson_types as Map<string, unknown>).values()],
-      total_lines_today: trueLinesByStudent.get(sid) ?? 0,
-    }));
-    const totalLinesMarked = [...trueLinesByStudent.values()].reduce((a, b) => a + b, 0);
+    // Per-day "did this student recite the required type(s) on this school
+    // day" check — with no type filter, any completed record that day
+    // counts; with one, every selected type must appear that day (an "AND"
+    // across types, same as the old all-types-somewhere-in-range rule, just
+    // now evaluated per day instead of across the whole range).
+    const recitedOnDay = (studentId: string, day: string): boolean => {
+      const typesThatDay = completedDaysByStudent.get(studentId)?.get(day);
+      if (!typesThatDay) return false;
+      if (types.length === 0) return typesThatDay.size > 0;
+      return types.every((t) => typesThatDay.has(t));
+    };
 
-    // Students on approved leave for this date range shouldn't be counted
-    // as "not recited" — they're a separate bucket entirely, since they
-    // weren't expected to recite in the first place.
-    const approvedLeaves = await this.prisma.studentLeave.findMany({
-      where: {
-        studentId: { in: students.map((s) => s.id) },
-        status: 'APPROVED',
-        leaveDate: {
-          gte: new Date(`${fromDate}T00:00:00.000Z`),
-          lte: new Date(`${toDate}T23:59:59.999Z`),
-        },
-      },
-    });
-    const leaveByStudent = new Map<string, (typeof approvedLeaves)[number]>();
-    for (const leave of approvedLeaves) {
-      if (!leaveByStudent.has(leave.studentId)) {
-        leaveByStudent.set(leave.studentId, leave);
-      }
-    }
-
+    // Classification, strict and mutually exclusive — a student lands in
+    // EXACTLY one of the three buckets, or none at all:
+    //   - Completed: recited on every school day in the range.
+    //   - On Leave: on approved leave every school day in the range
+    //     (checked first — a student on leave the whole range shouldn't
+    //     fall through to "Not Recited" just because recitedDays is 0).
+    //   - Not Recited: recited on zero school days in the range (whatever
+    //     mix of leave/plain-missed days made up the rest doesn't matter).
+    //   - Partial (recited some days, missed some, not fully covered by
+    //     leave) is deliberately excluded from all three lists — mixing a
+    //     "some days" student into either bucket would misrepresent them
+    //     as fully present or fully absent, which is worse than omitting
+    //     them for a date-range view.
+    const totalSchoolDays = schoolDays.length;
+    const completedList: Record<string, unknown>[] = [];
     const pendingList: Record<string, unknown>[] = [];
     const onLeaveList: Record<string, unknown>[] = [];
-    const studentsWithAllTypesSet = new Set(
-      types.length > 0 ? (studentsWithAllTypesInRange ?? []) : [],
-    );
-    for (const student of students) {
-      // When no type filter is active, "has a completed record in range"
-      // is exactly what studentsCompletedMap already captured from
-      // completedRecords (fetched once, above) — re-querying per student
-      // here was a redundant N+1 asking the DB something we'd already
-      // pulled into memory.
-      const hasAllRequired =
-        types.length === 0
-          ? studentsCompletedMap.has(student.id)
-          : studentsWithAllTypesSet.has(student.id);
-      if (hasAllRequired) continue;
+    let totalAyahsBucketed = 0;
+    let totalLinesBucketed = 0;
 
-      const leave = leaveByStudent.get(student.id);
-      if (leave) {
+    for (const student of students) {
+      const recitedDays = totalSchoolDays === 0
+        ? 0
+        : schoolDays.filter((day) => recitedOnDay(student.id, day)).length;
+      const leaveDaySet = leaveDaysByStudent.get(student.id);
+      const leaveDays = totalSchoolDays === 0
+        ? 0
+        : schoolDays.filter((day) => leaveDaySet?.has(day)).length;
+
+      if (totalSchoolDays > 0 && recitedDays === totalSchoolDays) {
+        const entry = studentsCompletedMap.get(student.id);
+        if (entry) {
+          completedList.push({
+            ...entry,
+            lesson_types: [...(entry.lesson_types as Map<string, unknown>).values()],
+            total_lines_today: trueLinesByStudent.get(student.id) ?? 0,
+          });
+          totalAyahsBucketed += entry.total_ayahs_today as number;
+          totalLinesBucketed += trueLinesByStudent.get(student.id) ?? 0;
+        }
+      } else if (totalSchoolDays > 0 && leaveDays === totalSchoolDays) {
+        const leave = firstLeaveByStudent.get(student.id);
         onLeaveList.push({
           student: await getBasic(student.id),
-          leave_date: formatDateOnly(leave.leaveDate),
-          reason: leave.reason,
-          is_half_day: leave.isHalfDay,
+          leave_date: leave ? formatDateOnly(leave.leaveDate) : null,
+          reason: leave?.reason ?? null,
+          is_half_day: leave?.isHalfDay ?? false,
         });
-      } else {
+      } else if (totalSchoolDays > 0 && recitedDays === 0) {
         pendingList.push({
           student: await getBasic(student.id),
           is_inactive_recent: isInactiveRecent(student.id),
         });
       }
+      // else: partial — recited some days, not all, not fully on leave —
+      // excluded from every bucket, see comment above.
     }
 
     return {
@@ -3115,8 +3196,8 @@ export class StudentSurahProgressService {
         },
         completed: {
           total_students: completedList.length,
-          total_ayahs_marked: totalAyahs,
-          total_lines_marked: totalLinesMarked,
+          total_ayahs_marked: totalAyahsBucketed,
+          total_lines_marked: totalLinesBucketed,
           students: completedList,
         },
         pending: { total_students: pendingList.length, students: pendingList },
