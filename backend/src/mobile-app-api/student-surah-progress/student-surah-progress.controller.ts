@@ -34,6 +34,7 @@ import { GetStudentsTargetQueryDto } from './dto/get-students-target-query.dto';
 import { GetFullProgressReportQueryDto } from './dto/get-full-progress-report-query.dto';
 import { GetTopStudentsQueryDto } from './dto/get-top-students-query.dto';
 import { GetAttendanceReportQueryDto } from './dto/get-attendance-report-query.dto';
+import { GetCenterPerformanceReportQueryDto } from './dto/get-center-performance-report-query.dto';
 import { UpdateProgressDto } from './dto/update-progress.dto';
 import { MobileContextService } from '../common/mobile-context.service';
 import { MobileValidationPipe } from '../common/mobile-validation.pipe';
@@ -423,6 +424,24 @@ export class StudentSurahProgressController {
     return this.handle(
       () => this.service.getTopStudents(branchId, req.user.userId, query),
       'Failed to retrieve top students: ',
+    );
+  }
+
+  // ── getCenterPerformanceReport ───────────────────────────────────────
+  @Get('students/center-performance-report')
+  async getCenterPerformanceReport(
+    @Req() req: AuthedRequest,
+    @Query() query: GetCenterPerformanceReportQueryDto,
+  ) {
+    const branchId = await this.context.resolveBranchId(req.user.userId);
+    return this.handle(
+      () =>
+        this.service.getCenterPerformanceReport(
+          branchId,
+          query.month,
+          query.year,
+        ),
+      'Failed to generate center performance report: ',
     );
   }
 

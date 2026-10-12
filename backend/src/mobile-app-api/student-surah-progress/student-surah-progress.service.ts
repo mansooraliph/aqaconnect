@@ -104,6 +104,20 @@ function formatDateOnly(date: Date | null | undefined): string | null {
   if (!date) return null;
   return date.toISOString().slice(0, 10);
 }
+/**
+ * "X page & Y Lines" display for a {pages, lines} split (see toPagesLines in
+ * getTopStudents, replicated locally in getCenterPerformanceReport). No
+ * existing page/line display-string formatter was found elsewhere in the
+ * backend — every other call site (e.g. top_students_screen.dart) renders
+ * the raw pages/lines numbers itself — so this is new, added specifically
+ * for the Center Performance Report's "New Lesson" column. Lines are always
+ * pluralized ("4 Lines") except the literal singular "1 Line"; a 0-page
+ * result omits the "X page &" prefix entirely rather than showing "0 page".
+ */
+function formatPagesLines(pages: number, lines: number): string {
+  const lineLabel = lines === 1 ? '1 Line' : `${lines} Lines`;
+  return pages > 0 ? `${pages} page & ${lineLabel}` : lineLabel;
+}
 // Calendar days strictly after `lastDate` up to and including `until`,
 // excluding any date in `holidaySet` (branch holidays + weekly-offs, which
 // are stamped onto CalendarDay.isHoliday too — see bulkSetWeekendDays /
@@ -894,6 +908,102 @@ export class StudentSurahProgressService {
       paceStatus,
       paceMessage,
     };
+  }
+
+  /**
+   * Batched actual%/expected% pacing for many students at once (one
+   * findMany instead of N single-student queries) — used by
+   * getCenterPerformanceReport, which can span 100+ students in a branch.
+   * Deliberately only replicates computeSchedulePacing's actual%/expected%
+   * math (same rows filter, same lineCountOf build, same
+   * `status === COMPLETED` / `scheduledDate <= today` semantics, same
+   * rounding), not its pace-projection/target-date logic, which this report
+   * doesn't need. When a student has no non-superseded schedule rows at
+   * all, totalLines stays 0 and both percentages fall out to 0 — identical
+   * to computeSchedulePacing's own "no schedule" early-return result, so no
+   * separate short-circuit is needed here.
+   */
+  private async computeSchedulePacingBatch(
+    studentIds: string[],
+  ): Promise<
+    Map<string, { actualProgressPercentage: number; expectedProgressPercentage: number }>
+  > {
+    const result = new Map<
+      string,
+      { actualProgressPercentage: number; expectedProgressPercentage: number }
+    >();
+    if (studentIds.length === 0) return result;
+
+    const rows = await this.prisma.surahHifdhStudentSchedule.findMany({
+      where: { studentId: { in: studentIds }, rescheduledTo: { none: {} } },
+      select: {
+        studentId: true,
+        surahId: true,
+        fromAyah: true,
+        toAyah: true,
+        scheduledDate: true,
+        status: true,
+        completedAt: true,
+      },
+    });
+
+    // Same ayah -> Mushaf-line-count lookup as computeSchedulePacing builds
+    // (and getSurahProgressList's own lineCountOf before it), scaled to
+    // every surah referenced across all these students' schedule rows.
+    const referencedSurahIds = [
+      ...new Set(rows.map((r) => r.surahId).filter((id): id is string => !!id)),
+    ];
+    const pageLines = referencedSurahIds.length
+      ? await this.prisma.surahAyahPageLine.findMany({
+          where: { surahId: { in: referencedSurahIds } },
+          select: { surahId: true, ayahNumber: true, lineFrom: true, lineTo: true },
+        })
+      : [];
+    const lineCountOf = new Map<string, number>();
+    for (const pl of pageLines) {
+      lineCountOf.set(`${pl.surahId}:${pl.ayahNumber}`, pl.lineTo - pl.lineFrom + 1);
+    }
+
+    const linesForRow = (
+      surahId: string | null,
+      fromAyah: number | null,
+      toAyah: number | null,
+    ): number => {
+      if (!surahId || fromAyah === null || toAyah === null) return 1;
+      let lines = 0;
+      for (let ayah = fromAyah; ayah <= toAyah; ayah++)
+        lines += lineCountOf.get(`${surahId}:${ayah}`) ?? 1;
+      return lines || 1;
+    };
+
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+
+    const rowsByStudent = new Map<string, typeof rows>();
+    for (const row of rows) {
+      const list = rowsByStudent.get(row.studentId) ?? [];
+      list.push(row);
+      rowsByStudent.set(row.studentId, list);
+    }
+
+    for (const studentId of studentIds) {
+      const studentRows = rowsByStudent.get(studentId) ?? [];
+      let totalLines = 0;
+      let actualLines = 0;
+      let expectedLines = 0;
+      for (const row of studentRows) {
+        const lines = linesForRow(row.surahId, row.fromAyah, row.toAyah);
+        totalLines += lines;
+        if (row.status === HifdhScheduleStatus.COMPLETED) actualLines += lines;
+        if (row.scheduledDate <= today) expectedLines += lines;
+      }
+      const actualProgressPercentage =
+        totalLines > 0 ? Math.round((actualLines / totalLines) * 10000) / 100 : 0;
+      const expectedProgressPercentage =
+        totalLines > 0 ? Math.round((expectedLines / totalLines) * 10000) / 100 : 0;
+      result.set(studentId, { actualProgressPercentage, expectedProgressPercentage });
+    }
+    return result;
   }
 
   // ── determineTargetSurah / getNextSurah / getLogicExplanation ───────
@@ -3507,6 +3617,189 @@ export class StudentSurahProgressService {
           total_students_with_records: rosterIds.length,
           students: topStudents,
         },
+      },
+    };
+  }
+
+  // ── getCenterPerformanceReport ────────────────────────────────────────
+  /**
+   * Center-wise Monthly Performance Report: every ACTIVE student in the
+   * branch, grouped by their Halqa teacher, graded Excellent/Good/Average/
+   * "Need to Improve" by how far their schedule pace (computeSchedulePacingBatch's
+   * actual% vs. expected%, identical math to computeSchedulePacing's
+   * per-student version) has drifted. A branch-wide admin report — unlike
+   * activeStudentsForReport (used by the other reports in this file), it is
+   * deliberately NOT scoped to a Teacher caller's own halqa(s); it has no
+   * userId/caller context at all, by design (see task spec).
+   */
+  async getCenterPerformanceReport(branchId: string, month: number, year: number) {
+    // Month boundaries as [gte monthStart, lt nextMonthStart) — mirrors
+    // MasterCalendarService.monthRange, the existing month-int-based
+    // date-range convention elsewhere in this codebase (this file's other
+    // reports take explicit from_date/to_date strings instead, so there's
+    // no local month/year precedent to match).
+    const monthStart = new Date(Date.UTC(year, month - 1, 1));
+    const monthEnd = new Date(Date.UTC(year, month, 1));
+
+    const [branch, branchSettings, workingDayRows, students] = await Promise.all([
+      this.prisma.branch.findUnique({ where: { id: branchId }, select: { name: true } }),
+      this.prisma.branchSettings.findUnique({ where: { branchId } }),
+      this.prisma.calendarDay.findMany({
+        where: { branchId, isWorkingDay: true, date: { gte: monthStart, lt: monthEnd } },
+        select: { id: true },
+      }),
+      this.prisma.student.findMany({ where: { branchId, status: 'ACTIVE' } }),
+    ]);
+    // The academy/center name — never the Halqa's name (see the identical
+    // comment on getTopStudents' centerName, above).
+    const centerName = branchSettings?.displayName || branch?.name || null;
+    const workingDays = workingDayRows.length;
+
+    const studentIds = students.map((s) => s.id);
+
+    // studentId: { in: [] } is a safe no-op query (returns []) when the
+    // branch has no active students — no need to special-case it here.
+    const [halqaTeacherByStudent, pacingByStudent, newLessonEntries] = await Promise.all([
+      this.studentHalqaTeacherBatch(studentIds),
+      this.computeSchedulePacingBatch(studentIds),
+      this.prisma.studentSurahProgressEntry.findMany({
+        where: {
+          studentId: { in: studentIds },
+          type: ProgressEntryType.NEW_LESSON,
+          status: { in: [ProgressEntryStatus.COMPLETED, ProgressEntryStatus.VERIFIED] },
+          completedAt: { gte: monthStart, lt: monthEnd },
+          surahId: { not: null },
+          fromAyah: { not: null },
+          toAyah: { not: null },
+        },
+        select: { studentId: true, surahId: true, fromAyah: true, toAyah: true },
+      }),
+    ]);
+
+    // True completed-line totals (see computeTrueLinesByStudent) for this
+    // calendar month's New Lesson entries only, per student.
+    const newLessonLinesByStudent = await this.computeTrueLinesByStudent(
+      newLessonEntries.filter(
+        (e): e is typeof e & { surahId: string; fromAyah: number; toAyah: number } =>
+          e.surahId !== null && e.fromAyah !== null && e.toAyah !== null,
+      ),
+    );
+    // 15 lines per Mushaf page — same formula as getTopStudents' local
+    // toPagesLines (a closure there, not a shared/reusable method).
+    const toPagesLines = (lines: number) => ({
+      pages: Math.trunc(lines / 15),
+      lines: lines % 15,
+    });
+
+    const GRADE_RANK: Record<string, number> = {
+      Excellent: 0,
+      Good: 1,
+      Average: 2,
+      'Need to Improve': 3,
+    };
+    const gradeFor = (diff: number): string => {
+      if (diff >= 0) return 'Excellent';
+      if (diff >= -3) return 'Good';
+      if (diff >= -6) return 'Average';
+      return 'Need to Improve';
+    };
+
+    const rowEntries = students.map((student) => {
+      const halqaTeacher = halqaTeacherByStudent.get(student.id);
+      // Students with no halqa membership, or whose halqa has no teacher
+      // assigned, have nowhere else to be bucketed for this report's
+      // teacher-grouped rows/summary — grouped under "Unassigned" rather
+      // than silently dropped.
+      const teacherName = halqaTeacher?.teacherName ?? 'Unassigned';
+      const pacing =
+        pacingByStudent.get(student.id) ??
+        ({ actualProgressPercentage: 0, expectedProgressPercentage: 0 } as const);
+      const diff = pacing.actualProgressPercentage - pacing.expectedProgressPercentage;
+      const grade = gradeFor(diff);
+      const { pages, lines } = toPagesLines(newLessonLinesByStudent.get(student.id) ?? 0);
+      return {
+        teacherName,
+        studentName: student.name,
+        studentId: student.id,
+        newLessonDisplay: formatPagesLines(pages, lines),
+        actualPercentage: pacing.actualProgressPercentage,
+        expectedPercentage: pacing.expectedProgressPercentage,
+        grade,
+      };
+    });
+
+    // Teacher name alphabetical, then grade-rank within each teacher, then
+    // alphabetical by student name as the final tiebreak.
+    rowEntries.sort((a, b) => {
+      const teacherCompare = a.teacherName.localeCompare(b.teacherName);
+      if (teacherCompare !== 0) return teacherCompare;
+      const rankDiff = GRADE_RANK[a.grade] - GRADE_RANK[b.grade];
+      if (rankDiff !== 0) return rankDiff;
+      return a.studentName.localeCompare(b.studentName);
+    });
+
+    // One continuous SL.NO. across the whole table, assigned after the
+    // full sort above (not reset per teacher).
+    const rows = rowEntries.map((r, index) => ({
+      sl_no: index + 1,
+      teacher_name: r.teacherName,
+      student_name: r.studentName,
+      student_id: r.studentId,
+      new_lesson_display: r.newLessonDisplay,
+      actual_percentage: r.actualPercentage,
+      expected_percentage: r.expectedPercentage,
+      grade: r.grade,
+    }));
+
+    const byTeacher = new Map<string, { total: number; exceeded: number }>();
+    for (const r of rowEntries) {
+      const entry = byTeacher.get(r.teacherName) ?? { total: 0, exceeded: 0 };
+      entry.total += 1;
+      if (r.grade === 'Excellent') entry.exceeded += 1;
+      byTeacher.set(r.teacherName, entry);
+    }
+    const teamGradeFor = (ratio: number): string => {
+      if (ratio >= 1.0) return 'Excellent';
+      if (ratio >= 0.8) return 'Good';
+      if (ratio >= 0.6) return 'Average';
+      return 'Need to Improve';
+    };
+    const teacherSummaries = [...byTeacher.entries()]
+      .map(([teacherName, { total, exceeded }]) => ({
+        teacherName,
+        total,
+        exceeded,
+        ratio: total > 0 ? exceeded / total : 0,
+      }))
+      .sort((a, b) => {
+        const rankDiff = GRADE_RANK[teamGradeFor(a.ratio)] - GRADE_RANK[teamGradeFor(b.ratio)];
+        if (rankDiff !== 0) return rankDiff;
+        if (b.ratio !== a.ratio) return b.ratio - a.ratio;
+        return a.teacherName.localeCompare(b.teacherName);
+      })
+      .map((t) => ({
+        teacher_name: t.teacherName,
+        total_students: t.total,
+        exceeded_count: t.exceeded,
+        team_grade: teamGradeFor(t.ratio),
+      }));
+
+    const totalStudents = students.length;
+    const exceededTarget = rowEntries.filter((r) => r.grade === 'Excellent').length;
+    const notCompleted = totalStudents - exceededTarget;
+
+    return {
+      status: 'success',
+      data: {
+        center_name: centerName,
+        month,
+        year,
+        working_days: workingDays,
+        total_students: totalStudents,
+        exceeded_target: exceededTarget,
+        not_completed: notCompleted,
+        rows,
+        teacher_summaries: teacherSummaries,
       },
     };
   }
