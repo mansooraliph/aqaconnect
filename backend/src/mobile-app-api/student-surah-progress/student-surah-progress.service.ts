@@ -3631,8 +3631,18 @@ export class StudentSurahProgressService {
    * activeStudentsForReport (used by the other reports in this file), it is
    * deliberately NOT scoped to a Teacher caller's own halqa(s); it has no
    * userId/caller context at all, by design (see task spec).
+   *
+   * Optional `halqaId` switches to a single-Halqa mode: same grading, same
+   * rows shape, but narrowed to just that Halqa's roster, with its one
+   * teacher resolved directly (teacher_name) instead of grouped per-student,
+   * and no teacher_summaries (nothing to summarize across a single team).
    */
-  async getCenterPerformanceReport(branchId: string, month: number, year: number) {
+  async getCenterPerformanceReport(
+    branchId: string,
+    month: number,
+    year: number,
+    halqaId?: string,
+  ) {
     // Month boundaries as [gte monthStart, lt nextMonthStart) — mirrors
     // MasterCalendarService.monthRange, the existing month-int-based
     // date-range convention elsewhere in this codebase (this file's other
@@ -3641,7 +3651,7 @@ export class StudentSurahProgressService {
     const monthStart = new Date(Date.UTC(year, month - 1, 1));
     const monthEnd = new Date(Date.UTC(year, month, 1));
 
-    const [branch, branchSettings, workingDayRows, students] = await Promise.all([
+    const [branch, branchSettings, workingDayRows, branchStudents] = await Promise.all([
       this.prisma.branch.findUnique({ where: { id: branchId }, select: { name: true } }),
       this.prisma.branchSettings.findUnique({ where: { branchId } }),
       this.prisma.calendarDay.findMany({
@@ -3655,12 +3665,59 @@ export class StudentSurahProgressService {
     const centerName = branchSettings?.displayName || branch?.name || null;
     const workingDays = workingDayRows.length;
 
+    // Halqa-scoped mode: resolve this one Halqa's own teacher directly
+    // (every row shares it, so there's no per-student grouping to do for
+    // it) and narrow the branch's active students down to just this
+    // Halqa's roster. `halqa.findFirst` is scoped to `branchId` so a
+    // halqaId belonging to another branch can never pull that branch's
+    // teacher into this report; as a second, independent safeguard the
+    // roster below is also intersected with `branchStudents` (already
+    // filtered to this branch's ACTIVE students), never trusted on its own.
+    let halqaTeacherName: string | null = null;
+    let students = branchStudents;
+    if (halqaId) {
+      const [halqa, roster] = await Promise.all([
+        this.prisma.halqa.findFirst({
+          where: { id: halqaId, branchId },
+          include: {
+            teacher: { include: { user: { select: { firstName: true, lastName: true } } } },
+          },
+        }),
+        this.prisma.halqaStudent.findMany({
+          where: { halqaId, removedAt: null },
+          select: { studentId: true },
+        }),
+      ]);
+      const resolvedName = halqa?.teacher
+        ? [halqa.teacher.user.firstName, halqa.teacher.user.lastName]
+            .filter(Boolean)
+            .join(' ')
+        : null;
+      // Always resolves to a non-null string once halqaId was given — the
+      // Flutter PDF branches scoped-vs-unscoped rendering on
+      // `teacher_name != null`, so a Halqa with no teacher assigned must
+      // still read as "scoped, teacher unknown" ('Unassigned'), the same
+      // fallback the unscoped report already uses per-student below, never
+      // fall through to null (which would make it look unscoped).
+      halqaTeacherName = resolvedName || 'Unassigned';
+      const rosterIds = new Set(roster.map((r) => r.studentId));
+      students = branchStudents.filter((s) => rosterIds.has(s.id));
+    }
+
     const studentIds = students.map((s) => s.id);
 
     // studentId: { in: [] } is a safe no-op query (returns []) when the
-    // branch has no active students — no need to special-case it here.
+    // branch (or, in halqa-scoped mode, the Halqa) has no active students —
+    // no need to special-case it here.
     const [halqaTeacherByStudent, pacingByStudent, newLessonEntries] = await Promise.all([
-      this.studentHalqaTeacherBatch(studentIds),
+      // Per-student teacher lookup is only needed for the unscoped report's
+      // per-teacher grouping/summary — halqa-scoped mode already has its
+      // one teacher resolved above, so skip the extra query.
+      halqaId
+        ? Promise.resolve(
+            new Map<string, { halqaName: string; teacherName: string | null }>(),
+          )
+        : this.studentHalqaTeacherBatch(studentIds),
       this.computeSchedulePacingBatch(studentIds),
       this.prisma.studentSurahProgressEntry.findMany({
         where: {
@@ -3705,12 +3762,14 @@ export class StudentSurahProgressService {
     };
 
     const rowEntries = students.map((student) => {
-      const halqaTeacher = halqaTeacherByStudent.get(student.id);
-      // Students with no halqa membership, or whose halqa has no teacher
-      // assigned, have nowhere else to be bucketed for this report's
-      // teacher-grouped rows/summary — grouped under "Unassigned" rather
-      // than silently dropped.
-      const teacherName = halqaTeacher?.teacherName ?? 'Unassigned';
+      // Halqa-scoped mode: every row shares the one teacher already
+      // resolved above. Unscoped mode: students with no halqa membership,
+      // or whose halqa has no teacher assigned, have nowhere else to be
+      // bucketed for this report's teacher-grouped rows/summary — grouped
+      // under "Unassigned" rather than silently dropped.
+      const teacherName = halqaId
+        ? halqaTeacherName!
+        : halqaTeacherByStudent.get(student.id)?.teacherName ?? 'Unassigned';
       const pacing =
         pacingByStudent.get(student.id) ??
         ({ actualProgressPercentage: 0, expectedProgressPercentage: 0 } as const);
@@ -3751,38 +3810,50 @@ export class StudentSurahProgressService {
       grade: r.grade,
     }));
 
-    const byTeacher = new Map<string, { total: number; exceeded: number }>();
-    for (const r of rowEntries) {
-      const entry = byTeacher.get(r.teacherName) ?? { total: 0, exceeded: 0 };
-      entry.total += 1;
-      if (r.grade === 'Excellent') entry.exceeded += 1;
-      byTeacher.set(r.teacherName, entry);
+    // Halqa-scoped mode has only one team in scope, so there's nothing to
+    // summarize across teachers — skip the aggregation entirely rather than
+    // compute a single-row summary nobody asked for (cheaper, and the
+    // Flutter PDF already skips rendering the section when this is empty).
+    let teacherSummaries: {
+      teacher_name: string;
+      total_students: number;
+      exceeded_count: number;
+      team_grade: string;
+    }[] = [];
+    if (!halqaId) {
+      const byTeacher = new Map<string, { total: number; exceeded: number }>();
+      for (const r of rowEntries) {
+        const entry = byTeacher.get(r.teacherName) ?? { total: 0, exceeded: 0 };
+        entry.total += 1;
+        if (r.grade === 'Excellent') entry.exceeded += 1;
+        byTeacher.set(r.teacherName, entry);
+      }
+      const teamGradeFor = (ratio: number): string => {
+        if (ratio >= 1.0) return 'Excellent';
+        if (ratio >= 0.8) return 'Good';
+        if (ratio >= 0.6) return 'Average';
+        return 'Need to Improve';
+      };
+      teacherSummaries = [...byTeacher.entries()]
+        .map(([teacherName, { total, exceeded }]) => ({
+          teacherName,
+          total,
+          exceeded,
+          ratio: total > 0 ? exceeded / total : 0,
+        }))
+        .sort((a, b) => {
+          const rankDiff = GRADE_RANK[teamGradeFor(a.ratio)] - GRADE_RANK[teamGradeFor(b.ratio)];
+          if (rankDiff !== 0) return rankDiff;
+          if (b.ratio !== a.ratio) return b.ratio - a.ratio;
+          return a.teacherName.localeCompare(b.teacherName);
+        })
+        .map((t) => ({
+          teacher_name: t.teacherName,
+          total_students: t.total,
+          exceeded_count: t.exceeded,
+          team_grade: teamGradeFor(t.ratio),
+        }));
     }
-    const teamGradeFor = (ratio: number): string => {
-      if (ratio >= 1.0) return 'Excellent';
-      if (ratio >= 0.8) return 'Good';
-      if (ratio >= 0.6) return 'Average';
-      return 'Need to Improve';
-    };
-    const teacherSummaries = [...byTeacher.entries()]
-      .map(([teacherName, { total, exceeded }]) => ({
-        teacherName,
-        total,
-        exceeded,
-        ratio: total > 0 ? exceeded / total : 0,
-      }))
-      .sort((a, b) => {
-        const rankDiff = GRADE_RANK[teamGradeFor(a.ratio)] - GRADE_RANK[teamGradeFor(b.ratio)];
-        if (rankDiff !== 0) return rankDiff;
-        if (b.ratio !== a.ratio) return b.ratio - a.ratio;
-        return a.teacherName.localeCompare(b.teacherName);
-      })
-      .map((t) => ({
-        teacher_name: t.teacherName,
-        total_students: t.total,
-        exceeded_count: t.exceeded,
-        team_grade: teamGradeFor(t.ratio),
-      }));
 
     const totalStudents = students.length;
     const exceededTarget = rowEntries.filter((r) => r.grade === 'Excellent').length;
@@ -3792,6 +3863,7 @@ export class StudentSurahProgressService {
       status: 'success',
       data: {
         center_name: centerName,
+        teacher_name: halqaId ? halqaTeacherName : null,
         month,
         year,
         working_days: workingDays,

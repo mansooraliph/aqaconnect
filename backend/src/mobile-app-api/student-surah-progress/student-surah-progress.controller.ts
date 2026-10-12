@@ -440,6 +440,7 @@ export class StudentSurahProgressController {
           branchId,
           query.month,
           query.year,
+          query.halqa_id,
         ),
       'Failed to generate center performance report: ',
     );
