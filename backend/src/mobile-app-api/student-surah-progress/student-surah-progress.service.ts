@@ -2960,7 +2960,7 @@ export class StudentSurahProgressService {
     // before) — the new every-school-day bucketing below needs per-day
     // leave data for ALL students up front, not just the ones left over
     // once "has a completed record" was already decided.
-    const [completedRecords, holidays, approvedLeaves] = await Promise.all([
+    const [completedRecords, holidays, approvedLeaves, exams] = await Promise.all([
       this.prisma.studentSurahProgressEntry.findMany({
         where: completedWhere,
         include: { surah: { select: SURAH_SELECT } },
@@ -2984,6 +2984,20 @@ export class StudentSurahProgressService {
             lte: new Date(`${toDate}T23:59:59.999Z`),
           },
         },
+      }),
+      // A day with an exam/Mukammal but no lesson progress shouldn't break
+      // an otherwise-every-day-recited student's Completed status — see
+      // the `coveredOnDay` check below. Doesn't affect the Not Recited
+      // check, which stays about actual lesson recitation.
+      this.prisma.studentExam.findMany({
+        where: {
+          studentId: { in: students.map((s) => s.id) },
+          examDate: {
+            gte: new Date(`${fromDate}T00:00:00.000Z`),
+            lte: new Date(`${toDate}T23:59:59.999Z`),
+          },
+        },
+        select: { studentId: true, examDate: true },
       }),
     ]);
 
@@ -3019,6 +3033,14 @@ export class StudentSurahProgressService {
       if (!firstLeaveByStudent.has(leave.studentId)) {
         firstLeaveByStudent.set(leave.studentId, leave);
       }
+    }
+
+    const examDaysByStudent = new Map<string, Set<string>>();
+    for (const exam of exams) {
+      const d = formatDateOnly(exam.examDate)!;
+      const set = examDaysByStudent.get(exam.studentId) ?? new Set<string>();
+      set.add(d);
+      examDaysByStudent.set(exam.studentId, set);
     }
 
     // True per-ayah line totals (not a flat ayahs/15 approximation) — see
@@ -3125,20 +3147,31 @@ export class StudentSurahProgressService {
       if (types.length === 0) return typesThatDay.size > 0;
       return types.every((t) => typesThatDay.has(t));
     };
+    // A day with an exam/Mukammal but no lesson progress still counts as
+    // "covered" for the every-day Completed check — a student who recited
+    // every day except one, where that one day was an evaluation day
+    // instead, shouldn't be knocked out of Completed over it. Doesn't
+    // affect recitedOnDay/recitedDays, which the Not Recited check below
+    // still uses unchanged (that check is about actual recitation).
+    const coveredOnDay = (studentId: string, day: string): boolean =>
+      recitedOnDay(studentId, day) ||
+      (examDaysByStudent.get(studentId)?.has(day) ?? false);
 
     // Classification, strict and mutually exclusive — a student lands in
     // EXACTLY one of the three buckets, or none at all:
-    //   - Completed: recited on every school day in the range.
+    //   - Completed: recited (or had an exam/Mukammal) on every school day
+    //     in the range.
     //   - On Leave: on approved leave every school day in the range
     //     (checked first — a student on leave the whole range shouldn't
     //     fall through to "Not Recited" just because recitedDays is 0).
     //   - Not Recited: recited on zero school days in the range (whatever
-    //     mix of leave/plain-missed days made up the rest doesn't matter).
+    //     mix of leave/exam/plain-missed days made up the rest doesn't
+    //     matter).
     //   - Partial (recited some days, missed some, not fully covered by
-    //     leave) is deliberately excluded from all three lists — mixing a
-    //     "some days" student into either bucket would misrepresent them
-    //     as fully present or fully absent, which is worse than omitting
-    //     them for a date-range view.
+    //     leave or an exam day) is deliberately excluded from all three
+    //     lists — mixing a "some days" student into either bucket would
+    //     misrepresent them as fully present or fully absent, which is
+    //     worse than omitting them for a date-range view.
     const totalSchoolDays = schoolDays.length;
     const completedList: Record<string, unknown>[] = [];
     const pendingList: Record<string, unknown>[] = [];
@@ -3150,12 +3183,15 @@ export class StudentSurahProgressService {
       const recitedDays = totalSchoolDays === 0
         ? 0
         : schoolDays.filter((day) => recitedOnDay(student.id, day)).length;
+      const coveredDays = totalSchoolDays === 0
+        ? 0
+        : schoolDays.filter((day) => coveredOnDay(student.id, day)).length;
       const leaveDaySet = leaveDaysByStudent.get(student.id);
       const leaveDays = totalSchoolDays === 0
         ? 0
         : schoolDays.filter((day) => leaveDaySet?.has(day)).length;
 
-      if (totalSchoolDays > 0 && recitedDays === totalSchoolDays) {
+      if (totalSchoolDays > 0 && coveredDays === totalSchoolDays) {
         const entry = studentsCompletedMap.get(student.id);
         if (entry) {
           completedList.push({
@@ -3165,6 +3201,19 @@ export class StudentSurahProgressService {
           });
           totalAyahsBucketed += entry.total_ayahs_today as number;
           totalLinesBucketed += trueLinesByStudent.get(student.id) ?? 0;
+        } else {
+          // Every school day covered entirely by exams, with zero actual
+          // lesson progress at all (studentsCompletedMap only has entries
+          // built from completedRecords) — still Completed, just with a
+          // minimal/empty progress summary rather than silently dropped.
+          completedList.push({
+            student: await getBasic(student.id),
+            is_inactive_recent: isInactiveRecent(student.id),
+            lesson_types: [],
+            total_ayahs_today: 0,
+            surahs_completed: [],
+            total_lines_today: 0,
+          });
         }
       } else if (totalSchoolDays > 0 && leaveDays === totalSchoolDays) {
         const leave = firstLeaveByStudent.get(student.id);
