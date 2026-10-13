@@ -115,8 +115,7 @@ function formatDateOnly(date: Date | null | undefined): string | null {
  * result omits the "X page &" prefix entirely rather than showing "0 page".
  */
 function formatPagesLines(pages: number, lines: number): string {
-  const lineLabel = lines === 1 ? '1 Line' : `${lines} Lines`;
-  return pages > 0 ? `${pages} page & ${lineLabel}` : lineLabel;
+  return pages > 0 ? `${pages} P & ${lines} L` : `${lines} L`;
 }
 // Calendar days strictly after `lastDate` up to and including `until`,
 // excluding any date in `holidaySet` (branch holidays + weekly-offs, which
