@@ -3431,7 +3431,14 @@ export class StudentSurahProgressService {
     userId: string,
     query: GetTopStudentsQueryDto,
   ) {
-    const types = query.types ?? [];
+    // Defaults to New Lesson only — the mobile client never sends a types
+    // filter, so this used to silently combine New + Old + Juzh into one
+    // ranking/total ("Top Performing" showed e.g. 605 pages for a student
+    // who'd completed the whole Quran in New Lesson (588) plus some Old
+    // Lesson revision (17) on top, next to another student showing a
+    // flat 588 with no Old Lesson at all — not wrong, but not what was
+    // wanted here). An explicit types filter still overrides this.
+    const types = query.types ?? ['New Lesson'];
     // No cap unless the caller explicitly asks for one — the mobile client
     // never passes this, and capping at 10 silently hid everyone past that
     // from "Top Performing" instead of showing the full ranked list.
