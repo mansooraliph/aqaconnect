@@ -22,12 +22,31 @@ export class CalendarDaysService {
     return { gte: start, lt: end };
   }
 
-  list(branchId: string, academicYearId?: string, month?: number, year?: number) {
-    const dateFilter = this.monthRange(month, year);
+  /**
+   * academicYearId resolves to that academic year's own startDate/endDate
+   * range, not a filter on CalendarDay.academicYearId — most existing rows
+   * were generated before that FK was being set on them (only ~30% of a
+   * typical branch's rows have it populated), so filtering on the FK
+   * directly would silently drop most of a year's days. A date-range lookup
+   * works regardless of whether any given row was ever tagged.
+   */
+  private async resolveDateFilter(branchId: string, academicYearId?: string, month?: number, year?: number) {
+    if (!academicYearId) return this.monthRange(month, year);
+    const academicYear = await this.prisma.academicYear.findFirst({
+      where: { id: academicYearId, branchId },
+      select: { startDate: true, endDate: true },
+    });
+    if (!academicYear) {
+      throw new NotFoundException('Academic year not found');
+    }
+    return { gte: academicYear.startDate, lte: academicYear.endDate };
+  }
+
+  async list(branchId: string, academicYearId?: string, month?: number, year?: number) {
+    const dateFilter = await this.resolveDateFilter(branchId, academicYearId, month, year);
     return this.prisma.calendarDay.findMany({
       where: {
         branchId,
-        ...(academicYearId && { academicYearId }),
         ...(dateFilter && { date: dateFilter }),
       },
       orderBy: { date: 'asc' },
@@ -255,11 +274,10 @@ export class CalendarDaysService {
   }
 
   async stats(branchId: string, academicYearId?: string, month?: number, year?: number) {
-    const dateFilter = this.monthRange(month, year);
+    const dateFilter = await this.resolveDateFilter(branchId, academicYearId, month, year);
     const days = await this.prisma.calendarDay.findMany({
       where: {
         branchId,
-        ...(academicYearId && { academicYearId }),
         ...(dateFilter && { date: dateFilter }),
       },
       select: { isWorkingDay: true, isHoliday: true },
