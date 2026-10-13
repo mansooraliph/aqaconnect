@@ -3940,12 +3940,19 @@ export class StudentSurahProgressService {
     });
 
     // Teacher name alphabetical, then grade-rank within each teacher, then
-    // alphabetical by student name as the final tiebreak.
+    // actual% descending (best performer first) within the same grade band
+    // — alphabetical-by-name was the original tiebreak, but that put a
+    // lower-recited student above a higher-recited one whenever its name
+    // happened to sort first, which read as "wrong order" to anyone
+    // actually comparing performance. Student name is now only the final
+    // tiebreak for an exact percentage tie.
     rowEntries.sort((a, b) => {
       const teacherCompare = a.teacherName.localeCompare(b.teacherName);
       if (teacherCompare !== 0) return teacherCompare;
       const rankDiff = GRADE_RANK[a.grade] - GRADE_RANK[b.grade];
       if (rankDiff !== 0) return rankDiff;
+      const pctDiff = b.actualPercentage - a.actualPercentage;
+      if (pctDiff !== 0) return pctDiff;
       return a.studentName.localeCompare(b.studentName);
     });
 
