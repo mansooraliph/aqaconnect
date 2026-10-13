@@ -335,8 +335,9 @@ export function SurahAyahPageLinesPage() {
         <div className="flex flex-col gap-4">
           <p className="text-sm text-text-muted">
             Upload a spreadsheet with columns <code>Sura No</code>, <code>Sura Name</code>, <code>Ayath No</code>,{' '}
-            <code>Juzh No</code>, <code>Page No</code>, <code>Line No</code>. Importing replaces the entire existing
-            mapping.
+            <code>Juzh No</code>, <code>Page No</code>, <code>Line From</code>, <code>Line To</code> — both line
+            columns are required and used exactly as entered (the starting line is no longer guessed from the
+            previous row). Importing replaces the entire existing mapping.
           </p>
           <Field label="File (.xlsx)" required>
             <input
