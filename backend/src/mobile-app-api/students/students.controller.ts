@@ -100,6 +100,19 @@ export class StudentsController {
     return this.handle(() => this.service.getAllStudents(branchId, search ?? ''), 'Failed to retrieve students');
   }
 
+  @Get('preview-hifdh-start-date/:id')
+  async previewHifdhStartDateChange(
+    @Req() req: AuthedRequest,
+    @Param('id') id: string,
+    @Query('newStartDate') newStartDate: string,
+  ) {
+    const branchId = await this.context.resolveBranchId(req.user.userId);
+    return this.handle(
+      () => this.service.previewHifdhStartDateChange(branchId, id, newStartDate),
+      'Failed to preview reschedule impact',
+    );
+  }
+
   // The client sends this as multipart/form-data (optionally with an `image`
   // file) rather than JSON — see the matching comment on createStudent above.
   @Patch('update/:id')

@@ -273,6 +273,42 @@ export class MobileStudentsService {
     return { ...data, generated_password: dto.password ? null : password };
   }
 
+  /**
+   * Read-only dry run for the reschedule updateStudent triggers when an
+   * already-set Hifdh start date is edited — same delta computation, but
+   * only counts how many of the student's active pending rows would land
+   * before today afterward, without writing anything. Lets the edit screen
+   * warn specifically about a backward shift (which can turn a large chunk
+   * of a schedule overdue overnight) before the admin confirms it.
+   */
+  async previewHifdhStartDateChange(branchId: string, id: string, newStartDate: string) {
+    const existing = await this.prisma.student.findFirst({ where: { id, branchId } });
+    if (!existing) {
+      throw new NotFoundException({ status: 'error', message: 'Student not found' });
+    }
+    if (!existing.hifdhStartDate) {
+      return { wouldBecomeOverdue: 0, totalShifting: 0 };
+    }
+
+    const activeRows = await this.prisma.surahHifdhStudentSchedule.findMany({
+      where: { studentId: id, status: { not: 'COMPLETED' }, rescheduledTo: { none: {} } },
+      orderBy: { scheduledDate: 'asc' },
+      select: { scheduledDate: true },
+    });
+    if (activeRows.length === 0) {
+      return { wouldBecomeOverdue: 0, totalShifting: 0 };
+    }
+
+    const deltaMs = new Date(newStartDate).getTime() - existing.hifdhStartDate.getTime();
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const wouldBecomeOverdue = activeRows.filter(
+      (r) => new Date(r.scheduledDate.getTime() + deltaMs) < todayStart,
+    ).length;
+
+    return { wouldBecomeOverdue, totalShifting: activeRows.length };
+  }
+
   async updateStudent(
     branchId: string,
     userId: string,
@@ -399,6 +435,30 @@ export class MobileStudentsService {
         }
       }
     });
+
+    // Editing an already-set Hifdh start date to a different date means the
+    // student actually started on a different day than their existing
+    // schedule assumes — without this, the schedule itself stays anchored to
+    // the old date while the displayed start date silently disagrees with
+    // it. Shift every remaining pending row by the same delta (old vs new
+    // start date), reusing bulkReschedule's existing holiday-aware shifting
+    // rather than duplicating that logic here. Only fires when there WAS a
+    // prior start date (an edit, not setting it for the first time) and it
+    // actually changed.
+    if (dto.hifdh_start_date && existing.hifdhStartDate) {
+      const oldDateStr = toDateOnly(existing.hifdhStartDate);
+      if (dto.hifdh_start_date !== oldDateStr) {
+        const earliestPending = await this.prisma.surahHifdhStudentSchedule.findFirst({
+          where: { studentId: id, status: { not: 'COMPLETED' }, rescheduledTo: { none: {} } },
+          orderBy: { scheduledDate: 'asc' },
+        });
+        if (earliestPending) {
+          const deltaMs = new Date(dto.hifdh_start_date).getTime() - existing.hifdhStartDate.getTime();
+          const targetDate = new Date(earliestPending.scheduledDate.getTime() + deltaMs);
+          await this.hifdh.bulkReschedule(branchId, [id], toDateOnly(targetDate));
+        }
+      }
+    }
 
     const data = await this.serializeStudent(id);
     return { ...data, generated_password: null };
