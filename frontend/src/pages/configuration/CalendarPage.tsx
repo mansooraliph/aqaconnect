@@ -11,8 +11,17 @@ import { Switch } from '../../components/ui/Switch';
 import { Input, Field } from '../../components/ui/Input';
 import { Modal } from '../../components/ui/Modal';
 import { ConfirmModal } from '../../components/ui/ConfirmModal';
+import { Select } from '../../components/ui/Select';
 import { toast } from '../../components/ui/toast';
 import { BulkRescheduleModal } from '../academic/HifdhTrackingPage';
+
+interface AcademicYear {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+  isCurrent: boolean;
+}
 
 interface CalendarDay {
   id: string;
@@ -42,34 +51,64 @@ export function CalendarPage() {
   const queryClient = useQueryClient();
 
   const [browseYear, setBrowseYear] = useState<string>(String(CURRENT_YEAR));
+  const [viewMode, setViewMode] = useState<'year' | 'academicYear'>('year');
+  const [selectedAcademicYearId, setSelectedAcademicYearId] = useState<string>('');
   const [savingId, setSavingId] = useState<string | null>(null);
 
   // Calendar days come from the Master Calendar publish flow — branches just
   // browse by plain calendar year here, no separate per-branch generate step.
   const effectiveYear = Number(browseYear) || undefined;
 
-  const daysQueryKey = ['calendar-days', activeBranchId, effectiveYear];
+  const academicYearsQuery = useQuery({
+    queryKey: ['academic-years', activeBranchId],
+    queryFn: async () =>
+      (await api.get<AcademicYear[]>(`/branches/${activeBranchId}/academic-years`)).data,
+    enabled: Boolean(activeBranchId),
+  });
+
+  // Defaults to whichever academic year is marked current, once loaded — so
+  // switching to "Academic year" mode doesn't start on an empty dropdown.
+  const effectiveAcademicYearId =
+    selectedAcademicYearId ||
+    academicYearsQuery.data?.find((y) => y.isCurrent)?.id ||
+    academicYearsQuery.data?.[0]?.id ||
+    '';
+
+  // Server resolves academicYearId to that year's own startDate/endDate
+  // range (not a stored tag on each day — most existing rows predate that
+  // tag), so this always reflects the academic year's real date span
+  // regardless of which calendar year(s) it crosses.
+  const dayParams =
+    viewMode === 'academicYear' && effectiveAcademicYearId
+      ? { academicYearId: effectiveAcademicYearId }
+      : { year: effectiveYear };
+
+  const daysQueryKey = ['calendar-days', activeBranchId, viewMode, effectiveYear, effectiveAcademicYearId];
   const daysQuery = useQuery({
     queryKey: daysQueryKey,
     queryFn: async () =>
       (
         await api.get<CalendarDay[]>(`/branches/${activeBranchId}/calendar-days`, {
-          params: { year: effectiveYear },
+          params: dayParams,
         })
       ).data,
-    enabled: Boolean(activeBranchId && effectiveYear),
+    enabled: Boolean(
+      activeBranchId && (viewMode === 'year' ? effectiveYear : effectiveAcademicYearId),
+    ),
   });
 
-  const statsQueryKey = ['calendar-days-stats', activeBranchId, effectiveYear];
+  const statsQueryKey = ['calendar-days-stats', activeBranchId, viewMode, effectiveYear, effectiveAcademicYearId];
   const statsQuery = useQuery({
     queryKey: statsQueryKey,
     queryFn: async () =>
       (
         await api.get<CalendarStats>(`/branches/${activeBranchId}/calendar-days/stats`, {
-          params: { year: effectiveYear },
+          params: dayParams,
         })
       ).data,
-    enabled: Boolean(activeBranchId && effectiveYear),
+    enabled: Boolean(
+      activeBranchId && (viewMode === 'year' ? effectiveYear : effectiveAcademicYearId),
+    ),
   });
 
   const refetchAll = () => {
@@ -362,14 +401,40 @@ export function CalendarPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-[18px] font-bold text-text-primary">Calendar</h1>
         <div className="flex flex-wrap items-end gap-3">
-          <Field label="Calendar year">
-            <Input
-              type="number"
-              className="w-28"
-              value={browseYear}
-              onChange={(e) => setBrowseYear(e.target.value)}
+          <Field label="View by">
+            <Select
+              className="w-40"
+              value={viewMode}
+              onChange={(e) => setViewMode(e.target.value as 'year' | 'academicYear')}
+              options={[
+                { label: 'Calendar year', value: 'year' },
+                { label: 'Academic year', value: 'academicYear' },
+              ]}
             />
           </Field>
+          {viewMode === 'year' ? (
+            <Field label="Calendar year">
+              <Input
+                type="number"
+                className="w-28"
+                value={browseYear}
+                onChange={(e) => setBrowseYear(e.target.value)}
+              />
+            </Field>
+          ) : (
+            <Field label="Academic year">
+              <Select
+                className="w-48"
+                value={effectiveAcademicYearId}
+                onChange={(e) => setSelectedAcademicYearId(e.target.value)}
+                options={(academicYearsQuery.data ?? []).map((y) => ({
+                  label: `${y.name}${y.isCurrent ? ' (current)' : ''}`,
+                  value: y.id,
+                }))}
+                placeholder={academicYearsQuery.isLoading ? 'Loading…' : 'Select academic year'}
+              />
+            </Field>
+          )}
           {canManage && (
             <Button variant="outline" onClick={openAddDay}>
               <Plus className="h-4 w-4" />
@@ -385,7 +450,7 @@ export function CalendarPage() {
         scroll the table to find it.
       </p>
 
-      {effectiveYear && (
+      {(viewMode === 'year' ? effectiveYear : effectiveAcademicYearId) && (
         <>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <StatCard
@@ -405,7 +470,10 @@ export function CalendarPage() {
             />
           </div>
 
-          {canManage && effectiveYear && (
+          {/* "Clear" deletes by plain calendar year on the backend — doesn't
+              map cleanly onto an academic year that can span two calendar
+              years, so it's year-mode only. */}
+          {canManage && viewMode === 'year' && effectiveYear && (
             <div>
               <Button variant="danger" onClick={() => setClearOpen(true)}>
                 <Trash2 className="h-4 w-4" />

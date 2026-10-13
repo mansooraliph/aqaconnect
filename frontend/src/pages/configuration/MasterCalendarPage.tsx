@@ -279,11 +279,9 @@ export function MasterCalendarPage() {
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [selectedBranchIds, setSelectedBranchIds] = useState<string[]>([]);
-  const [publishSummary, setPublishSummary] = useState<PublishSummary | null>(null);
 
   const openPublish = () => {
     setSelectedBranchIds((branchesQuery.data ?? []).filter((b) => b.isActive).map((b) => b.id));
-    setPublishSummary(null);
     setPublishOpen(true);
   };
 
@@ -299,7 +297,6 @@ export function MasterCalendarPage() {
         year,
         branchIds: selectedBranchIds,
       });
-      setPublishSummary(data);
       const totals = data.branches.reduce(
         (acc, b) => ({ created: acc.created + b.created, updated: acc.updated + b.updated, skipped: acc.skipped + b.skipped }),
         { created: 0, updated: 0, skipped: 0 },
@@ -307,6 +304,11 @@ export function MasterCalendarPage() {
       toast.success(
         `Published to ${data.branches.length} branch(es): ${totals.created} created, ${totals.updated} synced, ${totals.skipped} kept as customized`,
       );
+      // Closes on success rather than leaving the result shown inline — the
+      // toast already carries the summary, and conflicts (if any) surface in
+      // their own "Students need rescheduling" modal right after, so there's
+      // nothing left for this one to stay open for.
+      setPublishOpen(false);
 
       // The backend already computes conflicts per branch (its own weekend
       // days count as holidays too, which a shared master-level date list
@@ -751,17 +753,6 @@ export function MasterCalendarPage() {
               ))}
             </div>
           </div>
-
-          {publishSummary && (
-            <div className="rounded-card border border-border p-3 text-xs text-text-muted">
-              <p className="mb-1 font-medium text-text-primary">Result</p>
-              {publishSummary.branches.map((b) => (
-                <p key={b.branchId}>
-                  {b.branchId}: {b.created} created, {b.updated} synced, {b.skipped} kept as customized
-                </p>
-              ))}
-            </div>
-          )}
         </div>
       </Modal>
 
