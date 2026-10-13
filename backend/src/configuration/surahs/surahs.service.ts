@@ -216,26 +216,17 @@ export class SurahsService {
         return { imported: 0 };
       }
 
-      // The sheet's "Line No" is where each ayah ENDS, not where it starts.
-      // An ayah's start line is derived: it continues from wherever the
-      // previous ayah ended (they can share a line), except at a page
-      // boundary, where a new page always starts fresh at line 1. Rows are
-      // in Quran order (as read from the sheet), so a single pass suffices.
-      let prevPageNumber: number | null = null;
-      let prevLineTo = 0;
-      const data = rows.map((r) => {
-        const lineFrom = r.pageNumber === prevPageNumber ? prevLineTo : 1;
-        prevPageNumber = r.pageNumber;
-        prevLineTo = r.lineNo;
-        return {
-          surahId: surahIdByNumber.get(r.surahNumber)!,
-          ayahNumber: r.ayahNumber,
-          juzNumber: r.juzNumber,
-          quranPageId: pageIdByNumber.get(r.pageNumber)!,
-          lineFrom,
-          lineTo: r.lineNo,
-        };
-      });
+      // lineFrom/lineTo come straight from the sheet now — see
+      // parseSurahAyahPageLineWorkbook's doc comment for why this no
+      // longer infers lineFrom from the previous row.
+      const data = rows.map((r) => ({
+        surahId: surahIdByNumber.get(r.surahNumber)!,
+        ayahNumber: r.ayahNumber,
+        juzNumber: r.juzNumber,
+        quranPageId: pageIdByNumber.get(r.pageNumber)!,
+        lineFrom: r.lineFrom,
+        lineTo: r.lineTo,
+      }));
 
       await tx.surahAyahPageLine.createMany({ data });
       return { imported: rows.length };
