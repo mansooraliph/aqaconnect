@@ -440,23 +440,19 @@ export class MobileStudentsService {
     // student actually started on a different day than their existing
     // schedule assumes — without this, the schedule itself stays anchored to
     // the old date while the displayed start date silently disagrees with
-    // it. Shift every remaining pending row by the same delta (old vs new
-    // start date), reusing bulkReschedule's existing holiday-aware shifting
-    // rather than duplicating that logic here. Only fires when there WAS a
-    // prior start date (an edit, not setting it for the first time) and it
-    // actually changed.
+    // it. Re-anchor the earliest remaining pending row directly onto the new
+    // typed date (bulkReschedule shifts everything after it by the same
+    // amount, preserving relative spacing) — NOT a delta computed from the
+    // old hifdhStartDate field, which silently breaks the moment anything
+    // else (e.g. a branch-wide Master Calendar publish) has already moved
+    // the student's schedule independently of that field, leaving the old
+    // field value stale relative to where the schedule actually sits. Only
+    // fires when there WAS a prior start date (an edit, not setting it for
+    // the first time) and it actually changed.
     if (dto.hifdh_start_date && existing.hifdhStartDate) {
       const oldDateStr = toDateOnly(existing.hifdhStartDate);
       if (dto.hifdh_start_date !== oldDateStr) {
-        const earliestPending = await this.prisma.surahHifdhStudentSchedule.findFirst({
-          where: { studentId: id, status: { not: 'COMPLETED' }, rescheduledTo: { none: {} } },
-          orderBy: { scheduledDate: 'asc' },
-        });
-        if (earliestPending) {
-          const deltaMs = new Date(dto.hifdh_start_date).getTime() - existing.hifdhStartDate.getTime();
-          const targetDate = new Date(earliestPending.scheduledDate.getTime() + deltaMs);
-          await this.hifdh.bulkReschedule(branchId, [id], toDateOnly(targetDate));
-        }
+        await this.hifdh.bulkReschedule(branchId, [id], dto.hifdh_start_date);
       }
     }
 
