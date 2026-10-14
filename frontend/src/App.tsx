@@ -17,6 +17,7 @@ import { TargetSchedulesPage } from './pages/configuration/TargetSchedulesPage';
 import { CalendarPage } from './pages/configuration/CalendarPage';
 import { MasterCalendarPage } from './pages/configuration/MasterCalendarPage';
 import { BranchSettingsPage } from './pages/configuration/BranchSettingsPage';
+import { TeacherGradingThresholdsPage } from './pages/configuration/TeacherGradingThresholdsPage';
 import { DepartmentsDesignationsPage } from './pages/hr/DepartmentsDesignationsPage';
 import { EmployeesPage } from './pages/hr/EmployeesPage';
 import { TeachersPage } from './pages/hr/TeachersPage';
@@ -74,6 +75,7 @@ function App() {
           <Route path="/configuration/target-schedules" element={<TargetSchedulesPage />} />
           <Route path="/configuration/calendar" element={<CalendarPage />} />
           <Route path="/configuration/master-calendar" element={<MasterCalendarPage />} />
+          <Route path="/configuration/teacher-grading-thresholds" element={<TeacherGradingThresholdsPage />} />
           <Route path="/configuration/settings" element={<BranchSettingsPage />} />
 
           <Route path="/hr/departments" element={<DepartmentsDesignationsPage />} />

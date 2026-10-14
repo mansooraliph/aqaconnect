@@ -83,6 +83,11 @@ export const MODULES: ModuleDef[] = [
         sectionLabel: 'Masters',
       },
       { key: '/configuration/master-calendar', label: 'Master Calendar', permission: 'master_calendar.manage' },
+      {
+        key: '/configuration/teacher-grading-thresholds',
+        label: 'Teacher Grading Thresholds',
+        permission: 'teacher_grading_thresholds.manage',
+      },
     ],
   },
   {
