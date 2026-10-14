@@ -448,6 +448,22 @@ model MasterAcademicYear {
   publishedYears AcademicYear[]
 }
 
+// Global, branch-agnostic Super Admin setting: the ratio cutoffs used by
+// getCenterPerformanceReport's teamGradeFor to grade a teacher's own
+// performance (fraction of their students individually graded "Excellent").
+// Singleton table — exactly one row is ever expected to exist; the service
+// layer does a findFirst()-or-create() rather than relying on a fixed id, to
+// match this codebase's other global-settings access pattern (no existing
+// precedent otherwise mandates a fixed id).
+model TeacherGradingThresholds {
+  id           String   @id @default(cuid())
+  excellentMin Float    @default(1.0)
+  goodMin      Float    @default(0.7)
+  averageMin   Float    @default(0.4)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
 model AcademicClass {
   id              String       @id @default(cuid())
   branchId        String

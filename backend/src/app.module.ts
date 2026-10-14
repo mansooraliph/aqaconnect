@@ -25,6 +25,7 @@ import { CalendarDaysModule } from './configuration/calendar-days/calendar-days.
 import { MasterCalendarModule } from './configuration/master-calendar/master-calendar.module';
 import { LeaderboardModule } from './public/leaderboard/leaderboard.module';
 import { MasterAcademicYearsModule } from './configuration/master-academic-years/master-academic-years.module';
+import { TeacherGradingThresholdsModule } from './configuration/teacher-grading-thresholds/teacher-grading-thresholds.module';
 import { DepartmentsModule } from './hr/departments/departments.module';
 import { DesignationsModule } from './hr/designations/designations.module';
 import { EmployeesModule } from './hr/employees/employees.module';
@@ -102,6 +103,7 @@ import { BiometricDevicesModule } from './biometric-devices/biometric-devices.mo
     MasterCalendarModule,
     LeaderboardModule,
     MasterAcademicYearsModule,
+    TeacherGradingThresholdsModule,
     DepartmentsModule,
     DesignationsModule,
     EmployeesModule,

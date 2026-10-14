@@ -3994,10 +3994,21 @@ export class StudentSurahProgressService {
         if (r.grade === 'Excellent') entry.exceeded += 1;
         byTeacher.set(r.teacherName, entry);
       }
+      // Admin-configurable (Super Admin, via TeacherGradingThresholdsController)
+      // global ratio cutoffs, queried directly here rather than through an
+      // injected TeacherGradingThresholdsService — this method has no other
+      // reason to depend on the `configuration` module tree, and a direct
+      // singleton-row lookup is simpler than wiring up a new module import
+      // for one field read. Falls back to the Prisma model's own defaults
+      // (1.0/0.7/0.4) if no row has been created yet.
+      const thresholds = await this.prisma.teacherGradingThresholds.findFirst();
+      const excellentMin = thresholds?.excellentMin ?? 1.0;
+      const goodMin = thresholds?.goodMin ?? 0.7;
+      const averageMin = thresholds?.averageMin ?? 0.4;
       const teamGradeFor = (ratio: number): string => {
-        if (ratio >= 1.0) return 'Excellent';
-        if (ratio >= 0.8) return 'Good';
-        if (ratio >= 0.6) return 'Average';
+        if (ratio >= excellentMin) return 'Excellent';
+        if (ratio >= goodMin) return 'Good';
+        if (ratio >= averageMin) return 'Average';
         return 'Need to Improve';
       };
       teacherSummaries = [...byTeacher.entries()]

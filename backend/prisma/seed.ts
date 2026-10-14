@@ -83,6 +83,13 @@ const PERMISSIONS: { key: string; module: string; description: string }[] = [
   // grant must not include it.
   { key: 'master_academic_years.view', module: 'master_academic_years', description: 'View the common academic years Super Admin maintains across all branches' },
   { key: 'master_academic_years.manage', module: 'master_academic_years', description: 'Create/edit common academic years and publish them to branches' },
+
+  // Teacher Grading Thresholds — same standalone-module convention as
+  // master_academic_years/master_calendar, for the same reason: Super Admin
+  // only by default, Management gets .view explicitly, Branch Admin's broad
+  // configuration grant must not include it.
+  { key: 'teacher_grading_thresholds.view', module: 'teacher_grading_thresholds', description: 'View the Center Performance Report teacher-grading ratio cutoffs' },
+  { key: 'teacher_grading_thresholds.manage', module: 'teacher_grading_thresholds', description: 'Edit the Center Performance Report teacher-grading ratio cutoffs' },
   { key: 'configuration.branch_settings.view', module: 'configuration', description: 'View branch settings' },
   { key: 'configuration.branch_settings.manage', module: 'configuration', description: 'Manage branch settings' },
 
@@ -187,6 +194,7 @@ const ROLES: {
       'system.mobile_api.view',
       'master_calendar.view',
       'master_academic_years.view',
+      'teacher_grading_thresholds.view',
       ...PERMISSIONS.filter(
         (p) =>
           ['configuration', 'hr', 'student_management', 'fees', 'academic', 'devices'].includes(p.module) &&
