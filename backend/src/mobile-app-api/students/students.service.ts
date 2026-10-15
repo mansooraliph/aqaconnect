@@ -1386,10 +1386,13 @@ export class MobileStudentsService {
     const sortedDates = [...activitiesByDate.keys()].sort();
     const activities = sortedDates.map((date) => ({ date, activities: activitiesByDate.get(date) }));
 
-    // True New Lesson line total for the range (not a flat ayahs/15
-    // approximation) — see StudentSurahProgressService.computeTrueLinesByStudent's
-    // doc comment for why adjacent ayah entries are merged before counting.
-    const newLessonLinesEntries = surahProgressEntries
+    // Real page-completion for the range (not a flat ayahs/15 or lines/15
+    // approximation) — see
+    // StudentSurahProgressService.countPageCompletionByStudent's doc
+    // comment for why "pages" is a count of fully-covered physical pages
+    // (each page's own real content total, not a flat 15) and "lines" is
+    // leftover progress on pages not yet complete.
+    const newLessonPagesEntries = surahProgressEntries
       .filter((e): e is typeof e & { surahId: string; fromAyah: number; toAyah: number } => {
         const at = e.verifiedAt ?? e.completedAt;
         return (
@@ -1403,7 +1406,7 @@ export class MobileStudentsService {
         );
       })
       .map((e) => ({ studentId, surahId: e.surahId, fromAyah: e.fromAyah, toAyah: e.toAyah }));
-    const newLessonLinesByStudent = await this.surahProgress.computeTrueLinesByStudent(newLessonLinesEntries);
+    const newLessonCompletion = await this.surahProgress.countPageCompletionByStudent(newLessonPagesEntries);
 
     return {
       status: 'success',
@@ -1416,7 +1419,8 @@ export class MobileStudentsService {
         },
         center_name: centerName,
         date_range: { start: toDateOnly(start), end: toDateOnly(end) },
-        new_lesson_lines_total: newLessonLinesByStudent.get(studentId) ?? 0,
+        new_lesson_pages_total: newLessonCompletion.pages.get(studentId) ?? 0,
+        new_lesson_lines_total: newLessonCompletion.lines.get(studentId) ?? 0,
         activities,
       },
     };

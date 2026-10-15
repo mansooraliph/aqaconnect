@@ -105,16 +105,15 @@ function formatDateOnly(date: Date | null | undefined): string | null {
   return date.toISOString().slice(0, 10);
 }
 /**
- * "X page & Y Lines" display for a {pages, lines} split (see toPagesLines in
- * getTopStudents, replicated locally in getCenterPerformanceReport). No
- * existing page/line display-string formatter was found elsewhere in the
- * backend — every other call site (e.g. top_students_screen.dart) renders
- * the raw pages/lines numbers itself — so this is new, added specifically
- * for the Center Performance Report's "New Lesson" column. Lines are always
- * pluralized ("4 Lines") except the literal singular "1 Line"; a 0-page
- * result omits the "X page &" prefix entirely rather than showing "0 page".
+ * "X P & Y L" display for a real page-completion split (see
+ * countPageCompletion) — used by the Center Performance Report's "New
+ * Lesson" column. `pages` is a count of fully-covered physical pages
+ * (each page's own real content total, not a flat 15); `lines` is
+ * leftover progress on pages not yet complete — never double-counted
+ * with a complete page's own lines. A 0-page result omits the "X P &"
+ * prefix entirely rather than showing "0 P".
  */
-function formatPagesLines(pages: number, lines: number): string {
+function formatPagesDisplay(pages: number, lines: number): string {
   return pages > 0 ? `${pages} P & ${lines} L` : `${lines} L`;
 }
 // Calendar days strictly after `lastDate` up to and including `until`,
@@ -1920,63 +1919,46 @@ export class StudentSurahProgressService {
   }
 
   /**
-   * True completed-line totals per student from real SurahAyahPageLine
-   * spans, not a flat ayahs/15 approximation. Consecutive ayahs often share
-   * a boundary line (ayah N's lineTo === ayah N+1's lineFrom), so each
-   * student's ranges are merged into contiguous blocks first — otherwise
-   * summing every ayah's own span independently double-counts every
-   * shared line (see getTopStudents, which this mirrors).
+   * Real physical-page completion, grouped by caller-supplied key:
+   * `pages` = count of physical Mushaf pages (of 604) where the student
+   * has covered literally every real ayah-text line that page contains;
+   * `lines` = sum of covered lines on the pages that are NOT yet fully
+   * covered (so a complete page's lines never get double-counted into
+   * `lines` too).
    *
-   * Crucially, that merge runs across surah boundaries too, not just
-   * within one surah: a surah's last ayah and the next surah's first ayah
-   * can land on the very same physical Mushaf line (common with short
-   * Juz-Amma surahs, which often open and close mid-line) — e.g. Abasa's
-   * last ayah and At-Takwir's first ayah can both sit on page 586 line 1.
-   * Treating each surah's range independently (as an earlier version of
-   * this did) counted that shared line once for each surah, inflating any
-   * total spanning multiple complete, sequential surahs. Two ranges are
-   * only merged across a surah boundary when the first reaches that
-   * surah's very last ayah and the second starts at the next surah's
-   * ayah 1 — a partial surah never merges across its own boundary.
-   *
-   * A merged block can itself straddle two Mushaf pages (e.g. ayah 30 ends
-   * page 421, ayah 31 starts page 422) — line numbers reset on the new
-   * page, so naively measuring the whole block as
-   * (lastAyah.lineTo - firstAyah.lineFrom + 1) produces nonsense once the
-   * numbers wrap. Each block is further split at page boundaries, and each
-   * resulting same-page run is measured independently, before summing.
+   * Crucially, a page's "every real line" is NOT a flat 15 — most pages
+   * carry 2-3 short Surahs together, and each Surah transition eats one
+   * or more lines for its name/Bismillah header, so the real content total
+   * on a given page is often 9-11 lines, never 15. Comparing a student's
+   * coverage against a flat 15 both (a) called genuinely-finished pages
+   * "incomplete" forever (no one can ever fill a header line with ayah
+   * text) and (b) couldn't tell a true header gap apart from a real
+   * not-yet-recited Surah sitting in the same gap — e.g. page 601 carries
+   * Al-Asr + Al-Humazah + Al-Fil; a student who's done Al-Asr and Al-Fil
+   * but not Al-Humazah has a 3-line gap that is REAL pending content, not
+   * header space, and the flat-15 version couldn't distinguish that from
+   * the page's own genuine ceiling of 9 real lines (the other 6 "missing"
+   * lines are pure margin/header, unreachable by anyone, ever). Per-page
+   * real-content totals are computed fresh each call (one groupBy over
+   * the whole SurahAyahPageLine table — 6236 rows, cheap, and this data
+   * only changes via the admin import), not hardcoded, since an import
+   * correction should immediately take effect without a redeploy.
    */
-  /** Public: reused by StudentsService's activity-report (see buildActivityTimeline). */
-  async computeTrueLinesByStudent(
-    entries: { studentId: string; surahId: string; fromAyah: number; toAyah: number }[],
-  ): Promise<Map<string, number>> {
-    return this.computeTrueLines(entries.map((e) => ({ groupKey: e.studentId, ...e })));
-  }
-
-  /**
-   * Same as computeTrueLinesByStudent, grouped by an arbitrary caller-
-   * supplied key instead of always studentId — e.g. getTopStudents groups
-   * by `${studentId}|${type}` to get a per-lesson-type breakdown, then sums
-   * each student's type totals for their overall total (types are disjoint
-   * activities, so summing is correct — no cross-type deduping needed).
-   */
-  async computeTrueLines(
+  async countPageCompletion(
     entries: { groupKey: string; surahId: string; fromAyah: number; toAyah: number }[],
-  ): Promise<Map<string, number>> {
+  ): Promise<{ pages: Map<string, number>; lines: Map<string, number> }> {
     const uniqueSurahIds = [...new Set(entries.map((e) => e.surahId))];
-    const [pageLines, surahs] = await Promise.all([
+    const [pageLines, pageMaxLines] = await Promise.all([
       uniqueSurahIds.length
         ? this.prisma.surahAyahPageLine.findMany({
             where: { surahId: { in: uniqueSurahIds } },
             select: { surahId: true, ayahNumber: true, quranPageId: true, lineFrom: true, lineTo: true },
           })
         : Promise.resolve([]),
-      uniqueSurahIds.length
-        ? this.prisma.surah.findMany({
-            where: { id: { in: uniqueSurahIds } },
-            select: { id: true, number: true, totalAyahs: true },
-          })
-        : Promise.resolve([]),
+      this.prisma.surahAyahPageLine.groupBy({
+        by: ['quranPageId'],
+        _max: { lineTo: true },
+      }),
     ]);
     const lineInfoOf = new Map<
       string,
@@ -1989,120 +1971,45 @@ export class StudentSurahProgressService {
         lineTo: pl.lineTo,
       });
     }
-    // Surah number <-> id/totalAyahs — needed to detect "this range reaches
-    // the very end of its surah" and "the next range starts the very next
-    // surah", the only condition under which a merge is allowed to cross a
-    // surah boundary.
-    const surahIdByNumber = new Map<number, string>();
-    const totalAyahsByNumber = new Map<number, number>();
-    const numberBySurahId = new Map<string, number>();
-    for (const s of surahs) {
-      surahIdByNumber.set(s.number, s.id);
-      totalAyahsByNumber.set(s.number, s.totalAyahs);
-      numberBySurahId.set(s.id, s.number);
-    }
+    // Real total content-line count per physical page, across EVERY surah
+    // that lands on it (not just the ones in `entries`) — a page's true
+    // ceiling, not a flat 15.
+    const realMaxByPage = new Map(pageMaxLines.map((p) => [p.quranPageId, p._max.lineTo ?? 15]));
 
-    type Range = { surahNumber: number; fromAyah: number; toAyah: number };
-    type MergedBlock = { startSurah: number; startAyah: number; endSurah: number; endAyah: number };
-    const mergeRanges = (ranges: Range[]): MergedBlock[] => {
-      const sorted = [...ranges].sort((a, b) =>
-        a.surahNumber !== b.surahNumber ? a.surahNumber - b.surahNumber : a.fromAyah - b.fromAyah,
-      );
-      const merged: MergedBlock[] = [];
-      for (const r of sorted) {
-        const last = merged[merged.length - 1];
-        if (last) {
-          if (r.surahNumber === last.endSurah && r.fromAyah <= last.endAyah + 1) {
-            last.endAyah = Math.max(last.endAyah, r.toAyah);
-            continue;
-          }
-          const lastSurahTotal = totalAyahsByNumber.get(last.endSurah);
-          if (
-            r.surahNumber === last.endSurah + 1 &&
-            r.fromAyah === 1 &&
-            lastSurahTotal !== undefined &&
-            last.endAyah === lastSurahTotal
-          ) {
-            last.endSurah = r.surahNumber;
-            last.endAyah = r.toAyah;
-            continue;
-          }
-        }
-        merged.push({
-          startSurah: r.surahNumber,
-          startAyah: r.fromAyah,
-          endSurah: r.surahNumber,
-          endAyah: r.toAyah,
-        });
-      }
-      return merged;
-    };
-
-    // Walks a (possibly multi-surah) merged block ayah-by-ayah in canonical
-    // Quran order, closing out (and counting) the current same-page run
-    // every time the page changes (or page data is missing).
-    const linesForMergedBlock = (
-      startSurah: number,
-      startAyah: number,
-      endSurah: number,
-      endAyah: number,
-    ): number => {
-      let lines = 0;
-      let runPageId: string | null = null;
-      let runStart: { lineFrom: number } | null = null;
-      let runEnd: { lineTo: number } | null = null;
-      const closeRun = () => {
-        if (runStart && runEnd) lines += runEnd.lineTo - runStart.lineFrom + 1;
-        runPageId = null;
-        runStart = null;
-        runEnd = null;
-      };
-      for (let surahNumber = startSurah; surahNumber <= endSurah; surahNumber++) {
-        const surahId = surahIdByNumber.get(surahNumber);
-        const from = surahNumber === startSurah ? startAyah : 1;
-        const to = surahNumber === endSurah ? endAyah : totalAyahsByNumber.get(surahNumber);
-        if (!surahId || to === undefined) {
-          closeRun();
-          lines += 1; // missing surah data: degrade gracefully
-          continue;
-        }
-        for (let ayah = from; ayah <= to; ayah++) {
-          const info = lineInfoOf.get(`${surahId}:${ayah}`);
-          if (!info) {
-            closeRun();
-            lines += 1; // missing data: degrade gracefully, 1 line for this ayah
-            continue;
-          }
-          if (runPageId !== null && info.quranPageId !== runPageId) closeRun();
-          if (runPageId === null) {
-            runPageId = info.quranPageId;
-            runStart = { lineFrom: info.lineFrom };
-          }
-          runEnd = { lineTo: info.lineTo };
-        }
-      }
-      closeRun();
-      return lines;
-    };
-
-    const rangesByGroup = new Map<string, Range[]>();
+    const coveredByGroupPage = new Map<string, Map<string, Set<number>>>();
     for (const e of entries) {
-      const surahNumber = numberBySurahId.get(e.surahId);
-      if (surahNumber === undefined) continue; // surah lookup failed — skip rather than guess
-      const ranges = rangesByGroup.get(e.groupKey) ?? [];
-      ranges.push({ surahNumber, fromAyah: e.fromAyah, toAyah: e.toAyah });
-      rangesByGroup.set(e.groupKey, ranges);
+      const pageMap = coveredByGroupPage.get(e.groupKey) ?? new Map<string, Set<number>>();
+      for (let ayah = e.fromAyah; ayah <= e.toAyah; ayah++) {
+        const info = lineInfoOf.get(`${e.surahId}:${ayah}`);
+        if (!info) continue;
+        const lines = pageMap.get(info.quranPageId) ?? new Set<number>();
+        for (let l = info.lineFrom; l <= info.lineTo; l++) lines.add(l);
+        pageMap.set(info.quranPageId, lines);
+      }
+      coveredByGroupPage.set(e.groupKey, pageMap);
     }
-    const totalByGroup = new Map<string, number>();
-    for (const [groupKey, ranges] of rangesByGroup) {
-      const merged = mergeRanges(ranges);
-      const total = merged.reduce(
-        (sum, m) => sum + linesForMergedBlock(m.startSurah, m.startAyah, m.endSurah, m.endAyah),
-        0,
-      );
-      totalByGroup.set(groupKey, total);
+
+    const pagesByGroup = new Map<string, number>();
+    const linesByGroup = new Map<string, number>();
+    for (const [groupKey, pageMap] of coveredByGroupPage) {
+      let completePages = 0;
+      let partialLines = 0;
+      for (const [pageId, lines] of pageMap) {
+        const realMax = realMaxByPage.get(pageId) ?? 15;
+        if (lines.size >= realMax) completePages++;
+        else partialLines += lines.size;
+      }
+      pagesByGroup.set(groupKey, completePages);
+      linesByGroup.set(groupKey, partialLines);
     }
-    return totalByGroup;
+    return { pages: pagesByGroup, lines: linesByGroup };
+  }
+
+  /** Public: by-student convenience wrapper, reused by StudentsService's activity-report (see buildActivityTimeline). */
+  async countPageCompletionByStudent(
+    entries: { studentId: string; surahId: string; fromAyah: number; toAyah: number }[],
+  ): Promise<{ pages: Map<string, number>; lines: Map<string, number> }> {
+    return this.countPageCompletion(entries.map((e) => ({ groupKey: e.studentId, ...e })));
   }
 
   /** Public: reused by other mobile-api services (e.g. exam report) that need the same teacher/halqa/student scoping. */
@@ -3054,10 +2961,11 @@ export class StudentSurahProgressService {
       examDaysByStudent.set(exam.studentId, set);
     }
 
-    // True per-ayah line totals (not a flat ayahs/15 approximation) — see
-    // computeTrueLinesByStudent's doc comment for why this merges ranges
-    // per surah before counting instead of summing each record's own span.
-    const trueLinesByStudent = await this.computeTrueLinesByStudent(
+    // Real page-completion (not a flat ayahs/15 or lines/15 approximation)
+    // — see countPageCompletionByStudent's doc comment for why "pages" is
+    // a count of fully-covered physical pages, and "lines" is leftover
+    // progress on pages not yet complete.
+    const trueCompletion = await this.countPageCompletionByStudent(
       completedRecords
         .filter(
           (r): r is typeof r & { surahId: string; fromAyah: number; toAyah: number } =>
@@ -3199,6 +3107,7 @@ export class StudentSurahProgressService {
     const pendingList: Record<string, unknown>[] = [];
     const onLeaveList: Record<string, unknown>[] = [];
     let totalAyahsBucketed = 0;
+    let totalPagesBucketed = 0;
     let totalLinesBucketed = 0;
 
     for (const student of students) {
@@ -3219,10 +3128,12 @@ export class StudentSurahProgressService {
           completedList.push({
             ...entry,
             lesson_types: [...(entry.lesson_types as Map<string, unknown>).values()],
-            total_lines_today: trueLinesByStudent.get(student.id) ?? 0,
+            total_pages_today: trueCompletion.pages.get(student.id) ?? 0,
+            total_lines_today: trueCompletion.lines.get(student.id) ?? 0,
           });
           totalAyahsBucketed += entry.total_ayahs_today as number;
-          totalLinesBucketed += trueLinesByStudent.get(student.id) ?? 0;
+          totalPagesBucketed += trueCompletion.pages.get(student.id) ?? 0;
+          totalLinesBucketed += trueCompletion.lines.get(student.id) ?? 0;
         } else {
           // Every school day covered entirely by exams, with zero actual
           // lesson progress at all (studentsCompletedMap only has entries
@@ -3234,6 +3145,7 @@ export class StudentSurahProgressService {
             lesson_types: [],
             total_ayahs_today: 0,
             surahs_completed: [],
+            total_pages_today: 0,
             total_lines_today: 0,
           });
         }
@@ -3268,6 +3180,7 @@ export class StudentSurahProgressService {
         completed: {
           total_students: completedList.length,
           total_ayahs_marked: totalAyahsBucketed,
+          total_pages_marked: totalPagesBucketed,
           total_lines_marked: totalLinesBucketed,
           students: completedList,
         },
@@ -3681,48 +3594,49 @@ export class StudentSurahProgressService {
     }
     const studentById = new Map(winnerStudents.map((s) => [s.id, s]));
 
-    // Real per-ayah line lookup (SurahAyahPageLine — same table
-    // /configuration/surah-ayah-page-lines manages), not a flat ayahs/15
-    // approximation: some ayahs are one Mushaf line, others span several,
-    // so two students with the same ayah count can have completed very
-    // different amounts of actual page content. Grouped by
-    // `${studentId}|${type}` to get computeTrueLines' per-group merged-block
-    // line count as a type breakdown directly; each student's overall total
-    // is just the sum of their own type groups (types are disjoint
-    // activities, so no cross-type deduping is needed).
-    const lineEntries = ayahEntriesForLines
+    // Real page-completion lookup (SurahAyahPageLine — same table
+    // /configuration/surah-ayah-page-lines manages) — see
+    // countPageCompletion's doc comment for why "pages" is a count of
+    // fully-covered physical pages (each page's own real content total,
+    // not a flat 15) and "lines" is leftover progress on pages not yet
+    // complete. Per-type breakdown needs its own grouping
+    // (`${studentId}|${type}`) rather than being derived by summing from
+    // the overall total, since the SAME physical page can legitimately
+    // appear under more than one type (e.g. a page revised as Old Lesson
+    // that was also where New Lesson left off).
+    const pageEntries = ayahEntriesForLines
       .filter(
         (e): e is typeof e & { surahId: string; fromAyah: number; toAyah: number } =>
           e.surahId !== null && e.fromAyah !== null && e.toAyah !== null,
       )
-      .map((e) => ({
-        groupKey: `${e.studentId}|${e.type ?? ''}`,
-        surahId: e.surahId,
-        fromAyah: e.fromAyah,
-        toAyah: e.toAyah,
-      }));
-    const linesByStudentType = await this.computeTrueLines(lineEntries);
+      .map((e) => ({ studentId: e.studentId, type: e.type ?? '', surahId: e.surahId, fromAyah: e.fromAyah, toAyah: e.toAyah }));
+    const [overall, byType] = await Promise.all([
+      this.countPageCompletion(pageEntries.map((e) => ({ groupKey: e.studentId, ...e }))),
+      this.countPageCompletion(pageEntries.map((e) => ({ groupKey: `${e.studentId}|${e.type}`, ...e }))),
+    ]);
+    const totalPagesByStudent = overall.pages;
+    const totalLinesByStudent = overall.lines;
 
-    const totalLinesByStudent = new Map<string, number>();
+    const typePagesByStudent = new Map<string, Map<string, number>>();
     const typeLinesByStudent = new Map<string, Map<string, number>>();
-    for (const [groupKey, lines] of linesByStudentType) {
+    for (const [groupKey, pages] of byType.pages) {
       const sep = groupKey.indexOf('|');
       const studentId = groupKey.slice(0, sep);
       const type = groupKey.slice(sep + 1);
-      totalLinesByStudent.set(studentId, (totalLinesByStudent.get(studentId) ?? 0) + lines);
-      if (type) {
-        const perType = typeLinesByStudent.get(studentId) ?? new Map<string, number>();
-        perType.set(type, (perType.get(type) ?? 0) + lines);
-        typeLinesByStudent.set(studentId, perType);
-      }
+      if (!type) continue;
+      const perType = typePagesByStudent.get(studentId) ?? new Map<string, number>();
+      perType.set(type, pages);
+      typePagesByStudent.set(studentId, perType);
     }
-    // 15 lines per Mushaf page (QuranPage.lineCount's default and the
-    // overwhelming majority of real pages) to turn a true line total into
-    // pages + remainder lines.
-    const toPagesLines = (lines: number) => ({
-      pages: Math.trunc(lines / 15),
-      lines: lines % 15,
-    });
+    for (const [groupKey, lines] of byType.lines) {
+      const sep = groupKey.indexOf('|');
+      const studentId = groupKey.slice(0, sep);
+      const type = groupKey.slice(sep + 1);
+      if (!type) continue;
+      const perType = typeLinesByStudent.get(studentId) ?? new Map<string, number>();
+      perType.set(type, lines);
+      typeLinesByStudent.set(studentId, perType);
+    }
 
     const topStudents = await Promise.all(
       topRanked.map(async (r) => {
@@ -3730,6 +3644,7 @@ export class StudentSurahProgressService {
         const halqaTeacher = halqaTeacherByStudent.get(r.studentId);
         const entryTypeCounts = typesByStudent.get(r.studentId) ?? new Map();
         const entryTypeAyahs = typeAyahMap.get(r.studentId) ?? new Map();
+        const entryTypePages = typePagesByStudent.get(r.studentId) ?? new Map();
         const entryTypeLines = typeLinesByStudent.get(r.studentId) ?? new Map();
         const entryTypeDays = daysByStudentType.get(r.studentId) ?? new Map();
         const lessonTypes = [...entryTypeCounts.entries()].map(([type, count]) => {
@@ -3737,7 +3652,8 @@ export class StudentSurahProgressService {
           return {
             type: TYPE_TO_LEGACY[type as keyof typeof TYPE_TO_LEGACY] ?? type,
             total_ayahs: ayahs,
-            ...toPagesLines(entryTypeLines.get(type) ?? 0),
+            pages: entryTypePages.get(type) ?? 0,
+            lines: entryTypeLines.get(type) ?? 0,
             days: entryTypeDays.get(type)?.size ?? 0,
             entries_count: count,
           };
@@ -3751,7 +3667,8 @@ export class StudentSurahProgressService {
             ? await this.formatStudentBasic(student)
             : { id: r.studentId },
           total_ayahs: r.totalAyahs,
-          ...toPagesLines(totalLinesByStudent.get(r.studentId) ?? 0),
+          pages: totalPagesByStudent.get(r.studentId) ?? 0,
+          lines: totalLinesByStudent.get(r.studentId) ?? 0,
           total_entries: entryCountMap.get(r.studentId) ?? 0,
           lesson_types: lessonTypes,
           surahs_completed: surahsCompleted,
@@ -3892,20 +3809,14 @@ export class StudentSurahProgressService {
       }),
     ]);
 
-    // True completed-line totals (see computeTrueLinesByStudent) for this
+    // Real page-completion (see countPageCompletionByStudent) for this
     // calendar month's New Lesson entries only, per student.
-    const newLessonLinesByStudent = await this.computeTrueLinesByStudent(
+    const newLessonCompletion = await this.countPageCompletionByStudent(
       newLessonEntries.filter(
         (e): e is typeof e & { surahId: string; fromAyah: number; toAyah: number } =>
           e.surahId !== null && e.fromAyah !== null && e.toAyah !== null,
       ),
     );
-    // 15 lines per Mushaf page — same formula as getTopStudents' local
-    // toPagesLines (a closure there, not a shared/reusable method).
-    const toPagesLines = (lines: number) => ({
-      pages: Math.trunc(lines / 15),
-      lines: lines % 15,
-    });
 
     const GRADE_RANK: Record<string, number> = {
       Excellent: 0,
@@ -3934,12 +3845,13 @@ export class StudentSurahProgressService {
         ({ actualProgressPercentage: 0, expectedProgressPercentage: 0 } as const);
       const diff = pacing.actualProgressPercentage - pacing.expectedProgressPercentage;
       const grade = gradeFor(diff);
-      const { pages, lines } = toPagesLines(newLessonLinesByStudent.get(student.id) ?? 0);
+      const pages = newLessonCompletion.pages.get(student.id) ?? 0;
+      const lines = newLessonCompletion.lines.get(student.id) ?? 0;
       return {
         teacherName,
         studentName: student.name,
         studentId: student.id,
-        newLessonDisplay: formatPagesLines(pages, lines),
+        newLessonDisplay: formatPagesDisplay(pages, lines),
         actualPercentage: pacing.actualProgressPercentage,
         expectedPercentage: pacing.expectedProgressPercentage,
         grade,
