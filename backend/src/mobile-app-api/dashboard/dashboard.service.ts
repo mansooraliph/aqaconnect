@@ -144,20 +144,21 @@ export class DashboardService {
     });
     const overdueStudentsCount = overdueStudentRows.length;
 
-    // "Present today" used to read the Attendance table — but there's no
-    // mark-attendance flow for students anywhere in the app, so that table
-    // is permanently empty and this always read 0 regardless of real
-    // activity. Counting distinct students with a completed lesson today
-    // mirrors what the Daily Recitation Attendance report already
-    // correctly shows (getFullProgressReport's "completed" bucket), so
-    // this card now agrees with that report instead of silently
-    // disagreeing with it.
-    const [presentTodayStudentRows, doneCount, totalEntriesCount] = await Promise.all([
-      this.prisma.studentSurahProgressEntry.findMany({
+    // "Absent" — there's no attendance-marking flow for students at all
+    // (no biometric check-in, no manual mark-attendance screen), so this
+    // means students on an approved leave today — the one real "not
+    // expected to recite today" signal that actually exists in the data.
+    // leaveDate is always stored as UTC midnight (see
+    // student-leaves.service.ts's dateRange/toDateOnly), so match it the
+    // same way rather than against local-time todayStart/todayEnd, which
+    // would drift off UTC midnight on a non-UTC server.
+    const todayUtcMidnight = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
+    const [absentStudentRows, doneCount, totalEntriesCount] = await Promise.all([
+      this.prisma.studentLeave.findMany({
         where: {
-          branchId,
-          status: { in: DONE_STATUSES },
-          completedAt: { gte: todayStart, lte: todayEnd },
+          student: { branchId },
+          status: 'APPROVED',
+          leaveDate: todayUtcMidnight,
         },
         select: { studentId: true },
         distinct: ['studentId'],
@@ -173,27 +174,15 @@ export class DashboardService {
       // ~70ms, and pendingCount below gets the same result via subtraction.
       this.prisma.studentSurahProgressEntry.count({ where: { branchId } }),
     ]);
-    const presentTodayCount = presentTodayStudentRows.length;
+    const absentTodayCount = absentStudentRows.length;
     const pendingCount = totalEntriesCount - doneCount;
 
-    // "Absent" — there's no attendance-marking flow for students (see
-    // presentTodayCount's comment), so this means students on an approved
-    // leave today, the one real "not expected to recite today" signal
-    // that actually exists in the data. leaveDate is always stored as
-    // UTC midnight (see student-leaves.service.ts's dateRange/toDateOnly),
-    // so match it the same way rather than against local-time todayStart/
-    // todayEnd, which would drift off UTC midnight on a non-UTC server.
-    const todayUtcMidnight = new Date(`${new Date().toISOString().slice(0, 10)}T00:00:00.000Z`);
-    const absentStudentRows = await this.prisma.studentLeave.findMany({
-      where: {
-        student: { branchId },
-        status: 'APPROVED',
-        leaveDate: todayUtcMidnight,
-      },
-      select: { studentId: true },
-      distinct: ['studentId'],
-    });
-    const absentTodayCount = absentStudentRows.length;
+    // "Present" = everyone who isn't on leave today, regardless of
+    // whether they've recited yet — not a recitation-based count. A
+    // student who's shown up but hasn't marked progress yet is still
+    // "present", same as a real attendance system would treat them;
+    // leave is the only real "not here" signal this data actually has.
+    const presentTodayCount = totalStudents - absentTodayCount;
 
     // Hafidh count — students who've completed every ayah of the Quran as
     // New Lesson. Uses the same sum(to) - sum(from) + count decomposition
