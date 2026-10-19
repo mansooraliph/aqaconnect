@@ -945,6 +945,7 @@ model Teacher {
   lessonProgressVerified StudentLessonProgress[]     @relation("VerifiedBy")
   surahProgressVerified  StudentSurahProgress[]      @relation("SurahVerifiedBy")
   hifdhSchedules         SurahHifdhStudentSchedule[]
+  examsMarked            StudentExam[]               @relation("ExamMarkedBy")
 
   @@index([branchId])
 }
@@ -1098,6 +1099,12 @@ model StudentExam {
   // this evaluation covered, for either mode.
   examMode   StudentExamMode     @default(EXAM)
   juzNumbers Int[]               @default([])
+  // Who actually recorded this evaluation — set once at creation from the
+  // caller's own Teacher profile (resolveOwnTeacherId), null if an Admin
+  // (no Teacher profile) recorded it instead. Not updated on edits — this
+  // tracks who originally marked it, not who last touched the record.
+  markedById String?
+  markedBy   Teacher?            @relation("ExamMarkedBy", fields: [markedById], references: [id])
   createdAt  DateTime            @default(now())
   updatedAt  DateTime            @updatedAt
 

@@ -847,11 +847,16 @@ export class MobileStudentsService {
     };
   }
 
-  async addStudentExam(branchId: string, dto: AddStudentExamDto) {
+  async addStudentExam(branchId: string, userId: string, dto: AddStudentExamDto) {
     const student = await this.prisma.student.findFirst({ where: { id: dto.student_id, branchId } });
     if (!student) {
       throw new NotFoundException({ status: 'error', message: 'Student not found in your organization' });
     }
+
+    // Who's actually recording this — undefined (not just a missing
+    // Teacher profile, e.g. an Admin) is the common real case, not an
+    // error; markedById just stays null then.
+    const markedById = await this.hifdh.resolveOwnTeacherId(userId);
 
     const exam = await this.prisma.studentExam.create({
       data: {
@@ -865,10 +870,12 @@ export class MobileStudentsService {
         scheduleId: dto.schedule_id,
         examMode: dto.exam_mode === 'mukammal' ? 'MUKAMMAL' : 'EXAM',
         juzNumbers: dto.juz_numbers ?? [],
+        markedById,
       },
+      include: { markedBy: { include: { user: true } } },
     });
 
-    return serializeExam(exam);
+    return serializeExam(exam, exam.markedBy ? fullName(exam.markedBy.user) : null);
   }
 
   async updateStudentExam(branchId: string, examId: string, dto: UpdateStudentExamDto) {
@@ -902,9 +909,10 @@ export class MobileStudentsService {
         }),
         ...(dto.juz_numbers !== undefined && { juzNumbers: dto.juz_numbers }),
       },
+      include: { markedBy: { include: { user: true } } },
     });
 
-    return serializeExam(updated);
+    return serializeExam(updated, updated.markedBy ? fullName(updated.markedBy.user) : null);
   }
 
   async deleteStudentExam(branchId: string, examId: string) {
@@ -1315,12 +1323,15 @@ export class MobileStudentsService {
     if (opts.includeExams) {
       const exams = await this.prisma.studentExam.findMany({
         where: { studentId, examDate: { gte: start, lte: end } },
+        include: { markedBy: { include: { user: true } } },
       });
       for (const ex of exams) {
         const date = toDateOnly(ex.examDate);
         const resultLabel = ex.result ? EXAM_RESULT_DISPLAY[ex.result] : 'N/A';
+        const markedByName = ex.markedBy ? fullName(ex.markedBy.user) : null;
         let description = `Exam: ${ex.examId ?? 'General'} - Result: ${resultLabel}`;
         if (ex.marks !== null) description += ` (Marks: ${ex.marks})`;
+        if (markedByName) description += ` - Marked by: ${markedByName}`;
         push(
           date,
           withId(
@@ -1334,6 +1345,7 @@ export class MobileStudentsService {
               remarks: ex.remarks,
               exam_mode: ex.examMode === 'MUKAMMAL' ? 'mukammal' : 'exam',
               juz_numbers: ex.juzNumbers,
+              marked_by: markedByName,
             },
             ex.id,
             'exam',
@@ -1872,20 +1884,23 @@ const EXAM_RESULT_DISPLAY: Record<StudentExamOutcome, string> = {
   PREPARATION: 'preparation',
 };
 
-function serializeExam(exam: {
-  id: string;
-  studentId: string;
-  examDate: Date;
-  examId: string | null;
-  result: StudentExamOutcome | null;
-  marks: unknown;
-  remarks: string | null;
-  scheduleId: string | null;
-  examMode: StudentExamMode;
-  juzNumbers: number[];
-  createdAt: Date;
-  updatedAt: Date;
-}) {
+function serializeExam(
+  exam: {
+    id: string;
+    studentId: string;
+    examDate: Date;
+    examId: string | null;
+    result: StudentExamOutcome | null;
+    marks: unknown;
+    remarks: string | null;
+    scheduleId: string | null;
+    examMode: StudentExamMode;
+    juzNumbers: number[];
+    createdAt: Date;
+    updatedAt: Date;
+  },
+  markedByName?: string | null,
+) {
   return {
     status: 'success',
     message:
@@ -1903,6 +1918,7 @@ function serializeExam(exam: {
       schedule_id: exam.scheduleId,
       exam_mode: exam.examMode === 'MUKAMMAL' ? 'mukammal' : 'exam',
       juz_numbers: exam.juzNumbers,
+      marked_by: markedByName ?? null,
     },
   };
 }

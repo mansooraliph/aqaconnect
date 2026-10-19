@@ -225,7 +225,10 @@ export class StudentsController {
   @HttpCode(201)
   async addStudentExam(@Req() req: AuthedRequest, @Body() dto: AddStudentExamDto) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
-    return this.handle(() => this.service.addStudentExam(branchId, dto), 'Failed to add student exam');
+    return this.handle(
+      () => this.service.addStudentExam(branchId, req.user.userId, dto),
+      'Failed to add student exam',
+    );
   }
 
   @Patch('update-student-exams/:examId')
