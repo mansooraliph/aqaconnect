@@ -791,6 +791,21 @@ export class StudentSurahProgressService {
     let windowLines = 0;
 
     for (const row of rows) {
+      // Milestone rows ("Preparation day", "Exam Juz X") carry no surah/
+      // ayah content — they're revision/exam checkpoints, not
+      // memorization itself. The historical backfill that marks real
+      // memorization COMPLETED never touches these (nothing for it to
+      // match against), so a student who's genuinely 100% done
+      // memorizing would otherwise sit stuck at a non-100% percentage
+      // forever because of their own still-pending exam checkpoints.
+      // Excluded from the percentage/pace math entirely; still counted
+      // toward `latestDate` below, since the schedule's real end date
+      // legitimately includes the final exam day.
+      if (!row.surahId) {
+        if (!latestDate || row.scheduledDate > latestDate)
+          latestDate = row.scheduledDate;
+        continue;
+      }
       const lines = linesForRow(row.surahId, row.fromAyah, row.toAyah);
       totalLines += lines;
       if (row.status === HifdhScheduleStatus.COMPLETED) {
@@ -990,6 +1005,13 @@ export class StudentSurahProgressService {
       let actualLines = 0;
       let expectedLines = 0;
       for (const row of studentRows) {
+        // Milestone rows ("Preparation day", "Exam Juz X") carry no
+        // surah/ayah content and are never touched by the historical
+        // backfill — see computeSchedulePacing's identical exclusion for
+        // the full reasoning. Excluded here too so a student who's
+        // genuinely 100% done memorizing isn't graded down for their own
+        // still-pending exam checkpoints.
+        if (!row.surahId) continue;
         const lines = linesForRow(row.surahId, row.fromAyah, row.toAyah);
         totalLines += lines;
         if (row.status === HifdhScheduleStatus.COMPLETED) actualLines += lines;
