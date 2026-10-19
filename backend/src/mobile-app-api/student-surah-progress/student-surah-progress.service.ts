@@ -2559,6 +2559,72 @@ export class StudentSurahProgressService {
     return result;
   }
 
+  /**
+   * Same shape as targetAndActualAyahsBatch, but with no lower bound on
+   * either side — everything scheduled/completed up to and including
+   * toDate counts, starting from each student's own schedule/progress
+   * history. This is the "as of this date" cumulative figure (how much
+   * should/does the student have done in total by toDate), as opposed to
+   * the windowed [fromDate, toDate] figure which only reflects pace during
+   * that specific slice and hides any backlog from before fromDate.
+   */
+  private async cumulativeTargetAndActualAyahsBatch(
+    branchId: string,
+    studentIds: string[],
+    toDate: string,
+  ): Promise<Map<string, { targetAyahs: number; actualAyahs: number }>> {
+    const result = new Map<
+      string,
+      { targetAyahs: number; actualAyahs: number }
+    >();
+    if (studentIds.length === 0) return result;
+    for (const id of studentIds) result.set(id, { targetAyahs: 0, actualAyahs: 0 });
+
+    const [scheduleGroups, progressGroups] = await Promise.all([
+      this.prisma.surahHifdhStudentSchedule.groupBy({
+        by: ['studentId'],
+        where: {
+          studentId: { in: studentIds },
+          scheduledDate: { lte: new Date(toDate) },
+          fromAyah: { not: null },
+          toAyah: { not: null },
+        },
+        _sum: { fromAyah: true, toAyah: true },
+        _count: { _all: true },
+      }),
+      this.prisma.studentSurahProgressEntry.groupBy({
+        by: ['studentId'],
+        where: {
+          branchId,
+          studentId: { in: studentIds },
+          status: { in: ['COMPLETED', 'VERIFIED'] },
+          completedAt: { lte: new Date(`${toDate}T23:59:59.999Z`) },
+          type: TYPE_TO_ENUM['New Lesson'],
+          fromAyah: { not: null },
+          toAyah: { not: null },
+        },
+        _sum: { fromAyah: true, toAyah: true },
+        _count: { _all: true },
+      }),
+    ]);
+
+    for (const g of scheduleGroups) {
+      const entry = result.get(g.studentId);
+      if (entry) {
+        entry.targetAyahs =
+          (g._sum.toAyah ?? 0) - (g._sum.fromAyah ?? 0) + g._count._all;
+      }
+    }
+    for (const g of progressGroups) {
+      const entry = result.get(g.studentId);
+      if (entry) {
+        entry.actualAyahs =
+          (g._sum.toAyah ?? 0) - (g._sum.fromAyah ?? 0) + g._count._all;
+      }
+    }
+    return result;
+  }
+
   /** Batch halqa + teacher name lookup — for Top Performing's "All Halqas" card, which needs the teacher to credit, not just the halqa name. */
   private async studentHalqaTeacherBatch(studentIds: string[]) {
     const result = new Map<string, { halqaName: string; teacherName: string | null }>();
@@ -2636,11 +2702,24 @@ export class StudentSurahProgressService {
       query.from_date,
       query.to_date,
     );
+    const cumulativeByStudent = await this.cumulativeTargetAndActualAyahsBatch(
+      branchId,
+      students.map((s) => s.id),
+      query.to_date,
+    );
 
     const qualifying = students
       .map((student) => {
         const { targetAyahs, actualAyahs } = ayahsByStudent.get(student.id)!;
-        return { student, targetAyahs, actualAyahs, deficit: targetAyahs - actualAyahs };
+        const cumulative = cumulativeByStudent.get(student.id)!;
+        return {
+          student,
+          targetAyahs,
+          actualAyahs,
+          deficit: targetAyahs - actualAyahs,
+          cumulativeTargetAyahs: cumulative.targetAyahs,
+          cumulativeActualAyahs: cumulative.actualAyahs,
+        };
       })
       .filter((r) => r.targetAyahs !== 0 && r.deficit > minDeficit)
       .sort((a, b) => b.deficit - a.deficit);
@@ -2663,6 +2742,10 @@ export class StudentSurahProgressService {
         target_ayahs: r.targetAyahs,
         actual_ayahs: r.actualAyahs,
         deficit_ayahs: r.deficit,
+        cumulative_target_ayahs: r.cumulativeTargetAyahs,
+        cumulative_actual_ayahs: r.cumulativeActualAyahs,
+        cumulative_deficit_ayahs:
+          r.cumulativeTargetAyahs - r.cumulativeActualAyahs,
       })),
     );
 
@@ -2712,11 +2795,24 @@ export class StudentSurahProgressService {
       fromDate,
       toDate,
     );
+    const cumulativeByStudent = await this.cumulativeTargetAndActualAyahsBatch(
+      branchId,
+      students.map((s) => s.id),
+      toDate,
+    );
 
     const qualifying = students
       .map((student) => {
         const { targetAyahs, actualAyahs } = ayahsByStudent.get(student.id)!;
-        return { student, targetAyahs, actualAyahs, excess: actualAyahs - targetAyahs };
+        const cumulative = cumulativeByStudent.get(student.id)!;
+        return {
+          student,
+          targetAyahs,
+          actualAyahs,
+          excess: actualAyahs - targetAyahs,
+          cumulativeTargetAyahs: cumulative.targetAyahs,
+          cumulativeActualAyahs: cumulative.actualAyahs,
+        };
       })
       .filter((r) => r.excess > minExcess)
       .sort((a, b) => b.excess - a.excess);
@@ -2739,6 +2835,10 @@ export class StudentSurahProgressService {
         target_ayahs: r.targetAyahs,
         actual_ayahs: r.actualAyahs,
         excess_ayahs: r.excess,
+        cumulative_target_ayahs: r.cumulativeTargetAyahs,
+        cumulative_actual_ayahs: r.cumulativeActualAyahs,
+        cumulative_excess_ayahs:
+          r.cumulativeActualAyahs - r.cumulativeTargetAyahs,
       })),
     );
 

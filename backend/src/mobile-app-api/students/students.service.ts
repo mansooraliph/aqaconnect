@@ -529,6 +529,7 @@ export class MobileStudentsService {
           id: student.id,
           name: student.name,
           email: student.user?.email ?? null,
+          username: student.user?.username ?? null,
           mobile: student.user?.phone ?? null,
           country_phonecode: null,
           gender: toLegacyGender(student.gender),
