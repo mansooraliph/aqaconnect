@@ -1,5 +1,5 @@
 import { ForbiddenException, Injectable } from '@nestjs/common';
-import { ProgressEntryStatus, ProgressEntryType } from '@prisma/client';
+import { HifdhScheduleStatus, ProgressEntryStatus, ProgressEntryType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MobileContextService } from '../common/mobile-context.service';
 
@@ -144,6 +144,34 @@ export class DashboardService {
     });
     const overdueStudentsCount = overdueStudentRows.length;
 
+    // Students who actually achieved TODAY's scheduled target — distinct
+    // from the backlog check above (which looks at every past-due row ever
+    // generated, going back years). A milestone row ("Preparation day",
+    // "Exam Juz X") scheduled for today still counts here: if that's what
+    // was due today and it got marked done, the student met today's
+    // target just as much as a student whose target was real content.
+    // Milestones are only excluded from the lifetime pacing/backlog math
+    // elsewhere, not from "did they do what was due today".
+    const todayScheduleRows = await this.prisma.surahHifdhStudentSchedule.findMany({
+      where: {
+        student: { branchId },
+        scheduledDate: { gte: todayStart, lte: todayEnd },
+        rescheduledTo: { none: {} },
+      },
+      select: { studentId: true, status: true },
+    });
+    const studentsWithTodayTarget = new Set<string>();
+    const studentsIncompleteToday = new Set<string>();
+    for (const row of todayScheduleRows) {
+      studentsWithTodayTarget.add(row.studentId);
+      if (row.status !== HifdhScheduleStatus.COMPLETED) {
+        studentsIncompleteToday.add(row.studentId);
+      }
+    }
+    const achievedTodayCount = [...studentsWithTodayTarget].filter(
+      (id) => !studentsIncompleteToday.has(id),
+    ).length;
+
     // "Absent" — there's no attendance-marking flow for students at all
     // (no biometric check-in, no manual mark-attendance screen), so this
     // means students on an approved leave today — the one real "not
@@ -247,6 +275,14 @@ export class DashboardService {
         percentage_up_to_date:
           totalStudents > 0
             ? Math.round(((totalStudents - overdueStudentsCount) / totalStudents) * 1000) / 10
+            : 0,
+      },
+      today_target: {
+        achieved_students: achievedTodayCount,
+        total_students: totalStudents,
+        percentage_achieved:
+          totalStudents > 0
+            ? Math.round((achievedTodayCount / totalStudents) * 1000) / 10
             : 0,
       },
       absent_today: absentTodayCount,
