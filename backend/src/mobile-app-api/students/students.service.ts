@@ -854,11 +854,6 @@ export class MobileStudentsService {
       throw new NotFoundException({ status: 'error', message: 'Student not found in your organization' });
     }
 
-    // Who's actually recording this — undefined (not just a missing
-    // Teacher profile, e.g. an Admin) is the common real case, not an
-    // error; markedById just stays null then.
-    const markedById = await this.hifdh.resolveOwnTeacherId(userId);
-
     const exam = await this.prisma.studentExam.create({
       data: {
         branchId,
@@ -871,15 +866,18 @@ export class MobileStudentsService {
         scheduleId: dto.schedule_id,
         examMode: dto.exam_mode === 'mukammal' ? 'MUKAMMAL' : 'EXAM',
         juzNumbers: dto.juz_numbers ?? [],
-        markedById,
+        // Whoever is recording this — Teacher or Admin, both just Users —
+        // not scoped to a Teacher profile, since most real exam entry is
+        // done by Admin logins.
+        markedByUserId: userId,
       },
-      include: { markedBy: { include: { user: true } } },
+      include: { markedByUser: true },
     });
 
-    return serializeExam(exam, exam.markedBy ? fullName(exam.markedBy.user) : null);
+    return serializeExam(exam, exam.markedByUser ? fullName(exam.markedByUser) : null);
   }
 
-  async updateStudentExam(branchId: string, examId: string, dto: UpdateStudentExamDto) {
+  async updateStudentExam(branchId: string, userId: string, examId: string, dto: UpdateStudentExamDto) {
     const exam = await this.prisma.studentExam.findFirst({ where: { id: examId, branchId } });
     if (!exam) {
       throw new NotFoundException({ status: 'error', message: 'Exam record not found' });
@@ -909,11 +907,12 @@ export class MobileStudentsService {
           examMode: dto.exam_mode === 'mukammal' ? 'MUKAMMAL' : 'EXAM',
         }),
         ...(dto.juz_numbers !== undefined && { juzNumbers: dto.juz_numbers }),
+        markedByUserId: userId,
       },
-      include: { markedBy: { include: { user: true } } },
+      include: { markedByUser: true },
     });
 
-    return serializeExam(updated, updated.markedBy ? fullName(updated.markedBy.user) : null);
+    return serializeExam(updated, updated.markedByUser ? fullName(updated.markedByUser) : null);
   }
 
   async deleteStudentExam(branchId: string, examId: string) {
@@ -1324,12 +1323,12 @@ export class MobileStudentsService {
     if (opts.includeExams) {
       const exams = await this.prisma.studentExam.findMany({
         where: { studentId, examDate: { gte: start, lte: end } },
-        include: { markedBy: { include: { user: true } } },
+        include: { markedByUser: true },
       });
       for (const ex of exams) {
         const date = toDateOnly(ex.examDate);
         const resultLabel = ex.result ? EXAM_RESULT_DISPLAY[ex.result] : 'N/A';
-        const markedByName = ex.markedBy ? fullName(ex.markedBy.user) : null;
+        const markedByName = ex.markedByUser ? fullName(ex.markedByUser) : null;
         let description = `Exam: ${ex.examId ?? 'General'} - Result: ${resultLabel}`;
         if (ex.marks !== null) description += ` (Marks: ${ex.marks})`;
         if (markedByName) description += ` - Marked by: ${markedByName}`;

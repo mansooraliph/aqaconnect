@@ -154,6 +154,7 @@ model User {
 
   attendancesReviewed  Attendance[]   @relation("AttendanceReviewedBy")
   announcementsCreated Announcement[] @relation("AnnouncementCreatedBy")
+  examsMarked          StudentExam[]  @relation("ExamMarkedByUser")
 
   deviceTokens  DeviceToken[]
   notifications Notification[]
@@ -945,7 +946,6 @@ model Teacher {
   lessonProgressVerified StudentLessonProgress[]     @relation("VerifiedBy")
   surahProgressVerified  StudentSurahProgress[]      @relation("SurahVerifiedBy")
   hifdhSchedules         SurahHifdhStudentSchedule[]
-  examsMarked            StudentExam[]               @relation("ExamMarkedBy")
 
   @@index([branchId])
 }
@@ -1099,12 +1099,12 @@ model StudentExam {
   // this evaluation covered, for either mode.
   examMode   StudentExamMode     @default(EXAM)
   juzNumbers Int[]               @default([])
-  // Who actually recorded this evaluation — set once at creation from the
-  // caller's own Teacher profile (resolveOwnTeacherId), null if an Admin
-  // (no Teacher profile) recorded it instead. Not updated on edits — this
-  // tracks who originally marked it, not who last touched the record.
-  markedById String?
-  markedBy   Teacher?            @relation("ExamMarkedBy", fields: [markedById], references: [id])
+  // Who actually recorded/last touched this evaluation — any User
+  // (Teacher or Admin both just are Users), not scoped to a Teacher
+  // profile. Most real exam entry in practice is done by Admin logins,
+  // so limiting this to Teacher-only left it blank almost everywhere.
+  markedByUserId String?
+  markedByUser   User?           @relation("ExamMarkedByUser", fields: [markedByUserId], references: [id])
   createdAt  DateTime            @default(now())
   updatedAt  DateTime            @updatedAt
 
