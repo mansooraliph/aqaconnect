@@ -155,6 +155,7 @@ model User {
   attendancesReviewed  Attendance[]   @relation("AttendanceReviewedBy")
   announcementsCreated Announcement[] @relation("AnnouncementCreatedBy")
   examsMarked          StudentExam[]  @relation("ExamMarkedByUser")
+  examsVerified        StudentExam[]  @relation("ExamVerifiedBy")
 
   deviceTokens  DeviceToken[]
   notifications Notification[]
@@ -1105,6 +1106,14 @@ model StudentExam {
   // so limiting this to Teacher-only left it blank almost everywhere.
   markedByUserId String?
   markedByUser   User?           @relation("ExamMarkedByUser", fields: [markedByUserId], references: [id])
+  // Mukammal queue: a PASSed Mukammal exam sits in the queue for
+  // Admin/Principal sign-off until verifiedById is set. Plain Exams never
+  // enter the queue (queue membership is derived — examMode MUKAMMAL,
+  // result PASS, verifiedById null — not a separate flag), so these stay
+  // null for every non-Mukammal or not-yet-passed row.
+  verifiedAt     DateTime?
+  verifiedById   String?
+  verifiedBy     User?           @relation("ExamVerifiedBy", fields: [verifiedById], references: [id])
   createdAt  DateTime            @default(now())
   updatedAt  DateTime            @updatedAt
 

@@ -249,6 +249,24 @@ export class StudentsController {
     }, 'Failed to delete exam record');
   }
 
+  @Get('mukammal-queue')
+  async getMukammalQueue(@Req() req: AuthedRequest) {
+    const branchId = await this.context.resolveBranchId(req.user.userId);
+    return this.handle(
+      () => this.service.getMukammalQueue(branchId, req.user.userId),
+      'Failed to load Mukammal queue',
+    );
+  }
+
+  @Patch('mukammal-queue/:examId/verify')
+  async verifyMukammalExam(@Req() req: AuthedRequest, @Param('examId') examId: string) {
+    const branchId = await this.context.resolveBranchId(req.user.userId);
+    return this.handle(
+      () => this.service.verifyMukammalExam(branchId, req.user.userId, examId),
+      'Failed to verify student',
+    );
+  }
+
   @Post('student-events')
   @HttpCode(201)
   async addStudentEvent(@Req() req: AuthedRequest, @Body() dto: AddStudentEventDto) {

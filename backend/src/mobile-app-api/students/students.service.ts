@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
 import { mkdirSync, createWriteStream, existsSync } from 'fs';
@@ -921,6 +921,90 @@ export class MobileStudentsService {
       throw new NotFoundException({ status: 'error', message: 'Exam record not found' });
     }
     await this.prisma.studentExam.delete({ where: { id: examId } });
+  }
+
+  // ── Mukammal queue ───────────────────────────────────────────────────
+  // A student who PASSes a Mukammal (the comprehensive multi-Juz' exam) is
+  // held in this queue for Admin/Principal sign-off before being
+  // considered fully cleared. Queue membership is derived, not a separate
+  // flag: examMode MUKAMMAL, result PASS, verifiedById still null. Same
+  // admin-role check as AdminDashboardService.adminDashboard (no single
+  // "admin" role in this schema — "Super Admin" and "Branch Admin" both
+  // qualify, hence the substring match rather than an exact name).
+  private async assertAdmin(userId: string) {
+    const roleNames = await this.context.getRoleNames(userId);
+    if (!roleNames.some((name) => name.toLowerCase().includes('admin'))) {
+      throw new ForbiddenException('Unauthorized. Admin access required.');
+    }
+  }
+
+  async getMukammalQueue(branchId: string, userId: string) {
+    await this.assertAdmin(userId);
+
+    const exams = await this.prisma.studentExam.findMany({
+      where: {
+        branchId,
+        examMode: StudentExamMode.MUKAMMAL,
+        result: StudentExamOutcome.PASS,
+        verifiedById: null,
+      },
+      // Oldest pass first — first in, first reviewed.
+      orderBy: { examDate: 'asc' },
+      include: {
+        student: { select: { id: true, name: true, imageUrl: true } },
+        markedByUser: { select: { firstName: true, lastName: true } },
+      },
+    });
+
+    const studentIds = exams.map((e) => e.studentId);
+    const memberships = await this.prisma.halqaStudent.findMany({
+      where: { studentId: { in: studentIds }, removedAt: null },
+      select: { studentId: true, halqa: { select: { id: true, name: true } } },
+    });
+    const halqaByStudent = new Map(memberships.map((m) => [m.studentId, m.halqa]));
+
+    return {
+      status: 'success',
+      data: {
+        total: exams.length,
+        students: exams.map((e) => ({
+          exam_id: e.id,
+          exam_date: toDateOnly(e.examDate),
+          marks: e.marks,
+          remarks: e.remarks,
+          juz_numbers: e.juzNumbers,
+          marked_by: e.markedByUser ? fullName(e.markedByUser) : null,
+          student: {
+            id: e.student.id,
+            name: e.student.name,
+            image_url: e.student.imageUrl,
+            halqa: halqaByStudent.get(e.studentId) ?? null,
+          },
+        })),
+      },
+    };
+  }
+
+  async verifyMukammalExam(branchId: string, userId: string, examId: string) {
+    await this.assertAdmin(userId);
+
+    const exam = await this.prisma.studentExam.findFirst({ where: { id: examId, branchId } });
+    if (!exam) {
+      throw new NotFoundException({ status: 'error', message: 'Exam record not found' });
+    }
+    if (exam.examMode !== StudentExamMode.MUKAMMAL || exam.result !== StudentExamOutcome.PASS) {
+      throw new UnprocessableEntityException({
+        status: 'error',
+        message: 'Only a passed Mukammal exam can be verified',
+      });
+    }
+
+    await this.prisma.studentExam.update({
+      where: { id: examId },
+      data: { verifiedById: userId, verifiedAt: new Date() },
+    });
+
+    return { status: 'success', message: 'Student verified and removed from the Mukammal queue' };
   }
 
   async addStudentEvent(branchId: string, dto: AddStudentEventDto) {
