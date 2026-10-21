@@ -181,6 +181,31 @@ export class HifdhService {
         });
         const scheduleNo = (maxScheduleNo._max.scheduleNo ?? 0) + 1;
 
+        // This student's currently-live, not-yet-completed rows — the
+        // portion of their existing plan a fresh generation is meant to
+        // replace. Completed rows are never touched (real recorded work
+        // stays as-is, same rule bulkReschedule already follows). The
+        // existing-row check below used to be the only de-dup mechanism,
+        // keyed on surahTargetId matching — but the master
+        // SurahTargetSchedule table's rows get wholesale deleted and
+        // recreated on every reimport (new ids every time), so that check
+        // silently stopped matching anything after a reimport and every
+        // regeneration call just kept layering a brand new 694-row copy
+        // on top of the last one, forever. Each new row now supersedes
+        // one of these old pending rows directly via rescheduledFromId,
+        // so the old copy actually stops being "live" instead of
+        // sitting there as permanent dead duplicate data.
+        const oldPendingRows = await tx.surahHifdhStudentSchedule.findMany({
+          where: {
+            studentId: student.id,
+            status: { not: 'COMPLETED' },
+            rescheduledTo: { none: {} },
+            scheduleNo: { lt: scheduleNo },
+          },
+          select: { id: true },
+        });
+        let oldPendingIndex = 0;
+
         for (const target of targets) {
           const scheduledDate = workingDayDates[target.dayNumber - 1];
 
@@ -188,6 +213,9 @@ export class HifdhService {
             where: { studentId: student.id, surahTargetId: target.id },
           });
           if (existing) continue;
+
+          const supersedes = oldPendingRows[oldPendingIndex];
+          if (supersedes) oldPendingIndex++;
 
           const row = await tx.surahHifdhStudentSchedule.create({
             data: {
@@ -211,6 +239,7 @@ export class HifdhService {
               scheduleType: target.scheduleType,
               examName: target.examName,
               estimatedDurationMinutes: target.estimatedDurationMinutes,
+              ...(supersedes && { rescheduledFromId: supersedes.id }),
             },
           });
           created.push(row);
