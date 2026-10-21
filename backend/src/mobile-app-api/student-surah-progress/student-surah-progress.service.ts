@@ -1858,8 +1858,30 @@ export class StudentSurahProgressService {
       for (const s of surahs) surahByNumber.set(s.number, s);
     }
 
+    // Old/Juzh Lesson entries recorded via the "Surah" method only ever get
+    // surahId/fromAyah/toAyah set (no juzuhFrom/To or pageFrom/To/pageCount)
+    // — without this, they're invisible to any page/Juz' total that sums
+    // those fields, even though the student genuinely covered real pages.
+    // Reuses the exact same real-content-line lookup as New Lesson's page
+    // count (countPageCompletion), so "a page" means the same thing here
+    // as it does everywhere else in this report.
+    const derivableEntries = entries.filter(
+      (e) => e.surahId != null && e.fromAyah != null && e.toAyah != null,
+    );
+    const { pages: derivedPagesByEntry } = derivableEntries.length
+      ? await this.countPageCompletion(
+          derivableEntries.map((e) => ({
+            groupKey: e.id,
+            surahId: e.surahId!,
+            fromAyah: e.fromAyah!,
+            toAyah: e.toAyah!,
+          })),
+        )
+      : { pages: new Map<string, number>() };
+
     const progressData = entries.map((entry) => ({
       ...serializeEntry(entry),
+      surah_derived_page_count: derivedPagesByEntry.get(entry.id) ?? 0,
       surah_from: entry.surahFrom,
       surah_from_ayah: entry.surahFromAyah,
       surah_from_name_en:
