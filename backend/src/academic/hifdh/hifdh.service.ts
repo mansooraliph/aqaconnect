@@ -150,19 +150,29 @@ export class HifdhService {
 
     const students = await this.prisma.student.findMany({
       where: { id: { in: dto.studentIds }, branchId },
-      select: { id: true },
+      select: { id: true, hifdhStartDate: true },
     });
     if (students.length !== dto.studentIds.length) {
       throw new BadRequestException('One or more studentIds do not belong to this branch');
     }
 
-    const startDate = new Date(dto.startDate);
+    const fallbackStartDate = new Date(dto.startDate);
     const maxDayNumber = Math.max(...targets.map((t) => t.dayNumber));
-    const workingDayDates = await this.buildWorkingDayDates(branchId, startDate, maxDayNumber);
     const created: Prisma.SurahHifdhStudentScheduleGetPayload<Record<string, never>>[] = [];
 
     await this.prisma.$transaction(async (tx) => {
       for (const student of students) {
+        // Each student's own hifdhStartDate anchors their plan — not
+        // dto.startDate, which previously applied to the whole batch
+        // uniformly and silently defaulted to "today" for anyone who had
+        // a real (often backdated) start on file, making "expected
+        // progress" look wrong forever after for exactly that reason.
+        // dto.startDate is now only a fallback for students with no
+        // hifdhStartDate set at all. Computed per student (not once for
+        // the batch) since each student can anchor to a different date.
+        const anchorDate = student.hifdhStartDate ?? fallbackStartDate;
+        const workingDayDates = await this.buildWorkingDayDates(branchId, anchorDate, maxDayNumber);
+
         // Legacy getNextScheduleNo: each generation call for a student is a
         // new "version" of their schedule, one higher than their current max.
         const maxScheduleNo = await tx.surahHifdhStudentSchedule.aggregate({
