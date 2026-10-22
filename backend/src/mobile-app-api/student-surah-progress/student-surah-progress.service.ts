@@ -3561,37 +3561,59 @@ export class StudentSurahProgressService {
       rosterIds = allStudents.map((s) => s.id);
     }
 
-    // Rank with a cheap DB-side aggregation over every matching row
-    // (groupBy — one row per student, no student/surah joins), then only
-    // run the heavy detailed query (with joins) for the winners. The
-    // previous single-pass version pulled every matching progress entry
-    // for the whole branch into Node with full relations included — fine
-    // for one halqa, but for "all halqas" over a wide date range that was
-    // thousands of rows with joins on every request, which is exactly
-    // what was driving the DB connection pool into "too many connections"
-    // under concurrent admin usage. ayahSpan(from, to) = to - from + 1, so
-    // sum(ayahSpan) decomposes algebraically into sum(to) - sum(from) +
-    // count(*) — restricting to non-null from/to keeps that identity exact
-    // (a null-range entry contributes 0 either way).
-    const rankable = await this.prisma.studentSurahProgressEntry.groupBy({
-      by: ['studentId'],
-      where: { ...where, fromAyah: { not: null }, toAyah: { not: null } },
-      _sum: { fromAyah: true, toAyah: true },
-      _count: { _all: true },
-    });
+    // Rank by the SAME real page/line completion shown in the UI, not raw
+    // ayah count — a student who recited more ayahs can still complete
+    // FEWER full physical pages than one who recited fewer, longer ayahs,
+    // so ranking by ayah count while displaying pages/lines produced an
+    // order that visibly contradicted the figure shown (e.g. a "4 pages 14
+    // lines" student outranking a "6 pages 3 lines" one). The groupBy
+    // below is the same cheap one-row-per-student aggregation as before
+    // (for the ayah count still shown in the response); the findMany next
+    // to it only selects 4 scalar columns with no relations, so it stays
+    // far lighter than the `include`-based query that used to OOM this
+    // process (see the detail-phase comment below) even though it now
+    // covers the whole roster, not just the eventual winners.
+    const [rankable, rankablePageEntries] = await Promise.all([
+      this.prisma.studentSurahProgressEntry.groupBy({
+        by: ['studentId'],
+        where: { ...where, fromAyah: { not: null }, toAyah: { not: null } },
+        _sum: { fromAyah: true, toAyah: true },
+        _count: { _all: true },
+      }),
+      this.prisma.studentSurahProgressEntry.findMany({
+        where: {
+          ...where,
+          surahId: { not: null },
+          fromAyah: { not: null },
+          toAyah: { not: null },
+        },
+        select: { studentId: true, surahId: true, fromAyah: true, toAyah: true },
+      }),
+    ]);
     const ayahsByStudent = new Map(
       rankable.map((g) => [
         g.studentId,
         (g._sum.toAyah ?? 0) - (g._sum.fromAyah ?? 0) + g._count._all,
       ]),
     );
+    const { pages: rankPagesByStudent, lines: rankLinesByStudent } =
+      await this.countPageCompletion(
+        rankablePageEntries.map((e) => ({
+          groupKey: e.studentId,
+          surahId: e.surahId!,
+          fromAyah: e.fromAyah!,
+          toAyah: e.toAyah!,
+        })),
+      );
 
     const ranked = rosterIds
       .map((studentId) => ({
         studentId,
         totalAyahs: ayahsByStudent.get(studentId) ?? 0,
+        pages: rankPagesByStudent.get(studentId) ?? 0,
+        lines: rankLinesByStudent.get(studentId) ?? 0,
       }))
-      .sort((a, b) => b.totalAyahs - a.totalAyahs);
+      .sort((a, b) => b.pages - a.pages || b.lines - a.lines);
     const topRanked =
       requestedLimit !== null ? ranked.slice(0, requestedLimit) : ranked;
     const topStudentIds = topRanked.map((r) => r.studentId);
