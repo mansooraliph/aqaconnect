@@ -1856,9 +1856,17 @@ export class MobileStudentsService {
       // viewing a narrow window. groupBy — not findMany — so this is one
       // aggregated row per student instead of every exam row ever, which
       // was noticeably heavy for "all halqas" (all students, full history).
+      // PREPARATION rows are excluded — they mark an upcoming, not-yet-sat
+      // exam (often dated in the future), so including them here could
+      // make "last evaluation" resolve to a future date and show as a
+      // negative "N days ago" until that date actually arrives.
       this.prisma.studentExam.groupBy({
         by: ['studentId'],
-        where: { branchId, studentId: { in: studentIds } },
+        where: {
+          branchId,
+          studentId: { in: studentIds },
+          result: { in: ['PASS', 'FAIL'] },
+        },
         _max: { examDate: true },
       }),
     ]);
