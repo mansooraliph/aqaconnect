@@ -1078,6 +1078,12 @@ export class MobileStudentsService {
           examMode: dto.exam_mode === 'mukammal' ? 'MUKAMMAL' : 'EXAM',
           juzNumbers: dto.juz_numbers ?? [],
           markedByUserId: userId,
+          // An Admin creating this record directly IS the review — without
+          // this, a Mukammal+Pass evaluation (the natural choice when
+          // confirming a pass) would itself match the queue's own filter
+          // and the student would immediately reappear in the same queue.
+          verifiedById: userId,
+          verifiedAt: new Date(),
         },
         include: { markedByUser: true },
       }),
