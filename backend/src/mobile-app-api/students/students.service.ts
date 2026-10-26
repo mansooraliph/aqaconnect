@@ -939,6 +939,11 @@ export class MobileStudentsService {
     }
   }
 
+  // Only passes recorded from this cutoff onward ever enter the queue —
+  // the backlog of already-existing unverified passes before this date
+  // was dismissed in one go rather than left to flood the queue forever.
+  private static readonly MUKAMMAL_QUEUE_CUTOFF = new Date('2026-10-22T00:00:00.000Z');
+
   async getMukammalQueue(branchId: string, userId: string) {
     await this.assertAdmin(userId);
 
@@ -948,6 +953,7 @@ export class MobileStudentsService {
         examMode: StudentExamMode.MUKAMMAL,
         result: StudentExamOutcome.PASS,
         verifiedById: null,
+        examDate: { gte: MobileStudentsService.MUKAMMAL_QUEUE_CUTOFF },
       },
       // Oldest pass first — first in, first reviewed.
       orderBy: { examDate: 'asc' },
@@ -960,9 +966,28 @@ export class MobileStudentsService {
     const studentIds = exams.map((e) => e.studentId);
     const memberships = await this.prisma.halqaStudent.findMany({
       where: { studentId: { in: studentIds }, removedAt: null },
-      select: { studentId: true, halqa: { select: { id: true, name: true } } },
+      include: {
+        halqa: {
+          select: {
+            id: true,
+            name: true,
+            teacher: { include: { user: { select: { firstName: true, lastName: true } } } },
+          },
+        },
+      },
     });
-    const halqaByStudent = new Map(memberships.map((m) => [m.studentId, m.halqa]));
+    const halqaByStudent = new Map(
+      memberships.map((m) => [
+        m.studentId,
+        m.halqa && {
+          id: m.halqa.id,
+          name: m.halqa.name,
+          teacher_name: m.halqa.teacher
+            ? fullName(m.halqa.teacher.user)
+            : null,
+        },
+      ]),
+    );
 
     return {
       status: 'success',
