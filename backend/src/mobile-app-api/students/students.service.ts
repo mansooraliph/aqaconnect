@@ -20,6 +20,7 @@ import { UpdateStudentExamDto } from './dto/update-student-exam.dto';
 import { AddStudentEventDto } from './dto/add-student-event.dto';
 import { UpdateStudentEventDto } from './dto/update-student-event.dto';
 import { GetExamReportQueryDto } from './dto/get-exam-report-query.dto';
+import { RecordMukammalEvaluationDto } from './dto/record-mukammal-evaluation.dto';
 import { REPORTS_DIR } from './report-upload-paths';
 
 const SALT_ROUNDS = 10;
@@ -1005,6 +1006,63 @@ export class MobileStudentsService {
     });
 
     return { status: 'success', message: 'Student verified and removed from the Mukammal queue' };
+  }
+
+  // Records the Admin/Principal's own evaluation of a queued Mukammal pass
+  // as a brand-new StudentExam row (the teacher's original entry is left
+  // untouched, just marked verified so it drops out of the queue) — this
+  // is a real, independent assessment, not a rubber-stamp of the
+  // teacher's numbers, so it carries its own mode/date/result/marks/
+  // Juz'/remarks and is attributed to the Admin as "marked by".
+  async recordMukammalEvaluation(
+    branchId: string,
+    userId: string,
+    examId: string,
+    dto: RecordMukammalEvaluationDto,
+  ) {
+    await this.assertAdmin(userId);
+
+    const exam = await this.prisma.studentExam.findFirst({ where: { id: examId, branchId } });
+    if (!exam) {
+      throw new NotFoundException({ status: 'error', message: 'Exam record not found' });
+    }
+    if (
+      exam.examMode !== StudentExamMode.MUKAMMAL ||
+      exam.result !== StudentExamOutcome.PASS ||
+      exam.verifiedById
+    ) {
+      throw new UnprocessableEntityException({
+        status: 'error',
+        message: 'Only a passed, unverified Mukammal exam can be evaluated',
+      });
+    }
+
+    const [, newExam] = await this.prisma.$transaction([
+      this.prisma.studentExam.update({
+        where: { id: examId },
+        data: { verifiedById: userId, verifiedAt: new Date() },
+      }),
+      this.prisma.studentExam.create({
+        data: {
+          branchId,
+          studentId: exam.studentId,
+          examDate: new Date(dto.exam_date),
+          result: dto.result.toUpperCase() as StudentExamOutcome,
+          marks: dto.marks,
+          remarks: dto.remarks,
+          examMode: dto.exam_mode === 'mukammal' ? 'MUKAMMAL' : 'EXAM',
+          juzNumbers: dto.juz_numbers ?? [],
+          markedByUserId: userId,
+        },
+        include: { markedByUser: true },
+      }),
+    ]);
+
+    return {
+      status: 'success',
+      message: 'Evaluation recorded and student removed from the Mukammal queue',
+      data: serializeExam(newExam, newExam.markedByUser ? fullName(newExam.markedByUser) : null),
+    };
   }
 
   async addStudentEvent(branchId: string, dto: AddStudentEventDto) {

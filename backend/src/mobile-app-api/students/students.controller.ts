@@ -39,6 +39,7 @@ import { UpdateStudentExamDto } from './dto/update-student-exam.dto';
 import { AddStudentEventDto } from './dto/add-student-event.dto';
 import { UpdateStudentEventDto } from './dto/update-student-event.dto';
 import { GetExamReportQueryDto } from './dto/get-exam-report-query.dto';
+import { RecordMukammalEvaluationDto } from './dto/record-mukammal-evaluation.dto';
 import { MobileContextService } from '../common/mobile-context.service';
 import { MobileValidationPipe } from '../common/mobile-validation.pipe';
 import { MobileApiLoggingInterceptor } from '../common/mobile-api-logging.interceptor';
@@ -264,6 +265,19 @@ export class StudentsController {
     return this.handle(
       () => this.service.verifyMukammalExam(branchId, req.user.userId, examId),
       'Failed to verify student',
+    );
+  }
+
+  @Post('mukammal-queue/:examId/evaluate')
+  async recordMukammalEvaluation(
+    @Req() req: AuthedRequest,
+    @Param('examId') examId: string,
+    @Body() dto: RecordMukammalEvaluationDto,
+  ) {
+    const branchId = await this.context.resolveBranchId(req.user.userId);
+    return this.handle(
+      () => this.service.recordMukammalEvaluation(branchId, req.user.userId, examId, dto),
+      'Failed to record evaluation',
     );
   }
 
