@@ -4,11 +4,12 @@ import { randomBytes } from 'crypto';
 import { mkdirSync, createWriteStream, existsSync } from 'fs';
 import { join } from 'path';
 import PDFDocument from 'pdfkit';
-import { Gender, StudentExamOutcome, StudentExamMode, ProgressEntryGrade, ProgressEntryStatus, ProgressEntryType } from '@prisma/client';
+import { Gender, StudentExamOutcome, StudentExamMode, NotificationType, ProgressEntryGrade, ProgressEntryStatus, ProgressEntryType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { HifdhService } from '../../academic/hifdh/hifdh.service';
 import { MobileContextService } from '../common/mobile-context.service';
 import { StudentSurahProgressService } from '../student-surah-progress/student-surah-progress.service';
+import { NotificationsService } from '../../notifications/notifications.service';
 import { CreateStudentDto } from './dto/create-student.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
 import { ClassSectionYearsQueryDto } from './dto/class-section-years-query.dto';
@@ -88,6 +89,7 @@ export class MobileStudentsService {
     private readonly hifdh: HifdhService,
     private readonly context: MobileContextService,
     private readonly surahProgress: StudentSurahProgressService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -1088,6 +1090,29 @@ export class MobileStudentsService {
         include: { markedByUser: true },
       }),
     ]);
+
+    // The Teacher who originally recorded this student's Mukammal pass
+    // needs to know the Admin's final call either way — Pass confirms
+    // their recommendation, Fail overturns it — not just that the
+    // student quietly dropped out of the queue.
+    const membership = await this.prisma.halqaStudent.findFirst({
+      where: { studentId: exam.studentId, removedAt: null },
+      include: { halqa: { include: { teacher: { select: { userId: true } } } } },
+    });
+    const teacherUserId = membership?.halqa.teacher?.userId;
+    if (teacherUserId) {
+      const student = await this.prisma.student.findUnique({
+        where: { id: exam.studentId },
+        select: { name: true },
+      });
+      const resultLabel = newExam.result === StudentExamOutcome.FAIL ? 'Fail' : 'Pass';
+      await this.notifications.notifyUser(branchId, teacherUserId, {
+        type: NotificationType.GENERAL,
+        title: 'Mukammal Evaluation Completed',
+        body: `${student?.name ?? 'A student'}'s Mukammal evaluation was marked ${resultLabel} and removed from the Evaluation Queue.`,
+        data: { student_id: exam.studentId, exam_id: newExam.id, result: resultLabel },
+      });
+    }
 
     return {
       status: 'success',

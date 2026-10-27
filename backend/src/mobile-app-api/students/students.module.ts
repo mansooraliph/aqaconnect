@@ -5,9 +5,16 @@ import { MobileAppApiCommonModule } from '../common/mobile-app-api-common.module
 import { HifdhModule } from '../../academic/hifdh/hifdh.module';
 import { RbacModule } from '../../rbac/rbac.module';
 import { StudentSurahProgressModule } from '../student-surah-progress/student-surah-progress.module';
+import { NotificationsModule } from '../../notifications/notifications.module';
 
 @Module({
-  imports: [MobileAppApiCommonModule, HifdhModule, RbacModule, StudentSurahProgressModule],
+  imports: [
+    MobileAppApiCommonModule,
+    HifdhModule,
+    RbacModule,
+    StudentSurahProgressModule,
+    NotificationsModule,
+  ],
   controllers: [StudentsController],
   providers: [MobileStudentsService],
 })
