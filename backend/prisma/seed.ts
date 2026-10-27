@@ -286,6 +286,7 @@ const ROLES: {
       'mobile_api.leaves.approve',
       'mobile_api.announcements.access',
       'mobile_api.announcements.manage',
+      'mobile_api.notifications.access',
     ],
   },
   {
