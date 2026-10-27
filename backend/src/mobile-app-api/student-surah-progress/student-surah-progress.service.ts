@@ -3271,10 +3271,16 @@ export class StudentSurahProgressService {
     const { from_date: fromDate, to_date: toDate } = query;
     const types = query.types ?? [];
     // 'Evaluation' is a StudentExam day, not a ProgressEntryType — split it
-    // out before anything touches TYPE_TO_ENUM. Selecting it alongside
-    // lesson types ANDs them together (a day only counts if every selected
-    // lesson type AND an exam both happened that day), same combining rule
-    // already used across multiple lesson types.
+    // out before anything touches TYPE_TO_ENUM. Each selected type (lesson
+    // type or Evaluation) is a per-student, whole-range requirement: the
+    // student must have done it AT LEAST ONCE somewhere between fromDate
+    // and toDate, not necessarily the same day as the others — see
+    // getStudentsWithAllTypes. A day only needs ONE of the selected types
+    // to count as "recited" that day (see recitedOnDay) — the combining
+    // across types happens at the whole-range eligibility level, not
+    // per-day, since requiring every selected type on the exact same
+    // calendar day made the Completed/Not-Recited split meaningless for
+    // students who spread New/Old/Juzh/Evaluation across different days.
     const requiresEvaluation = types.includes('Evaluation');
     const lessonTypeLabels = types.filter((t) => t !== 'Evaluation');
     const rangeLength =
@@ -3301,38 +3307,63 @@ export class StudentSurahProgressService {
     // (student, type) pair that has ≥1 matching record — grouping those
     // rows by studentId in JS gives the exact same distinct-type-count
     // check with 2 total queries instead of 2 x (1 + N).
-    // Lesson-type-only — 'Evaluation' has no row in studentSurahProgressEntry
-    // to group on, so it can't factor into this particular pre-filter. That
-    // only makes this narrowing slightly less tight when 'Evaluation' is
-    // selected (see the completedWhere.studentId scoping below); the actual
-    // per-day classification further down still applies it correctly.
+    // This is the whole-range eligibility gate: a student qualifies only
+    // if EVERY selected type (each lesson type via a studentSurahProgressEntry
+    // row, Evaluation via a studentExam row) appears at least once somewhere
+    // between start/end — not necessarily the same day as each other. See
+    // recitedOnDay for the separate, per-day "did they do ANY of the
+    // selected types that day" check used for the Completed/Not-Recited
+    // bucketing once a student has already passed this gate.
     const getStudentsWithAllTypes = async (
       start: string,
       end: string,
     ): Promise<string[] | null> => {
-      if (lessonTypeLabels.length === 0) return null;
-      const grouped = await this.prisma.studentSurahProgressEntry.groupBy({
-        by: ['studentId', 'type'],
-        where: {
-          branchId,
-          status: { in: ['COMPLETED', 'VERIFIED'] },
-          completedAt: {
-            gte: new Date(`${start}T00:00:00.000Z`),
-            lte: new Date(`${end}T23:59:59.999Z`),
+      if (lessonTypeLabels.length === 0 && !requiresEvaluation) return null;
+      let candidateIds: Set<string> | null = null;
+      if (lessonTypeLabels.length > 0) {
+        const grouped = await this.prisma.studentSurahProgressEntry.groupBy({
+          by: ['studentId', 'type'],
+          where: {
+            branchId,
+            status: { in: ['COMPLETED', 'VERIFIED'] },
+            completedAt: {
+              gte: new Date(`${start}T00:00:00.000Z`),
+              lte: new Date(`${end}T23:59:59.999Z`),
+            },
+            type: { in: lessonTypeLabels.map((t) => TYPE_TO_ENUM[t]) },
           },
-          type: { in: lessonTypeLabels.map((t) => TYPE_TO_ENUM[t]) },
-        },
-      });
-      const typesByStudent = new Map<string, Set<string>>();
-      for (const g of grouped) {
-        if (!g.type) continue;
-        const set = typesByStudent.get(g.studentId) ?? new Set<string>();
-        set.add(g.type);
-        typesByStudent.set(g.studentId, set);
+        });
+        const typesByStudent = new Map<string, Set<string>>();
+        for (const g of grouped) {
+          if (!g.type) continue;
+          const set = typesByStudent.get(g.studentId) ?? new Set<string>();
+          set.add(g.type);
+          typesByStudent.set(g.studentId, set);
+        }
+        candidateIds = new Set(
+          [...typesByStudent.entries()]
+            .filter(([, set]) => set.size >= lessonTypeLabels.length)
+            .map(([id]) => id),
+        );
       }
-      return [...typesByStudent.entries()]
-        .filter(([, set]) => set.size >= lessonTypeLabels.length)
-        .map(([id]) => id);
+      if (requiresEvaluation) {
+        const examRows = await this.prisma.studentExam.findMany({
+          where: {
+            studentId: { in: students.map((s) => s.id) },
+            examDate: {
+              gte: new Date(`${start}T00:00:00.000Z`),
+              lte: new Date(`${end}T23:59:59.999Z`),
+            },
+          },
+          select: { studentId: true },
+          distinct: ['studentId'],
+        });
+        const examStudentIds = new Set(examRows.map((r) => r.studentId));
+        candidateIds = candidateIds
+          ? new Set([...candidateIds].filter((id) => examStudentIds.has(id)))
+          : examStudentIds;
+      }
+      return [...(candidateIds ?? new Set<string>())];
     };
 
     const studentsWithAllTypesInRange = await getStudentsWithAllTypes(
@@ -3368,6 +3399,8 @@ export class StudentSurahProgressService {
     };
     if (lessonTypeLabels.length > 0) {
       completedWhere.type = { in: lessonTypeLabels.map((t) => TYPE_TO_ENUM[t]) };
+    }
+    if (lessonTypeLabels.length > 0 || requiresEvaluation) {
       intersectAllowed(studentsWithAllTypesInRange ?? []);
     }
     if (query.halqa_id) {
@@ -3582,27 +3615,27 @@ export class StudentSurahProgressService {
       }
     }
 
-    // Per-day "did this student meet the required type(s) on this school
-    // day" check — with no lesson-type filter, any completed record that
-    // day counts; with one, every selected lesson type must appear that day
-    // (an "AND" across types, same as the old all-types-somewhere-in-range
-    // rule, just now evaluated per day instead of across the whole range).
-    // When 'Evaluation' is also selected, that day additionally needs an
-    // exam/Mukammal — ANDed in alongside whatever lesson types were chosen.
+    // Per-day "did this student do something recognized on this school
+    // day" check. The combining of MULTIPLE selected types happens at the
+    // whole-range eligibility gate above (getStudentsWithAllTypes) — by the
+    // time a student reaches this function they've already proven they did
+    // every selected type at least once somewhere in the range, so a given
+    // day only needs ANY ONE of the selected types to count (an "OR" across
+    // types, per day). Requiring every selected type on the exact same
+    // calendar day made Completed/Not-Recited meaningless for students who
+    // spread New/Old/Juzh/Evaluation across different days of the range.
     const recitedOnDay = (studentId: string, day: string): boolean => {
-      if (requiresEvaluation && !(examDaysByStudent.get(studentId)?.has(day) ?? false)) {
-        return false;
-      }
-      if (lessonTypeLabels.length === 0) {
-        // Evaluation-only filter (no lesson types selected) — the exam
-        // check above already decided this day; nothing left to require.
-        if (requiresEvaluation) return true;
+      const hasExamThatDay = examDaysByStudent.get(studentId)?.has(day) ?? false;
+      if (lessonTypeLabels.length === 0 && !requiresEvaluation) {
+        // No type filter at all — any completed record that day counts.
         const typesThatDay = completedDaysByStudent.get(studentId)?.get(day);
         return !!typesThatDay && typesThatDay.size > 0;
       }
+      if (requiresEvaluation && hasExamThatDay) return true;
+      if (lessonTypeLabels.length === 0) return false;
       const typesThatDay = completedDaysByStudent.get(studentId)?.get(day);
       if (!typesThatDay) return false;
-      return lessonTypeLabels.every((t) => typesThatDay.has(t));
+      return lessonTypeLabels.some((t) => typesThatDay.has(t));
     };
     // A day with an exam/Mukammal but no lesson progress still counts as
     // "covered" for the every-day Completed check — a student who recited
