@@ -386,6 +386,19 @@ export class StudentSurahProgressController {
     );
   }
 
+  // ── getStudentTargetDetail ────────────────────────────────────────────
+  @Get('students/:studentId/target-detail')
+  async getStudentTargetDetail(
+    @Req() req: AuthedRequest,
+    @Param('studentId') studentId: string,
+  ) {
+    const branchId = await this.context.resolveBranchId(req.user.userId);
+    return this.handle(
+      () => this.service.getStudentTargetDetail(branchId, req.user.userId, studentId),
+      'Failed to retrieve student target detail',
+    );
+  }
+
   // ── getFullProgressReport ────────────────────────────────────────────
   @Get('students/reports')
   async getFullProgressReport(

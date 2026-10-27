@@ -704,6 +704,12 @@ export class StudentSurahProgressService {
         projectedCompletionDate: null as string | null,
         paceStatus: 'no_schedule',
         paceMessage: 'No schedule generated for this student yet',
+        totalLines: 0,
+        actualLines: 0,
+        expectedLines: 0,
+        remainingLines: 0,
+        currentDailyPace: null as number | null,
+        requiredDailyPace: null as number | null,
       };
     }
 
@@ -832,6 +838,15 @@ export class StudentSurahProgressService {
         ? Math.round((expectedLines / totalLines) * 10000) / 100
         : 0;
     const targetCompletionDate = latestDate ? formatDateOnly(latestDate) : null;
+    const remainingLines = Math.max(0, totalLines - actualLines);
+    // How many lines/day, starting today, would actually close the gap by
+    // the schedule's own target date — distinct from currentDailyPace
+    // (how fast they're ACTUALLY going), so the UI can show both side by
+    // side: "doing 3/day, needs 5/day to hit the target".
+    const requiredDailyPace = latestDate
+      ? remainingLines /
+        Math.max(1, Math.round((latestDate.getTime() - today.getTime()) / 86400000))
+      : null;
 
     // Project a finish date from the student's own actual pace over the
     // trailing window — lines completed within it ÷ days elapsed within
@@ -848,6 +863,7 @@ export class StudentSurahProgressService {
     let projectedCompletionDate: string | null = null;
     let paceStatus: string;
     let paceMessage: string;
+    let currentDailyPace: number | null = null;
 
     const daysSinceLastActivity = latestCompletedAt
       ? Math.round((today.getTime() - latestCompletedAt.getTime()) / 86400000)
@@ -893,6 +909,7 @@ export class StudentSurahProgressService {
       );
       const daysElapsed = Math.min(PACE_WINDOW_DAYS, daysSinceFirstEver);
       const linesPerDay = windowLines / daysElapsed;
+      currentDailyPace = Math.round(linesPerDay * 100) / 100;
 
       if (linesPerDay > MAX_PLAUSIBLE_LINES_PER_DAY) {
         paceStatus = 'unrealistic_pace';
@@ -904,7 +921,6 @@ export class StudentSurahProgressService {
         // rather than a vague "far behind" placeholder. The UI compares it
         // against the target date itself to label how far ahead/behind
         // that implies.
-        const remainingLines = Math.max(0, totalLines - actualLines);
         const daysToFinish = Math.ceil(remainingLines / linesPerDay);
         const projected = new Date(today.getTime() + daysToFinish * 86400000);
         projectedCompletionDate = formatDateOnly(projected);
@@ -919,7 +935,139 @@ export class StudentSurahProgressService {
       targetCompletionDate,
       projectedCompletionDate,
       paceStatus,
+      totalLines,
+      actualLines,
+      expectedLines,
+      remainingLines,
+      currentDailyPace,
+      requiredDailyPace: requiredDailyPace !== null ? Math.round(requiredDailyPace * 100) / 100 : null,
       paceMessage,
+    };
+  }
+
+  // ── getStudentTargetDetail ───────────────────────────────────────────
+  /**
+   * Full detail behind a Target Overview card tap: current vs expected
+   * progress in real pages/lines/Juz' (not the abstract "lines" scalar
+   * computeSchedulePacing uses internally for its own pace math — see
+   * countPageCompletion's doc comment for why that distinction matters),
+   * current vs required daily pace to hit the schedule's own target date,
+   * and the last New Lesson actually marked.
+   */
+  async getStudentTargetDetail(branchId: string, userId: string, studentId: string) {
+    const student = await this.requireActiveStudent(branchId, studentId);
+    const pacing = await this.computeSchedulePacing(studentId, new Map());
+
+    const scheduleRows = await this.prisma.surahHifdhStudentSchedule.findMany({
+      where: {
+        studentId,
+        rescheduledTo: { none: {} },
+        surahId: { not: null },
+        fromAyah: { not: null },
+        toAyah: { not: null },
+      },
+      select: { surahId: true, fromAyah: true, toAyah: true, status: true, scheduledDate: true },
+    });
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const [completedCompletion, expectedCompletion] = await Promise.all([
+      this.countPageCompletion(
+        scheduleRows
+          .filter((r) => r.status === 'COMPLETED')
+          .map((r) => ({
+            groupKey: 'completed',
+            surahId: r.surahId!,
+            fromAyah: r.fromAyah!,
+            toAyah: r.toAyah!,
+          })),
+      ),
+      this.countPageCompletion(
+        scheduleRows
+          .filter((r) => r.scheduledDate <= today)
+          .map((r) => ({
+            groupKey: 'expected',
+            surahId: r.surahId!,
+            fromAyah: r.fromAyah!,
+            toAyah: r.toAyah!,
+          })),
+      ),
+    ]);
+    const actualPages = completedCompletion.pages.get('completed') ?? 0;
+    const actualLines = completedCompletion.lines.get('completed') ?? 0;
+    const expectedPages = expectedCompletion.pages.get('expected') ?? 0;
+    const expectedLines = expectedCompletion.lines.get('expected') ?? 0;
+    const actualSplit = this.splitPagesIntoJuzAndPages(actualPages);
+    const expectedSplit = this.splitPagesIntoJuzAndPages(expectedPages);
+
+    const lastNewLesson = await this.prisma.studentSurahProgressEntry.findFirst({
+      where: {
+        studentId,
+        type: TYPE_TO_ENUM['New Lesson'],
+        status: { in: ['COMPLETED', 'VERIFIED'] },
+      },
+      include: { surah: { select: SURAH_SELECT } },
+      orderBy: { completedAt: 'desc' },
+    });
+
+    const halqaMembership = await this.prisma.halqaStudent.findFirst({
+      where: { studentId, removedAt: null },
+      include: {
+        halqa: {
+          include: {
+            teacher: { include: { user: { select: { firstName: true, lastName: true } } } },
+          },
+        },
+      },
+    });
+    const classByStudent = await this.studentCurrentClassBatch([studentId]);
+
+    return {
+      status: 'success',
+      data: {
+        student: {
+          ...(await this.formatStudentBasic(student)),
+          halqa: halqaMembership?.halqa
+            ? { id: halqaMembership.halqa.id, name: halqaMembership.halqa.name }
+            : null,
+          teacher_name: halqaMembership?.halqa.teacher
+            ? fullName(halqaMembership.halqa.teacher.user)
+            : null,
+          class_name: classByStudent.get(studentId) ?? null,
+        },
+        actual_progress: {
+          percentage: pacing.actualProgressPercentage,
+          pages: actualPages,
+          lines: actualLines,
+          juz: actualSplit.juz,
+          pages_remainder: actualSplit.pages,
+        },
+        expected_progress: {
+          percentage: pacing.expectedProgressPercentage,
+          pages: expectedPages,
+          lines: expectedLines,
+          juz: expectedSplit.juz,
+          pages_remainder: expectedSplit.pages,
+        },
+        pace: {
+          status: pacing.paceStatus,
+          message: pacing.paceMessage,
+          current_daily_lines: pacing.currentDailyPace,
+          required_daily_lines: pacing.requiredDailyPace,
+          remaining_lines: pacing.remainingLines,
+          target_completion_date: pacing.targetCompletionDate,
+          projected_completion_date: pacing.projectedCompletionDate,
+        },
+        last_new_lesson: lastNewLesson
+          ? {
+              completed_at: lastNewLesson.completedAt
+                ? formatDateOnly(lastNewLesson.completedAt)
+                : null,
+              surah: lastNewLesson.surah ? serializeSurahBasic(lastNewLesson.surah) : null,
+              from_ayah: lastNewLesson.fromAyah,
+              to_ayah: lastNewLesson.toAyah,
+            }
+          : null,
+      },
     };
   }
 
@@ -2582,6 +2730,164 @@ export class StudentSurahProgressService {
   }
 
   /**
+   * Real page/line completion version of targetAndActualAyahsBatch — raw
+   * ayah count isn't a reliable stand-in for "how much Quran" (see
+   * getTopStudents' ranking fix for why), so the Pending/Exceeded Target
+   * worklists show this instead of ayahs. Pulls per-row (surahId,
+   * fromAyah, toAyah) tuples — not an aggregate — because
+   * countPageCompletion needs the real per-ayah page/line lookup, not
+   * just a sum.
+   */
+  private async targetAndActualPagesBatch(
+    branchId: string,
+    studentIds: string[],
+    fromDate: string,
+    toDate: string,
+  ): Promise<
+    Map<string, { targetPages: number; targetLines: number; actualPages: number; actualLines: number }>
+  > {
+    const result = new Map<
+      string,
+      { targetPages: number; targetLines: number; actualPages: number; actualLines: number }
+    >();
+    if (studentIds.length === 0) return result;
+    for (const id of studentIds) {
+      result.set(id, { targetPages: 0, targetLines: 0, actualPages: 0, actualLines: 0 });
+    }
+
+    const [scheduleRows, progressRows] = await Promise.all([
+      this.prisma.surahHifdhStudentSchedule.findMany({
+        where: {
+          studentId: { in: studentIds },
+          scheduledDate: { gte: new Date(fromDate), lte: new Date(toDate) },
+          surahId: { not: null },
+          fromAyah: { not: null },
+          toAyah: { not: null },
+        },
+        select: { studentId: true, surahId: true, fromAyah: true, toAyah: true },
+      }),
+      this.prisma.studentSurahProgressEntry.findMany({
+        where: {
+          branchId,
+          studentId: { in: studentIds },
+          status: { in: ['COMPLETED', 'VERIFIED'] },
+          completedAt: {
+            gte: new Date(`${fromDate}T00:00:00.000Z`),
+            lte: new Date(`${toDate}T23:59:59.999Z`),
+          },
+          type: TYPE_TO_ENUM['New Lesson'],
+          surahId: { not: null },
+          fromAyah: { not: null },
+          toAyah: { not: null },
+        },
+        select: { studentId: true, surahId: true, fromAyah: true, toAyah: true },
+      }),
+    ]);
+
+    const [target, actual] = await Promise.all([
+      this.countPageCompletion(
+        scheduleRows.map((r) => ({
+          groupKey: r.studentId,
+          surahId: r.surahId!,
+          fromAyah: r.fromAyah!,
+          toAyah: r.toAyah!,
+        })),
+      ),
+      this.countPageCompletion(
+        progressRows.map((r) => ({
+          groupKey: r.studentId,
+          surahId: r.surahId!,
+          fromAyah: r.fromAyah!,
+          toAyah: r.toAyah!,
+        })),
+      ),
+    ]);
+
+    for (const studentId of studentIds) {
+      result.set(studentId, {
+        targetPages: target.pages.get(studentId) ?? 0,
+        targetLines: target.lines.get(studentId) ?? 0,
+        actualPages: actual.pages.get(studentId) ?? 0,
+        actualLines: actual.lines.get(studentId) ?? 0,
+      });
+    }
+    return result;
+  }
+
+  /** Cumulative (no lower date bound) version of targetAndActualPagesBatch — see cumulativeTargetAndActualAyahsBatch's doc comment for why this exists alongside the windowed one. */
+  private async cumulativeTargetAndActualPagesBatch(
+    branchId: string,
+    studentIds: string[],
+    toDate: string,
+  ): Promise<
+    Map<string, { targetPages: number; targetLines: number; actualPages: number; actualLines: number }>
+  > {
+    const result = new Map<
+      string,
+      { targetPages: number; targetLines: number; actualPages: number; actualLines: number }
+    >();
+    if (studentIds.length === 0) return result;
+    for (const id of studentIds) {
+      result.set(id, { targetPages: 0, targetLines: 0, actualPages: 0, actualLines: 0 });
+    }
+
+    const [scheduleRows, progressRows] = await Promise.all([
+      this.prisma.surahHifdhStudentSchedule.findMany({
+        where: {
+          studentId: { in: studentIds },
+          scheduledDate: { lte: new Date(toDate) },
+          surahId: { not: null },
+          fromAyah: { not: null },
+          toAyah: { not: null },
+        },
+        select: { studentId: true, surahId: true, fromAyah: true, toAyah: true },
+      }),
+      this.prisma.studentSurahProgressEntry.findMany({
+        where: {
+          branchId,
+          studentId: { in: studentIds },
+          status: { in: ['COMPLETED', 'VERIFIED'] },
+          completedAt: { lte: new Date(`${toDate}T23:59:59.999Z`) },
+          type: TYPE_TO_ENUM['New Lesson'],
+          surahId: { not: null },
+          fromAyah: { not: null },
+          toAyah: { not: null },
+        },
+        select: { studentId: true, surahId: true, fromAyah: true, toAyah: true },
+      }),
+    ]);
+
+    const [target, actual] = await Promise.all([
+      this.countPageCompletion(
+        scheduleRows.map((r) => ({
+          groupKey: r.studentId,
+          surahId: r.surahId!,
+          fromAyah: r.fromAyah!,
+          toAyah: r.toAyah!,
+        })),
+      ),
+      this.countPageCompletion(
+        progressRows.map((r) => ({
+          groupKey: r.studentId,
+          surahId: r.surahId!,
+          fromAyah: r.fromAyah!,
+          toAyah: r.toAyah!,
+        })),
+      ),
+    ]);
+
+    for (const studentId of studentIds) {
+      result.set(studentId, {
+        targetPages: target.pages.get(studentId) ?? 0,
+        targetLines: target.lines.get(studentId) ?? 0,
+        actualPages: actual.pages.get(studentId) ?? 0,
+        actualLines: actual.lines.get(studentId) ?? 0,
+      });
+    }
+    return result;
+  }
+
+  /**
    * Same shape as targetAndActualAyahsBatch, but with no lower bound on
    * either side — everything scheduled/completed up to and including
    * toDate counts, starting from each student's own schedule/progress
@@ -2649,13 +2955,17 @@ export class StudentSurahProgressService {
 
   /** Batch halqa + teacher name lookup — for Top Performing's "All Halqas" card, which needs the teacher to credit, not just the halqa name. */
   private async studentHalqaTeacherBatch(studentIds: string[]) {
-    const result = new Map<string, { halqaName: string; teacherName: string | null }>();
+    const result = new Map<
+      string,
+      { halqaId: string; halqaName: string; teacherName: string | null }
+    >();
     if (studentIds.length === 0) return result;
     const memberships = await this.prisma.halqaStudent.findMany({
       where: { studentId: { in: studentIds }, removedAt: null },
       include: {
         halqa: {
           select: {
+            id: true,
             name: true,
             teacher: { include: { user: { select: { firstName: true, lastName: true } } } },
           },
@@ -2667,29 +2977,55 @@ export class StudentSurahProgressService {
         const teacherName = m.halqa.teacher
           ? [m.halqa.teacher.user.firstName, m.halqa.teacher.user.lastName].filter(Boolean).join(' ')
           : null;
-        result.set(m.studentId, { halqaName: m.halqa.name, teacherName: teacherName || null });
+        result.set(m.studentId, {
+          halqaId: m.halqa.id,
+          halqaName: m.halqa.name,
+          teacherName: teacherName || null,
+        });
       }
     }
     return result;
   }
 
-  /** Batch halqa lookup for a small, already-bounded set of students (e.g. the final `limit`-sized result page) — avoids one findFirst per student. */
-  private async studentHalqasBatch(studentIds: string[]) {
-    const result = new Map<
-      string,
-      { id: string; name: string; status: string }
-    >();
+  /** Batch "current class" lookup — the student's own active enrollment,
+   * preferring the current academic year if more than one active
+   * enrollment exists (shouldn't normally happen, but mirrors the same
+   * "most-current-year-wins" tie-break used for the Add Student class
+   * picker's dedup, for the same underlying reason: this schema allows a
+   * student to carry more than one active enrollment row). */
+  private async studentCurrentClassBatch(studentIds: string[]) {
+    const result = new Map<string, string>();
     if (studentIds.length === 0) return result;
-    const memberships = await this.prisma.halqaStudent.findMany({
-      where: { studentId: { in: studentIds }, removedAt: null },
-      include: { halqa: { select: { id: true, name: true, status: true } } },
+    const enrollments = await this.prisma.studentEnrollment.findMany({
+      where: { studentId: { in: studentIds }, status: 'ACTIVE' },
+      include: {
+        academicClassSectionYear: {
+          include: {
+            academicYear: { select: { isCurrent: true } },
+            academicClassSection: {
+              include: { academicClass: true, academicSection: true },
+            },
+          },
+        },
+      },
     });
-    for (const m of memberships) {
-      if (m.halqa && !result.has(m.studentId)) {
-        result.set(m.studentId, m.halqa);
+    for (const e of enrollments) {
+      const name = `${e.academicClassSectionYear.academicClassSection.academicClass.name} - ${e.academicClassSectionYear.academicClassSection.academicSection.name}`;
+      const existing = result.has(e.studentId);
+      if (!existing || e.academicClassSectionYear.academicYear.isCurrent) {
+        result.set(e.studentId, name);
       }
     }
     return result;
+  }
+
+
+  /** A Mushaf Juz' is 20 pages — folds every complete 20-page block of a
+   * raw page count into a Juz', leaving only the under-20 remainder as
+   * pages (same convention as the Activity Report PDF summary). */
+  private splitPagesIntoJuzAndPages(totalPages: number): { juz: number; pages: number } {
+    const pages = Math.max(0, totalPages);
+    return { juz: Math.floor(pages / 20), pages: pages % 20 };
   }
 
   // ── studentsWithPendingTargets ───────────────────────────────────────
@@ -2718,22 +3054,26 @@ export class StudentSurahProgressService {
       undefined,
       userId,
     );
-    const ayahsByStudent = await this.targetAndActualAyahsBatch(
-      branchId,
-      students.map((s) => s.id),
-      query.from_date,
-      query.to_date,
-    );
-    const cumulativeByStudent = await this.cumulativeTargetAndActualAyahsBatch(
-      branchId,
-      students.map((s) => s.id),
-      query.to_date,
-    );
+    const studentIds = students.map((s) => s.id);
+    const [ayahsByStudent, cumulativeByStudent, pagesByStudent, cumulativePagesByStudent] =
+      await Promise.all([
+        this.targetAndActualAyahsBatch(branchId, studentIds, query.from_date, query.to_date),
+        this.cumulativeTargetAndActualAyahsBatch(branchId, studentIds, query.to_date),
+        this.targetAndActualPagesBatch(branchId, studentIds, query.from_date, query.to_date),
+        this.cumulativeTargetAndActualPagesBatch(branchId, studentIds, query.to_date),
+      ]);
 
+    // Eligibility (has a real target at all, and deficit exceeds the
+    // threshold) is still ayah-based — it's a precise, cheap aggregate and
+    // the filter semantics don't change just because the DISPLAYED unit
+    // did. Ranking, however, now follows the same pages figure shown on
+    // screen, or the order wouldn't match what's displayed.
     const qualifying = students
       .map((student) => {
         const { targetAyahs, actualAyahs } = ayahsByStudent.get(student.id)!;
         const cumulative = cumulativeByStudent.get(student.id)!;
+        const pages = pagesByStudent.get(student.id)!;
+        const cumulativePages = cumulativePagesByStudent.get(student.id)!;
         return {
           student,
           targetAyahs,
@@ -2741,34 +3081,56 @@ export class StudentSurahProgressService {
           deficit: targetAyahs - actualAyahs,
           cumulativeTargetAyahs: cumulative.targetAyahs,
           cumulativeActualAyahs: cumulative.actualAyahs,
+          pages,
+          cumulativePages,
+          deficitPages: Math.max(0, pages.targetPages - pages.actualPages),
+          cumulativeDeficitPages: Math.max(
+            0,
+            cumulativePages.targetPages - cumulativePages.actualPages,
+          ),
         };
       })
       .filter((r) => r.targetAyahs !== 0 && r.deficit > minDeficit)
-      .sort((a, b) => b.deficit - a.deficit);
+      .sort((a, b) => b.deficitPages - a.deficitPages);
     const limited = limit !== null ? qualifying.slice(0, limit) : qualifying;
 
-    const halqaByStudent = await this.studentHalqasBatch(
-      limited.map((r) => r.student.id),
-    );
+    const limitedIds = limited.map((r) => r.student.id);
+    const [halqaByStudent, classByStudent] = await Promise.all([
+      this.studentHalqaTeacherBatch(limitedIds),
+      this.studentCurrentClassBatch(limitedIds),
+    ]);
     const result = await Promise.all(
-      limited.map(async (r) => ({
-        student: {
-          ...(await this.formatStudentBasic(r.student)),
-          halqa: halqaByStudent.get(r.student.id)
-            ? {
-                id: halqaByStudent.get(r.student.id)!.id,
-                name: halqaByStudent.get(r.student.id)!.name,
-              }
-            : null,
-        },
-        target_ayahs: r.targetAyahs,
-        actual_ayahs: r.actualAyahs,
-        deficit_ayahs: r.deficit,
-        cumulative_target_ayahs: r.cumulativeTargetAyahs,
-        cumulative_actual_ayahs: r.cumulativeActualAyahs,
-        cumulative_deficit_ayahs:
-          r.cumulativeTargetAyahs - r.cumulativeActualAyahs,
-      })),
+      limited.map(async (r) => {
+        const halqa = halqaByStudent.get(r.student.id);
+        const deficitSplit = this.splitPagesIntoJuzAndPages(r.deficitPages);
+        const cumulativeDeficitSplit = this.splitPagesIntoJuzAndPages(r.cumulativeDeficitPages);
+        return {
+          student: {
+            ...(await this.formatStudentBasic(r.student)),
+            halqa: halqa ? { id: halqa.halqaId, name: halqa.halqaName } : null,
+            teacher_name: halqa?.teacherName ?? null,
+            class_name: classByStudent.get(r.student.id) ?? null,
+          },
+          target_ayahs: r.targetAyahs,
+          actual_ayahs: r.actualAyahs,
+          deficit_ayahs: r.deficit,
+          cumulative_target_ayahs: r.cumulativeTargetAyahs,
+          cumulative_actual_ayahs: r.cumulativeActualAyahs,
+          cumulative_deficit_ayahs: r.cumulativeTargetAyahs - r.cumulativeActualAyahs,
+          target_pages: r.pages.targetPages,
+          target_lines: r.pages.targetLines,
+          actual_pages: r.pages.actualPages,
+          actual_lines: r.pages.actualLines,
+          deficit_pages: r.deficitPages,
+          deficit_juz: deficitSplit.juz,
+          deficit_pages_remainder: deficitSplit.pages,
+          cumulative_target_pages: r.cumulativePages.targetPages,
+          cumulative_actual_pages: r.cumulativePages.actualPages,
+          cumulative_deficit_pages: r.cumulativeDeficitPages,
+          cumulative_deficit_juz: cumulativeDeficitSplit.juz,
+          cumulative_deficit_pages_remainder: cumulativeDeficitSplit.pages,
+        };
+      }),
     );
 
     return {
@@ -2811,22 +3173,21 @@ export class StudentSurahProgressService {
       undefined,
       userId,
     );
-    const ayahsByStudent = await this.targetAndActualAyahsBatch(
-      branchId,
-      students.map((s) => s.id),
-      fromDate,
-      toDate,
-    );
-    const cumulativeByStudent = await this.cumulativeTargetAndActualAyahsBatch(
-      branchId,
-      students.map((s) => s.id),
-      toDate,
-    );
+    const studentIds = students.map((s) => s.id);
+    const [ayahsByStudent, cumulativeByStudent, pagesByStudent, cumulativePagesByStudent] =
+      await Promise.all([
+        this.targetAndActualAyahsBatch(branchId, studentIds, fromDate, toDate),
+        this.cumulativeTargetAndActualAyahsBatch(branchId, studentIds, toDate),
+        this.targetAndActualPagesBatch(branchId, studentIds, fromDate, toDate),
+        this.cumulativeTargetAndActualPagesBatch(branchId, studentIds, toDate),
+      ]);
 
     const qualifying = students
       .map((student) => {
         const { targetAyahs, actualAyahs } = ayahsByStudent.get(student.id)!;
         const cumulative = cumulativeByStudent.get(student.id)!;
+        const pages = pagesByStudent.get(student.id)!;
+        const cumulativePages = cumulativePagesByStudent.get(student.id)!;
         return {
           student,
           targetAyahs,
@@ -2834,34 +3195,56 @@ export class StudentSurahProgressService {
           excess: actualAyahs - targetAyahs,
           cumulativeTargetAyahs: cumulative.targetAyahs,
           cumulativeActualAyahs: cumulative.actualAyahs,
+          pages,
+          cumulativePages,
+          excessPages: Math.max(0, pages.actualPages - pages.targetPages),
+          cumulativeExcessPages: Math.max(
+            0,
+            cumulativePages.actualPages - cumulativePages.targetPages,
+          ),
         };
       })
       .filter((r) => r.excess > minExcess)
-      .sort((a, b) => b.excess - a.excess);
+      .sort((a, b) => b.excessPages - a.excessPages);
     const limited = limit !== null ? qualifying.slice(0, limit) : qualifying;
 
-    const halqaByStudent = await this.studentHalqasBatch(
-      limited.map((r) => r.student.id),
-    );
+    const limitedIds = limited.map((r) => r.student.id);
+    const [halqaByStudent, classByStudent] = await Promise.all([
+      this.studentHalqaTeacherBatch(limitedIds),
+      this.studentCurrentClassBatch(limitedIds),
+    ]);
     const result = await Promise.all(
-      limited.map(async (r) => ({
-        student: {
-          ...(await this.formatStudentBasic(r.student)),
-          halqa: halqaByStudent.get(r.student.id)
-            ? {
-                id: halqaByStudent.get(r.student.id)!.id,
-                name: halqaByStudent.get(r.student.id)!.name,
-              }
-            : null,
-        },
-        target_ayahs: r.targetAyahs,
-        actual_ayahs: r.actualAyahs,
-        excess_ayahs: r.excess,
-        cumulative_target_ayahs: r.cumulativeTargetAyahs,
-        cumulative_actual_ayahs: r.cumulativeActualAyahs,
-        cumulative_excess_ayahs:
-          r.cumulativeActualAyahs - r.cumulativeTargetAyahs,
-      })),
+      limited.map(async (r) => {
+        const halqa = halqaByStudent.get(r.student.id);
+        const excessSplit = this.splitPagesIntoJuzAndPages(r.excessPages);
+        const cumulativeExcessSplit = this.splitPagesIntoJuzAndPages(r.cumulativeExcessPages);
+        return {
+          student: {
+            ...(await this.formatStudentBasic(r.student)),
+            halqa: halqa ? { id: halqa.halqaId, name: halqa.halqaName } : null,
+            teacher_name: halqa?.teacherName ?? null,
+            class_name: classByStudent.get(r.student.id) ?? null,
+          },
+          target_ayahs: r.targetAyahs,
+          actual_ayahs: r.actualAyahs,
+          excess_ayahs: r.excess,
+          cumulative_target_ayahs: r.cumulativeTargetAyahs,
+          cumulative_actual_ayahs: r.cumulativeActualAyahs,
+          cumulative_excess_ayahs: r.cumulativeActualAyahs - r.cumulativeTargetAyahs,
+          target_pages: r.pages.targetPages,
+          target_lines: r.pages.targetLines,
+          actual_pages: r.pages.actualPages,
+          actual_lines: r.pages.actualLines,
+          excess_pages: r.excessPages,
+          excess_juz: excessSplit.juz,
+          excess_pages_remainder: excessSplit.pages,
+          cumulative_target_pages: r.cumulativePages.targetPages,
+          cumulative_actual_pages: r.cumulativePages.actualPages,
+          cumulative_excess_pages: r.cumulativeExcessPages,
+          cumulative_excess_juz: cumulativeExcessSplit.juz,
+          cumulative_excess_pages_remainder: cumulativeExcessSplit.pages,
+        };
+      }),
     );
 
     return {
