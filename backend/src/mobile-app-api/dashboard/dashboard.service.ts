@@ -2,6 +2,8 @@ import { ForbiddenException, Injectable } from '@nestjs/common';
 import { HifdhScheduleStatus, ProgressEntryStatus, ProgressEntryType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MobileContextService } from '../common/mobile-context.service';
+import { StudentSurahProgressService } from '../student-surah-progress/student-surah-progress.service';
+import { GetStudentsTargetQueryDto } from '../student-surah-progress/dto/get-students-target-query.dto';
 
 const DONE_STATUSES: ProgressEntryStatus[] = [ProgressEntryStatus.COMPLETED, ProgressEntryStatus.VERIFIED];
 
@@ -10,6 +12,7 @@ export class DashboardService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly mobileContext: MobileContextService,
+    private readonly studentSurahProgress: StudentSurahProgressService,
   ) {}
 
   async teacherDashboard(userId: string) {
@@ -250,6 +253,21 @@ export class DashboardService {
     const attendancePercentage = totalStudents > 0 ? Math.round((presentTodayCount / totalStudents) * 10000) / 100 : 0;
     const markedPercentage = totalStudents > 0 ? Math.round((completedStudentIds.length / totalStudents) * 10000) / 100 : 0;
 
+    // How many students are genuinely AHEAD of their real cumulative
+    // target overall — reuses getStudentsExceededTarget's own since_start
+    // qualification (page-based, cumulative-only) so this headline number
+    // always agrees with what Target Overview's "Since Start" tab shows,
+    // rather than computing an independent, differently-defined metric.
+    const targetQuery = new GetStudentsTargetQueryDto();
+    targetQuery.to_date = new Date().toISOString().slice(0, 10);
+    targetQuery.since_start = 'true';
+    const exceededOverall = await this.studentSurahProgress.getStudentsExceededTarget(
+      branchId,
+      userId,
+      targetQuery,
+    );
+    const targetAchievedOverallCount = exceededOverall.data.total_students_exceeded;
+
     return {
       total_teachers: totalTeachers,
       total_students: totalStudents,
@@ -275,6 +293,14 @@ export class DashboardService {
         percentage_up_to_date:
           totalStudents > 0
             ? Math.round(((totalStudents - overdueStudentsCount) / totalStudents) * 1000) / 10
+            : 0,
+      },
+      target_achieved_overall: {
+        achieved_students: targetAchievedOverallCount,
+        total_students: totalStudents,
+        percentage_achieved:
+          totalStudents > 0
+            ? Math.round((targetAchievedOverallCount / totalStudents) * 1000) / 10
             : 0,
       },
       today_target: {

@@ -3232,6 +3232,7 @@ export class StudentSurahProgressService {
     // (bounded per-student cost, not the old raw-row-duplication problem).
     // An explicit ?limit= is still honored for callers that want one.
     const limit = query.limit ? Number(query.limit) : null;
+    const sinceStart = query.since_start === 'true';
 
     const students = await this.activeStudentsForReport(
       branchId,
@@ -3275,13 +3276,24 @@ export class StudentSurahProgressService {
           ),
         };
       })
-      // Page-based (not ayah-based — avoids a tiny ayah deficit rounding
-      // to "0 pages behind" while still qualifying) and requires a real
-      // deficit in BOTH the windowed period AND cumulatively, same
-      // reasoning as the Exceeded Target list's mirror fix: windowed-only
-      // qualification never agreed with what "Since Start" mode displays.
-      .filter((r) => r.deficitPages > minDeficit && r.cumulativeDeficitPages > 0)
-      .sort((a, b) => b.deficitPages - a.deficitPages);
+      // Page-based (not ayah-based — avoids a tiny ayah deficit rounding to
+      // "0 pages behind" while still qualifying) and scoped to whichever
+      // window the client is actually displaying — `since_start` decides
+      // BOTH which figure qualifies a student AND which one ranks the
+      // list, matching the app's "Since Start" toggle. Windowed-only
+      // qualification used to apply even in Since Start mode, excluding
+      // students with a real cumulative deficit who just hadn't fallen
+      // further behind in the last few days specifically.
+      .filter((r) =>
+        sinceStart
+          ? r.cumulativeDeficitPages > minDeficit
+          : r.deficitPages > minDeficit,
+      )
+      .sort((a, b) =>
+        sinceStart
+          ? b.cumulativeDeficitPages - a.cumulativeDeficitPages
+          : b.deficitPages - a.deficitPages,
+      );
     const limited = limit !== null ? qualifying.slice(0, limit) : qualifying;
 
     const limitedIds = limited.map((r) => r.student.id);
@@ -3331,6 +3343,7 @@ export class StudentSurahProgressService {
           halqa_id: query.halqa_id ?? null,
           min_deficit: minDeficit,
           limit,
+          since_start: sinceStart,
         },
         total_students_with_pending: result.length,
         students: result,
@@ -3356,6 +3369,7 @@ export class StudentSurahProgressService {
     // an actionable admin worklist, and the query underneath is already
     // safely aggregated regardless of how many students qualify).
     const limit = query.limit ? Number(query.limit) : null;
+    const sinceStart = query.since_start === 'true';
 
     const students = await this.activeStudentsForReport(
       branchId,
@@ -3394,19 +3408,24 @@ export class StudentSurahProgressService {
           ),
         };
       })
-      // Page-based (not ayah-based) and requires excess in BOTH the
-      // windowed period AND cumulatively. Ayah-based excess could be
-      // positive while rounding to 0 full pages (shows as "0 pages
-      // exceeded", confusing) — minExcess is already a page-count
-      // threshold from the UI, so the qualifying check should use the
-      // same unit it's compared against and displayed as. Requiring both
-      // windowed AND cumulative excess > 0 stops a student who's merely
-      // ahead in this recent window (but flat or behind overall) from
-      // showing up in "Since Start" mode with a nonsensical 0 (or
-      // negative-clamped) cumulative figure — windowed-only qualification
-      // never agreed with what "Since Start" actually displays.
-      .filter((r) => r.excessPages > minExcess && r.cumulativeExcessPages > 0)
-      .sort((a, b) => b.excessPages - a.excessPages);
+      // Page-based (not ayah-based — avoids a tiny ayah excess rounding to
+      // "0 pages exceeded" while still qualifying) and scoped to whichever
+      // window the client is actually displaying — `since_start` decides
+      // BOTH which figure qualifies a student AND which one ranks the
+      // list, matching the app's "Since Start" toggle. Windowed-only
+      // qualification used to apply even in Since Start mode, excluding
+      // students with a real cumulative excess who simply hadn't done
+      // anything extra in the last few days specifically.
+      .filter((r) =>
+        sinceStart
+          ? r.cumulativeExcessPages > minExcess
+          : r.excessPages > minExcess,
+      )
+      .sort((a, b) =>
+        sinceStart
+          ? b.cumulativeExcessPages - a.cumulativeExcessPages
+          : b.excessPages - a.excessPages,
+      );
     const limited = limit !== null ? qualifying.slice(0, limit) : qualifying;
 
     const limitedIds = limited.map((r) => r.student.id);
@@ -3456,6 +3475,7 @@ export class StudentSurahProgressService {
           halqa_id: query.halqa_id ?? null,
           min_excess: minExcess,
           limit,
+          since_start: sinceStart,
         },
         total_students_exceeded: result.length,
         students: result,

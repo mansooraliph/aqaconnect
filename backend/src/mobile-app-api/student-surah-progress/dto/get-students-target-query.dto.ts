@@ -30,4 +30,13 @@ export class GetStudentsTargetQueryDto {
   @IsOptional()
   @IsString()
   limit?: string;
+
+  // 'true' = qualify/rank by the CUMULATIVE figures (since the student's
+  // real schedule start, ignoring from_date) instead of the windowed
+  // from_date..to_date figures — matches the app's "Since Start" toggle,
+  // which previously only changed which already-decided cards displayed
+  // which numbers, not which students qualified in the first place.
+  @IsOptional()
+  @IsString()
+  since_start?: string;
 }
