@@ -30,6 +30,7 @@ import { PermissionsGuard } from '../../common/guards/permissions.guard';
 import { RequirePermission } from '../../common/decorators/require-permission.decorator';
 import { CreateStudentDto } from './dto/create-student.dto';
 import { UpdateStudentDto } from './dto/update-student.dto';
+import { UpdateStudentStageDto } from './dto/update-student-stage.dto';
 import { ClassSectionYearsQueryDto } from './dto/class-section-years-query.dto';
 import { AdmissionYearReportQueryDto } from './dto/admission-year-report-query.dto';
 import { AcademicClassesQueryDto } from './dto/academic-classes-query.dto';
@@ -136,6 +137,25 @@ export class StudentsController {
   async getStudentDetails(@Req() req: AuthedRequest, @Param('studentId') studentId: string) {
     const branchId = await this.context.resolveBranchId(req.user.userId);
     return this.handle(() => this.service.getStudentDetails(branchId, studentId), 'Failed to retrieve student details');
+  }
+
+  @Get(':studentId/stage')
+  async getStudentStage(@Req() req: AuthedRequest, @Param('studentId') studentId: string) {
+    const branchId = await this.context.resolveBranchId(req.user.userId);
+    return this.handle(() => this.service.getStudentStage(branchId, studentId), 'Failed to retrieve student stage');
+  }
+
+  @Patch(':studentId/stage')
+  async updateStudentStage(
+    @Req() req: AuthedRequest,
+    @Param('studentId') studentId: string,
+    @Body() dto: UpdateStudentStageDto,
+  ) {
+    const branchId = await this.context.resolveBranchId(req.user.userId);
+    return this.handle(
+      () => this.service.updateStudentStage(branchId, studentId, dto.stage),
+      'Failed to update student stage',
+    );
   }
 
   @Get('academic-class-section-years')

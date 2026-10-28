@@ -4,7 +4,7 @@ import { randomBytes } from 'crypto';
 import { mkdirSync, createWriteStream, existsSync } from 'fs';
 import { join } from 'path';
 import PDFDocument from 'pdfkit';
-import { Gender, StudentExamOutcome, StudentExamMode, NotificationType, ProgressEntryGrade, ProgressEntryStatus, ProgressEntryType } from '@prisma/client';
+import { Gender, StudentExamOutcome, StudentExamMode, NotificationType, ProgressEntryGrade, ProgressEntryStatus, ProgressEntryType, StudentStage } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { HifdhService } from '../../academic/hifdh/hifdh.service';
 import { MobileContextService } from '../common/mobile-context.service';
@@ -537,6 +537,8 @@ export class MobileStudentsService {
           country_phonecode: null,
           gender: toLegacyGender(student.gender),
           status: student.status.toLowerCase(),
+          stage: student.stage,
+          stage4_started_at: student.stage4StartedAt ? toDateOnly(student.stage4StartedAt) : null,
           login: student.user?.isActive === false ? 'disable' : 'enable',
           email_notifications: true, // no notification-preferences subsystem in this schema
           locale: null,
@@ -566,6 +568,59 @@ export class MobileStudentsService {
         halqa: halqaInfo,
         enrollment: enrollmentInfo,
         custom_fields: null, // no custom-fields subsystem in this schema
+      },
+    };
+  }
+
+  // Lightweight, standalone from getStudentDetails so the app's lesson-type
+  // picker (which decides whether to show New/Juzh Lesson at all) can check
+  // this on its own without pulling the whole student-details payload.
+  async getStudentStage(branchId: string, studentId: string) {
+    const student = await this.prisma.student.findFirst({
+      where: { id: studentId, branchId },
+      select: { stage: true, stage4StartedAt: true },
+    });
+    if (!student) {
+      throw new NotFoundException({ status: 'error', message: 'Student not found' });
+    }
+    return {
+      status: 'success',
+      data: {
+        stage: student.stage,
+        stage4_started_at: student.stage4StartedAt ? toDateOnly(student.stage4StartedAt) : null,
+      },
+    };
+  }
+
+  async updateStudentStage(branchId: string, studentId: string, stage: StudentStage) {
+    const student = await this.prisma.student.findFirst({ where: { id: studentId, branchId } });
+    if (!student) {
+      throw new NotFoundException({ status: 'error', message: 'Student not found' });
+    }
+    // Every (re-)entry into Stage 4 restarts the 140-day revision pace
+    // clock — a student who drops back to Stage 3 (resumed memorization)
+    // and later returns to Stage 4 starts that program over, not picks up
+    // wherever the old clock would have been. Anchored to UTC midnight, not
+    // the exact moment of this call — completedAt on progress entries is
+    // always midnight-anchored (see store-old-lesson-progress and
+    // everywhere else dates are compared in this codebase), so a raw
+    // `new Date()` here would exclude same-day entries whenever this PATCH
+    // lands later than 00:00:00 UTC, which is effectively always.
+    const enteringStage4 = stage === 'STAGE_4' && student.stage !== 'STAGE_4';
+    const todayUtcMidnight = (() => {
+      const now = new Date();
+      return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    })();
+    const updated = await this.prisma.student.update({
+      where: { id: studentId },
+      data: { stage, ...(enteringStage4 && { stage4StartedAt: todayUtcMidnight }) },
+    });
+    return {
+      status: 'success',
+      message: 'Stage updated successfully',
+      data: {
+        stage: updated.stage,
+        stage4_started_at: updated.stage4StartedAt ? toDateOnly(updated.stage4StartedAt) : null,
       },
     };
   }

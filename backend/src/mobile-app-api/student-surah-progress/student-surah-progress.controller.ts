@@ -386,6 +386,19 @@ export class StudentSurahProgressController {
     );
   }
 
+  // ── getStage4PaceInfo ─────────────────────────────────────────────────
+  @Get('students/:studentId/stage4-pace')
+  async getStage4PaceInfo(
+    @Req() req: AuthedRequest,
+    @Param('studentId') studentId: string,
+  ) {
+    const branchId = await this.context.resolveBranchId(req.user.userId);
+    return this.handle(
+      () => this.service.getStage4PaceInfo(branchId, studentId),
+      'Failed to retrieve Stage 4 pace info',
+    );
+  }
+
   // ── getStudentTargetDetail ────────────────────────────────────────────
   @Get('students/:studentId/target-detail')
   async getStudentTargetDetail(

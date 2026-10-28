@@ -14,6 +14,7 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../../notifications/notifications.service';
 import { MobileContextService } from '../common/mobile-context.service';
+import { stage4DayNumber, stage4PaceForDay } from '../common/stage4-pace-table';
 import { BulkMarkCompletedDto } from './dto/bulk-mark-completed.dto';
 import { BulkMarkSurahsCompletedDto } from './dto/bulk-mark-surahs-completed.dto';
 import { StoreOldLessonProgressDto } from './dto/store-old-lesson-progress.dto';
@@ -1831,6 +1832,56 @@ export class StudentSurahProgressService {
   }
 
   // ── storeOldLessonProgress ───────────────────────────────────────────
+  /**
+   * Resolves a Juz' range (+ optional extra pages past the end) into the
+   * ordered list of real surah/ayah segments it spans — one segment per
+   * surah touched, since countPageCompletion (and every other page/line
+   * aggregate in this codebase) only understands a single-surah ayah range
+   * per entry. Backed by SurahAyahPageLine.juzNumber, the real per-ayah
+   * Juz' boundary data — NOT the flat-20-pages-per-Juz' approximation
+   * splitPagesIntoJuzAndPages uses elsewhere (that summarizes an
+   * already-known page COUNT; it doesn't know where a specific Juz'
+   * actually starts/ends).
+   */
+  private async resolveJuzRangeToSegments(
+    juzFrom: number,
+    juzTo: number,
+    extraPages: number,
+  ): Promise<{ surahId: string; fromAyah: number; toAyah: number }[]> {
+    const rows = await this.prisma.surahAyahPageLine.findMany({
+      where: { juzNumber: { gte: juzFrom, lte: juzTo } },
+      select: { surahId: true, ayahNumber: true, quranPage: { select: { pageNumber: true } } },
+      orderBy: [{ quranPage: { pageNumber: 'asc' } }, { ayahNumber: 'asc' }],
+    });
+    if (rows.length === 0) return [];
+
+    if (extraPages > 0) {
+      const lastPageNumber = rows[rows.length - 1].quranPage.pageNumber;
+      const extraRows = await this.prisma.surahAyahPageLine.findMany({
+        where: {
+          quranPage: { pageNumber: { gt: lastPageNumber, lte: lastPageNumber + extraPages } },
+        },
+        select: { surahId: true, ayahNumber: true, quranPage: { select: { pageNumber: true } } },
+        orderBy: [{ quranPage: { pageNumber: 'asc' } }, { ayahNumber: 'asc' }],
+      });
+      // Running off the end of the Mushaf (already on/near the last page)
+      // just means fewer extra pages got applied than asked for — not an
+      // error; the resolved range simply stops at the Mushaf's last ayah.
+      rows.push(...extraRows);
+    }
+
+    const segments: { surahId: string; fromAyah: number; toAyah: number }[] = [];
+    for (const row of rows) {
+      const last = segments[segments.length - 1];
+      if (last && last.surahId === row.surahId) {
+        last.toAyah = row.ayahNumber;
+      } else {
+        segments.push({ surahId: row.surahId, fromAyah: row.ayahNumber, toAyah: row.ayahNumber });
+      }
+    }
+    return segments;
+  }
+
   async storeOldLessonProgress(
     branchId: string,
     userId: string,
@@ -1866,32 +1917,66 @@ export class StudentSurahProgressService {
       }
     }
 
-    const entry = await this.prisma.studentSurahProgressEntry.create({
-      data: {
-        branchId,
-        studentId: dto.student_id,
-        type: TYPE_TO_ENUM[dto.type],
-        status: 'COMPLETED',
-        completedAt: new Date(dto.completed_at),
-        grade: dto.grade ? GRADE_TO_ENUM[dto.grade] : undefined,
-        remarks: dto.remarks,
-        ...(remarkFileUrl && { remarkFile: remarkFileUrl }),
-        surahId,
-        fromAyah,
-        toAyah,
-        surahFrom: dto.surah_from,
-        surahFromAyah: dto.surah_from_ayah,
-        surahTo: dto.surah_to,
-        surahToAyah: dto.surah_to_ayah,
-        juzuhFrom: dto.juzuh_from,
-        juzuhTo: dto.juzuh_to,
-        pageFrom: dto.page_from,
-        pageTo: dto.page_to,
-        pageCount: dto.page_count,
-        addedById: userId,
-        lastUpdatedById: userId,
-      },
-    });
+    // Juz'-based entry (the app's "Juz" method, and Stage 4 revision
+    // marking specifically) — surah_from/surah_to weren't given, so resolve
+    // real surah/ayah coverage from the Juz' range instead, split into one
+    // segment per surah it touches. Without this, surahId/fromAyah/toAyah
+    // stayed undefined for every Juz'-only entry and silently dropped out
+    // of every page/line completion total (Target Overview, Activity
+    // Report, Top Students, ...) — a pre-existing gap for the "Juz" method,
+    // not just new Stage 4 entries.
+    let juzSegments: { surahId: string; fromAyah: number; toAyah: number }[] = [];
+    if (!surahId && dto.juzuh_from) {
+      juzSegments = await this.resolveJuzRangeToSegments(
+        dto.juzuh_from,
+        dto.juzuh_to ?? dto.juzuh_from,
+        dto.extra_pages ?? 0,
+      );
+    }
+
+    const baseData = {
+      branchId,
+      studentId: dto.student_id,
+      type: TYPE_TO_ENUM[dto.type],
+      status: 'COMPLETED' as const,
+      completedAt: new Date(dto.completed_at),
+      grade: dto.grade ? GRADE_TO_ENUM[dto.grade] : undefined,
+      remarks: dto.remarks,
+      ...(remarkFileUrl && { remarkFile: remarkFileUrl }),
+      surahFrom: dto.surah_from,
+      surahFromAyah: dto.surah_from_ayah,
+      surahTo: dto.surah_to,
+      surahToAyah: dto.surah_to_ayah,
+      juzuhFrom: dto.juzuh_from,
+      juzuhTo: dto.juzuh_to,
+      pageFrom: dto.page_from,
+      pageTo: dto.page_to,
+      pageCount: dto.page_count,
+      extraPages: dto.extra_pages,
+      addedById: userId,
+      lastUpdatedById: userId,
+    };
+
+    let entry: Awaited<ReturnType<typeof this.prisma.studentSurahProgressEntry.create>>;
+    if (juzSegments.length > 0) {
+      // Multiple surahs touched — one row per segment so each has a valid
+      // single-surah ayah range for completion math; juzuhFrom/juzuhTo/
+      // extraPages are repeated on every row for traceability (this is
+      // still one logical "Juz' N + P pages" entry from the teacher's
+      // point of view), while surahId/fromAyah/toAyah differ per row.
+      const created = await this.prisma.$transaction(
+        juzSegments.map((seg) =>
+          this.prisma.studentSurahProgressEntry.create({
+            data: { ...baseData, surahId: seg.surahId, fromAyah: seg.fromAyah, toAyah: seg.toAyah },
+          }),
+        ),
+      );
+      entry = created[0];
+    } else {
+      entry = await this.prisma.studentSurahProgressEntry.create({
+        data: { ...baseData, surahId, fromAyah, toAyah },
+      });
+    }
 
     return {
       status: 'success',
@@ -1914,6 +1999,8 @@ export class StudentSurahProgressService {
         page_from: entry.pageFrom,
         page_to: entry.pageTo,
         page_count: entry.pageCount,
+        extra_pages: entry.extraPages,
+        entries_created: Math.max(1, juzSegments.length),
         surah_range: entry.surahFrom
           ? `${entry.surahFrom}${entry.surahTo && entry.surahTo !== entry.surahFrom ? `-${entry.surahTo}` : ''}`
           : null,
@@ -1926,6 +2013,97 @@ export class StudentSurahProgressService {
             ? `${entry.pageCount} pages`
             : null,
         created_at: formatDateTime(entry.createdAt),
+      },
+    };
+  }
+
+  // ── getStage4PaceInfo ───────────────────────────────────────────────
+  // Today's and cumulative-since-stage4StartedAt pace comparison for a
+  // Stage 4 student, against the 140-day revision schedule. "Actual" is
+  // converted to a Juz'-equivalent via the same 20-pages/Juz' convention
+  // the rest of the app already displays (splitPagesIntoJuzAndPages) —
+  // intentionally NOT the exact per-ayah Juz' boundaries used to store
+  // entries (resolveJuzRangeToSegments); that's the right unit for
+  // recording exactly what was read, this is the right unit for a
+  // "how many Juz' did they do" pace comparison.
+  async getStage4PaceInfo(branchId: string, studentId: string) {
+    const student = await this.requireActiveStudent(branchId, studentId);
+    if (student.stage !== 'STAGE_4' || !student.stage4StartedAt) {
+      return {
+        status: 'success',
+        data: { in_stage4: false, day_number: null, today: null, cumulative: null },
+      };
+    }
+
+    const now = new Date();
+    const startOfToday = new Date(now);
+    startOfToday.setUTCHours(0, 0, 0, 0);
+    const endOfToday = new Date(now);
+    endOfToday.setUTCHours(23, 59, 59, 999);
+
+    const dayNumber = stage4DayNumber(student.stage4StartedAt, now);
+    const todayPace = stage4PaceForDay(dayNumber);
+
+    const juzEquivalent = async (from: Date, to: Date): Promise<number> => {
+      const entries = await this.prisma.studentSurahProgressEntry.findMany({
+        where: {
+          studentId,
+          type: ProgressEntryType.OLD_LESSON,
+          status: { in: ['COMPLETED', 'VERIFIED'] },
+          completedAt: { gte: from, lte: to },
+          surahId: { not: null },
+          fromAyah: { not: null },
+          toAyah: { not: null },
+        },
+        select: { surahId: true, fromAyah: true, toAyah: true },
+      });
+      const completion = await this.countPageCompletion(
+        entries.map((e) => ({
+          groupKey: 'g',
+          surahId: e.surahId!,
+          fromAyah: e.fromAyah!,
+          toAyah: e.toAyah!,
+        })),
+      );
+      const pages = completion.pages.get('g') ?? 0;
+      const split = this.splitPagesIntoJuzAndPages(pages);
+      return split.juz + split.pages / 20;
+    };
+
+    // Normalized to UTC midnight regardless of what's actually stored —
+    // completedAt on progress entries is always midnight-anchored, so a
+    // stage4StartedAt with any later time-of-day would wrongly exclude
+    // same-day entries from the cumulative total.
+    const startOfStage4 = new Date(student.stage4StartedAt);
+    startOfStage4.setUTCHours(0, 0, 0, 0);
+
+    const actualJuzToday = await juzEquivalent(startOfToday, endOfToday);
+    const actualJuzCumulative = await juzEquivalent(startOfStage4, endOfToday);
+
+    let expectedJuzCumulative = 0;
+    for (let d = 1; d <= dayNumber; d++) {
+      expectedJuzCumulative += stage4PaceForDay(d).paceJuzPerDay ?? 0;
+    }
+
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+
+    return {
+      status: 'success',
+      data: {
+        in_stage4: true,
+        stage4_started_at: formatDateOnly(student.stage4StartedAt),
+        day_number: dayNumber,
+        today: {
+          is_exam_day: todayPace.examLabel !== null,
+          exam_label: todayPace.examLabel,
+          expected_juz: todayPace.paceJuzPerDay,
+          actual_juz: round2(actualJuzToday),
+        },
+        cumulative: {
+          expected_juz: round2(expectedJuzCumulative),
+          actual_juz: round2(actualJuzCumulative),
+          status: actualJuzCumulative + 0.01 >= expectedJuzCumulative ? 'on_track' : 'behind',
+        },
       },
     };
   }
@@ -2530,8 +2708,15 @@ export class StudentSurahProgressService {
 
       // Surfaced separately from the activities feed so the card doesn't
       // need to parse that generic array just to show a remarks indicator.
+      // Deduplicated — a single Juz'-range Lesson entry that spans multiple
+      // surahs (Stage 4 revision marking) is stored as one row per surah
+      // for correct page/line completion math, all carrying the SAME
+      // remarks text; without dedup this card would show that one note
+      // repeated once per surah it happened to touch.
       const remarkTexts = [
-        ...(records ?? []).map((r) => r.remarks).filter((r): r is string => !!r),
+        ...new Set(
+          (records ?? []).map((r) => r.remarks).filter((r): r is string => !!r),
+        ),
         ...(latestExam?.remarks ? [latestExam.remarks] : []),
       ];
 

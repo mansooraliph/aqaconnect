@@ -1026,6 +1026,17 @@ model Admission {
   @@index([desiredClassId])
 }
 
+// A student's progress-marking phase. STAGE_3 is the full memorization
+// flow (New Lesson / Juzh Lesson / Old Lesson rotation, target schedules).
+// STAGE_4 is revision & exam only — the student has finished memorizing and
+// is only marked via Old Lesson (Juz'/page revision) from here on, no more
+// New Lesson or Juzh Lesson entries. A teacher moves a student between the
+// two from the app; see StudentsController's stage endpoints.
+enum StudentStage {
+  STAGE_3
+  STAGE_4
+}
+
 // Student profile — 1:1 with User only when the student has portal/mobile
 // login (self-service progress views, leave requests); userId is nullable
 // to support students without their own login (guardian-managed only).
@@ -1053,6 +1064,11 @@ model Student {
   admissionId    String?      @unique
   admission      Admission?   @relation(fields: [admissionId], references: [id])
   status         ActiveStatus @default(ACTIVE)
+  stage          StudentStage @default(STAGE_3)
+  // Set the moment a teacher moves this student STAGE_3 -> STAGE_4 (and
+  // reset on every subsequent re-entry into STAGE_4) — anchors "day N" of
+  // the 140-day revision pace schedule. Null while never in Stage 4 yet.
+  stage4StartedAt DateTime?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
 
@@ -1206,6 +1222,12 @@ model StudentSurahProgressEntry {
   // "Total Pages Read" method — a plain page count with no specific
   // from/to range (unlike pageFrom/pageTo, which record an actual range).
   pageCount     Int?
+  // Stage 4 revision marking only — pages read past the end of juzuhTo
+  // (e.g. "1 Juz' + 8 extra pages" instead of a round number of Juz').
+  // surahId/fromAyah/toAyah already cover the resolved real range (juzuhTo
+  // extended by this many Mushaf pages); this is kept purely so the UI can
+  // redisplay "Juz' N + P pages" instead of reverse-deriving it from ayahs.
+  extraPages    Int?
 
   addedById       String?
   addedBy         User?   @relation("ProgressEntryAddedBy", fields: [addedById], references: [id])

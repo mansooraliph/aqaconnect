@@ -47,6 +47,16 @@ export class StoreOldLessonProgressDto {
   @Max(30)
   juzuh_to?: number;
 
+  // Stage 4 revision marking — pages read past the end of juzuh_to (e.g.
+  // "1 Juz' + 8 extra pages" instead of a round number of Juz'). Only
+  // meaningful alongside juzuh_from/juzuh_to; ignored otherwise.
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(604)
+  extra_pages?: number;
+
   @IsOptional()
   @Type(() => Number)
   @IsInt()
