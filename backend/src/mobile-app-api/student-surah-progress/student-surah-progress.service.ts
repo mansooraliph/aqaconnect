@@ -3389,7 +3389,13 @@ export class StudentSurahProgressService {
           ),
         };
       })
-      .filter((r) => r.excess > minExcess)
+      // targetAyahs !== 0 guard (same as studentsWithPendingTargets) — a
+      // student with NOTHING scheduled in this window (e.g. their whole
+      // Hifdh schedule was front-loaded earlier and nothing falls in this
+      // particular date range) has target=0, and actual > 0 trivially
+      // "exceeds" a zero baseline — wrongly showing them as ahead even
+      // when they're still behind on their real, cumulative target.
+      .filter((r) => r.targetAyahs !== 0 && r.excess > minExcess)
       .sort((a, b) => b.excessPages - a.excessPages);
     const limited = limit !== null ? qualifying.slice(0, limit) : qualifying;
 
