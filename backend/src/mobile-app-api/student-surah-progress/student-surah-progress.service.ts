@@ -3275,7 +3275,12 @@ export class StudentSurahProgressService {
           ),
         };
       })
-      .filter((r) => r.targetAyahs !== 0 && r.deficit > minDeficit)
+      // Page-based (not ayah-based — avoids a tiny ayah deficit rounding
+      // to "0 pages behind" while still qualifying) and requires a real
+      // deficit in BOTH the windowed period AND cumulatively, same
+      // reasoning as the Exceeded Target list's mirror fix: windowed-only
+      // qualification never agreed with what "Since Start" mode displays.
+      .filter((r) => r.deficitPages > minDeficit && r.cumulativeDeficitPages > 0)
       .sort((a, b) => b.deficitPages - a.deficitPages);
     const limited = limit !== null ? qualifying.slice(0, limit) : qualifying;
 
@@ -3389,13 +3394,18 @@ export class StudentSurahProgressService {
           ),
         };
       })
-      // targetAyahs !== 0 guard (same as studentsWithPendingTargets) — a
-      // student with NOTHING scheduled in this window (e.g. their whole
-      // Hifdh schedule was front-loaded earlier and nothing falls in this
-      // particular date range) has target=0, and actual > 0 trivially
-      // "exceeds" a zero baseline — wrongly showing them as ahead even
-      // when they're still behind on their real, cumulative target.
-      .filter((r) => r.targetAyahs !== 0 && r.excess > minExcess)
+      // Page-based (not ayah-based) and requires excess in BOTH the
+      // windowed period AND cumulatively. Ayah-based excess could be
+      // positive while rounding to 0 full pages (shows as "0 pages
+      // exceeded", confusing) — minExcess is already a page-count
+      // threshold from the UI, so the qualifying check should use the
+      // same unit it's compared against and displayed as. Requiring both
+      // windowed AND cumulative excess > 0 stops a student who's merely
+      // ahead in this recent window (but flat or behind overall) from
+      // showing up in "Since Start" mode with a nonsensical 0 (or
+      // negative-clamped) cumulative figure — windowed-only qualification
+      // never agreed with what "Since Start" actually displays.
+      .filter((r) => r.excessPages > minExcess && r.cumulativeExcessPages > 0)
       .sort((a, b) => b.excessPages - a.excessPages);
     const limited = limit !== null ? qualifying.slice(0, limit) : qualifying;
 
