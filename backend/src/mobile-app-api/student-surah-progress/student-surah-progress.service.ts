@@ -2872,6 +2872,7 @@ export class StudentSurahProgressService {
         where: {
           studentId: { in: studentIds },
           scheduledDate: { gte: new Date(fromDate), lte: new Date(toDate) },
+          rescheduledTo: { none: {} },
           fromAyah: { not: null },
           toAyah: { not: null },
         },
@@ -2945,6 +2946,7 @@ export class StudentSurahProgressService {
         where: {
           studentId: { in: studentIds },
           scheduledDate: { gte: new Date(fromDate), lte: new Date(toDate) },
+          rescheduledTo: { none: {} },
           surahId: { not: null },
           fromAyah: { not: null },
           toAyah: { not: null },
@@ -3021,6 +3023,7 @@ export class StudentSurahProgressService {
         where: {
           studentId: { in: studentIds },
           scheduledDate: { lte: new Date(toDate) },
+          rescheduledTo: { none: {} },
           surahId: { not: null },
           fromAyah: { not: null },
           toAyah: { not: null },
@@ -3099,6 +3102,7 @@ export class StudentSurahProgressService {
         where: {
           studentId: { in: studentIds },
           scheduledDate: { lte: new Date(toDate) },
+          rescheduledTo: { none: {} },
           fromAyah: { not: null },
           toAyah: { not: null },
         },
