@@ -99,6 +99,16 @@ export class StudentLeavesController {
     return this.service.getLeaves(branchId, req.user.userId, query);
   }
 
+  @Get('leave-balance/:studentId')
+  async getLeaveBalance(
+    @Req() req: AuthedRequest,
+    @Param('studentId') studentId: string,
+    @Query('date') date?: string,
+  ) {
+    const branchId = await this.context.resolveBranchId(req.user.userId);
+    return this.service.getLeaveBalance(branchId, req.user.userId, studentId, date);
+  }
+
   @Patch('update-leaves/:leaveId')
   async updateLeave(@Req() req: AuthedRequest, @Param('leaveId') leaveId: string, @Body() dto: UpdateLeaveDto) {
     const branchId = await this.context.resolveBranchId(req.user.userId);

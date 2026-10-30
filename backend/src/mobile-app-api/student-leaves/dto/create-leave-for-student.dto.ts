@@ -19,6 +19,10 @@ export class CreateLeaveForStudentDto {
   leave_type?: 'home' | 'hostal';
 
   @IsOptional()
+  @IsIn(['general', 'sick', 'special'])
+  category?: 'general' | 'sick' | 'special';
+
+  @IsOptional()
   @IsBoolean()
   is_half_day?: boolean;
 

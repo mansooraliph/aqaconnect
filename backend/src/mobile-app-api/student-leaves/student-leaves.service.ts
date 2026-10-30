@@ -1,5 +1,5 @@
 import { ForbiddenException, Injectable, UnprocessableEntityException } from '@nestjs/common';
-import { StudentLeaveStatus } from '@prisma/client';
+import { StudentLeaveCategory, StudentLeaveStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MobileContextService } from '../common/mobile-context.service';
 import { ApplyLeaveDto } from './dto/apply-leave.dto';
@@ -28,6 +28,11 @@ function toLegacyStatus(status: StudentLeaveStatus): string {
   return status.toLowerCase();
 }
 
+function toCategoryEnum(category: string | undefined): StudentLeaveCategory {
+  if (!category) return StudentLeaveCategory.GENERAL;
+  return category.toUpperCase() as StudentLeaveCategory;
+}
+
 function toEnumStatus(status: string): StudentLeaveStatus {
   return status.toUpperCase() as StudentLeaveStatus;
 }
@@ -38,6 +43,7 @@ function serializeLeave(leave: {
   leaveDate: Date;
   reason: string;
   leaveType: string | null;
+  category: StudentLeaveCategory;
   isHalfDay: boolean;
   status: StudentLeaveStatus;
   creationRemarks: string | null;
@@ -61,6 +67,7 @@ function serializeLeave(leave: {
     leave_date: toDateOnly(leave.leaveDate),
     reason: leave.reason,
     leave_type: leave.leaveType,
+    category: leave.category.toLowerCase(),
     is_half_day: leave.isHalfDay,
     status: toLegacyStatus(leave.status),
     creation_remarks: leave.creationRemarks,
@@ -97,6 +104,164 @@ export class MobileStudentLeavesService {
       this.prisma.student.findUnique({ where: { userId } }),
     ]);
     return !!teacher || !student;
+  }
+
+  private async isSuperAdmin(userId: string): Promise<boolean> {
+    const roleNames = await this.context.getRoleNames(userId);
+    return roleNames.includes('super admin');
+  }
+
+  private async isBranchAdmin(userId: string): Promise<boolean> {
+    const roleNames = await this.context.getRoleNames(userId);
+    return roleNames.includes('branch admin');
+  }
+
+  /**
+   * Special-leave academic half for a given date: Jun 1-Nov 30 and Dec
+   * 1-May 31, fixed calendar halves (no Academic Year DB model involved —
+   * confirmed as the intended rule, not a placeholder). yearStart/yearEnd
+   * bound the full 4-leave annual pool both halves draw from.
+   */
+  private getSpecialLeaveHalfRange(date: Date): {
+    halfStart: Date;
+    halfEnd: Date;
+    yearStart: Date;
+    yearEnd: Date;
+  } {
+    const y = date.getUTCFullYear();
+    const m = date.getUTCMonth(); // 0=Jan..11=Dec
+    const yearStartYear = m >= 5 ? y : y - 1; // Jun(5)..Dec(11) vs Jan(0)..May(4)
+    const yearStart = new Date(Date.UTC(yearStartYear, 5, 1));
+    const yearEnd = new Date(Date.UTC(yearStartYear + 1, 4, 31, 23, 59, 59, 999));
+    const h1Start = yearStart;
+    const h1End = new Date(Date.UTC(yearStartYear, 10, 30, 23, 59, 59, 999));
+    const h2Start = new Date(Date.UTC(yearStartYear, 11, 1));
+    const h2End = yearEnd;
+    const inH1 = date >= h1Start && date <= h1End;
+    return {
+      halfStart: inH1 ? h1Start : h2Start,
+      halfEnd: inH1 ? h1End : h2End,
+      yearStart,
+      yearEnd,
+    };
+  }
+
+  /**
+   * Which approval tier the NEXT special leave on this date needs, given
+   * how many the student has already used. Confirmed rule (unintuitive but
+   * explicit): the normal 1st/2nd of a half needs Super Admin; dipping into
+   * the OTHER half's still-unused allowance (own half full, year pool not
+   * yet exhausted) only needs Branch Admin; going past the full 4/year
+   * pool needs Super Admin again. Computed from the first date in a batch
+   * — real usage is single-day special leave, so a multi-day request
+   * isn't walked day-by-day for this check.
+   */
+  private async requiredSpecialLeaveTier(
+    branchId: string,
+    studentId: string,
+    date: Date,
+  ): Promise<'super_admin' | 'branch_admin'> {
+    const { halfStart, halfEnd, yearStart, yearEnd } = this.getSpecialLeaveHalfRange(date);
+    const [halfUsed, yearUsed] = await Promise.all([
+      this.prisma.studentLeave.count({
+        where: {
+          branchId,
+          studentId,
+          category: StudentLeaveCategory.SPECIAL,
+          status: { in: [StudentLeaveStatus.PENDING, StudentLeaveStatus.APPROVED] },
+          leaveDate: { gte: halfStart, lte: halfEnd },
+        },
+      }),
+      this.prisma.studentLeave.count({
+        where: {
+          branchId,
+          studentId,
+          category: StudentLeaveCategory.SPECIAL,
+          status: { in: [StudentLeaveStatus.PENDING, StudentLeaveStatus.APPROVED] },
+          leaveDate: { gte: yearStart, lte: yearEnd },
+        },
+      }),
+    ]);
+    if (yearUsed >= 4) return 'super_admin';
+    if (halfUsed >= 2) return 'branch_admin';
+    return 'super_admin';
+  }
+
+  private async assertCanMarkSpecialLeave(
+    branchId: string,
+    studentId: string,
+    firstLeaveDate: Date,
+    userId: string,
+  ): Promise<void> {
+    const tier = await this.requiredSpecialLeaveTier(branchId, studentId, firstLeaveDate);
+    const [isSuper, isBranch] = await Promise.all([
+      this.isSuperAdmin(userId),
+      this.isBranchAdmin(userId),
+    ]);
+    if (tier === 'super_admin') {
+      if (!isSuper) {
+        throw new ForbiddenException(
+          'This special leave requires Super Admin approval.',
+        );
+      }
+      return;
+    }
+    if (!isSuper && !isBranch) {
+      throw new ForbiddenException('This special leave requires Branch Admin approval.');
+    }
+  }
+
+  async getLeaveBalance(branchId: string, userId: string, studentId: string, dateStr?: string) {
+    const date = dateStr ? new Date(`${dateStr}T00:00:00.000Z`) : new Date();
+    date.setUTCHours(0, 0, 0, 0);
+    const { halfStart, halfEnd, yearStart, yearEnd } = this.getSpecialLeaveHalfRange(date);
+    const liveStatuses = { in: [StudentLeaveStatus.PENDING, StudentLeaveStatus.APPROVED] };
+
+    const [generalUsed, sickUsed, halfUsed, yearUsed, isSuper, isBranch] = await Promise.all([
+      this.prisma.studentLeave.count({
+        where: { branchId, studentId, category: StudentLeaveCategory.GENERAL, status: liveStatuses, leaveDate: { gte: yearStart, lte: yearEnd } },
+      }),
+      this.prisma.studentLeave.count({
+        where: { branchId, studentId, category: StudentLeaveCategory.SICK, status: liveStatuses, leaveDate: { gte: yearStart, lte: yearEnd } },
+      }),
+      this.prisma.studentLeave.count({
+        where: { branchId, studentId, category: StudentLeaveCategory.SPECIAL, status: liveStatuses, leaveDate: { gte: halfStart, lte: halfEnd } },
+      }),
+      this.prisma.studentLeave.count({
+        where: { branchId, studentId, category: StudentLeaveCategory.SPECIAL, status: liveStatuses, leaveDate: { gte: yearStart, lte: yearEnd } },
+      }),
+      this.isSuperAdmin(userId),
+      this.isBranchAdmin(userId),
+    ]);
+
+    const nextTier: 'super_admin' | 'branch_admin' = yearUsed >= 4 ? 'super_admin' : halfUsed >= 2 ? 'branch_admin' : 'super_admin';
+    const canCurrentUserMark = nextTier === 'super_admin' ? isSuper : isSuper || isBranch;
+
+    return {
+      status: 'success',
+      data: {
+        date: toDateOnly(date),
+        half: { start: toDateOnly(halfStart), end: toDateOnly(halfEnd) },
+        year: { start: toDateOnly(yearStart), end: toDateOnly(yearEnd) },
+        general: { used: generalUsed },
+        sick: { used: sickUsed },
+        special: {
+          half_used: halfUsed,
+          half_total: 2,
+          half_remaining: Math.max(0, 2 - halfUsed),
+          year_used: yearUsed,
+          year_total: 4,
+          year_remaining: Math.max(0, 4 - yearUsed),
+          next_required_tier: nextTier,
+          can_current_user_mark: canCurrentUserMark,
+          message: canCurrentUserMark
+            ? null
+            : nextTier === 'super_admin'
+              ? 'Requires Super Admin approval'
+              : 'Requires Branch Admin approval',
+        },
+      },
+    };
   }
 
   private async assertNoConflict(
@@ -166,6 +331,16 @@ export class MobileStudentLeavesService {
     const dates = dateRange(dto.from_date, dto.to_date);
     await this.assertNoConflict(branchId, dto.student_id, dates);
 
+    const category = toCategoryEnum(dto.category);
+    if (category === StudentLeaveCategory.SPECIAL) {
+      await this.assertCanMarkSpecialLeave(
+        branchId,
+        dto.student_id,
+        new Date(`${dates[0]}T00:00:00.000Z`),
+        userId,
+      );
+    }
+
     const status = dto.status ?? 'pending';
     const roleNames = await this.context.getRoleNames(userId);
 
@@ -178,6 +353,7 @@ export class MobileStudentLeavesService {
             leaveDate: new Date(`${leaveDate}T00:00:00.000Z`),
             reason: dto.reason,
             leaveType: dto.leave_type,
+            category,
             isHalfDay: dto.is_half_day ?? false,
             status: toEnumStatus(status),
             creationRemarks: dto.creation_remarks,
