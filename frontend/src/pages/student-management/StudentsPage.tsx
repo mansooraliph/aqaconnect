@@ -20,6 +20,7 @@ import { ConfirmModal } from '../../components/ui/ConfirmModal';
 import { toast } from '../../components/ui/toast';
 
 interface StudentUser {
+  username: string;
   email: string;
   isActive: boolean;
 }
@@ -350,6 +351,11 @@ export function StudentsPage() {
       : []),
     { header: 'Student Name', accessorKey: 'name' },
     { header: 'Student code', accessorKey: 'studentCode' },
+    {
+      id: 'username',
+      header: 'Username',
+      cell: ({ row }) => row.original.user?.username ?? '-',
+    },
     {
       id: 'halqa',
       header: 'Halqa',
