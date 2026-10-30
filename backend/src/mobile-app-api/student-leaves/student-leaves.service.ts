@@ -148,43 +148,31 @@ export class MobileStudentLeavesService {
 
   /**
    * Which approval tier the NEXT special leave on this date needs, given
-   * how many the student has already used. Confirmed rule (unintuitive but
-   * explicit): the normal 1st/2nd of a half needs Super Admin; dipping into
-   * the OTHER half's still-unused allowance (own half full, year pool not
-   * yet exhausted) only needs Branch Admin; going past the full 4/year
-   * pool needs Super Admin again. Computed from the first date in a batch
-   * — real usage is single-day special leave, so a multi-day request
-   * isn't walked day-by-day for this check.
+   * how many the student has already used THIS HALF. Confirmed rule: the
+   * normal 1st/2nd of a half is unrestricted (same as General/Sick — a
+   * teacher can mark it); anything past that 2-per-half cap — whether it's
+   * drawing from the other half's still-unused allowance early, or a true
+   * 5th+ beyond the 4/year pool — needs Branch Admin. There is no longer a
+   * Super-Admin-only case for leave marking. Computed from the first date
+   * in a batch — real usage is single-day special leave, so a multi-day
+   * request isn't walked day-by-day for this check.
    */
   private async requiredSpecialLeaveTier(
     branchId: string,
     studentId: string,
     date: Date,
-  ): Promise<'super_admin' | 'branch_admin'> {
-    const { halfStart, halfEnd, yearStart, yearEnd } = this.getSpecialLeaveHalfRange(date);
-    const [halfUsed, yearUsed] = await Promise.all([
-      this.prisma.studentLeave.count({
-        where: {
-          branchId,
-          studentId,
-          category: StudentLeaveCategory.SPECIAL,
-          status: { in: [StudentLeaveStatus.PENDING, StudentLeaveStatus.APPROVED] },
-          leaveDate: { gte: halfStart, lte: halfEnd },
-        },
-      }),
-      this.prisma.studentLeave.count({
-        where: {
-          branchId,
-          studentId,
-          category: StudentLeaveCategory.SPECIAL,
-          status: { in: [StudentLeaveStatus.PENDING, StudentLeaveStatus.APPROVED] },
-          leaveDate: { gte: yearStart, lte: yearEnd },
-        },
-      }),
-    ]);
-    if (yearUsed >= 4) return 'super_admin';
-    if (halfUsed >= 2) return 'branch_admin';
-    return 'super_admin';
+  ): Promise<'none' | 'branch_admin'> {
+    const { halfStart, halfEnd } = this.getSpecialLeaveHalfRange(date);
+    const halfUsed = await this.prisma.studentLeave.count({
+      where: {
+        branchId,
+        studentId,
+        category: StudentLeaveCategory.SPECIAL,
+        status: { in: [StudentLeaveStatus.PENDING, StudentLeaveStatus.APPROVED] },
+        leaveDate: { gte: halfStart, lte: halfEnd },
+      },
+    });
+    return halfUsed >= 2 ? 'branch_admin' : 'none';
   }
 
   private async assertCanMarkSpecialLeave(
@@ -194,18 +182,11 @@ export class MobileStudentLeavesService {
     userId: string,
   ): Promise<void> {
     const tier = await this.requiredSpecialLeaveTier(branchId, studentId, firstLeaveDate);
+    if (tier === 'none') return;
     const [isSuper, isBranch] = await Promise.all([
       this.isSuperAdmin(userId),
       this.isBranchAdmin(userId),
     ]);
-    if (tier === 'super_admin') {
-      if (!isSuper) {
-        throw new ForbiddenException(
-          'This special leave requires Super Admin approval.',
-        );
-      }
-      return;
-    }
     if (!isSuper && !isBranch) {
       throw new ForbiddenException('This special leave requires Branch Admin approval.');
     }
@@ -234,8 +215,8 @@ export class MobileStudentLeavesService {
       this.isBranchAdmin(userId),
     ]);
 
-    const nextTier: 'super_admin' | 'branch_admin' = yearUsed >= 4 ? 'super_admin' : halfUsed >= 2 ? 'branch_admin' : 'super_admin';
-    const canCurrentUserMark = nextTier === 'super_admin' ? isSuper : isSuper || isBranch;
+    const nextTier: 'none' | 'branch_admin' = halfUsed >= 2 ? 'branch_admin' : 'none';
+    const canCurrentUserMark = nextTier === 'none' ? true : isSuper || isBranch;
 
     return {
       status: 'success',
@@ -254,11 +235,7 @@ export class MobileStudentLeavesService {
           year_remaining: Math.max(0, 4 - yearUsed),
           next_required_tier: nextTier,
           can_current_user_mark: canCurrentUserMark,
-          message: canCurrentUserMark
-            ? null
-            : nextTier === 'super_admin'
-              ? 'Requires Super Admin approval'
-              : 'Requires Branch Admin approval',
+          message: canCurrentUserMark ? null : 'Requires Branch Admin approval',
         },
       },
     };
